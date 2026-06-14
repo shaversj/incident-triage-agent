@@ -15,7 +15,7 @@ The workflow owns control flow. The LLM owns one bounded judgment.
 
 ## Setup
 
-Use Python 3.11 or newer.
+Use `uv` with Python 3.11 or newer.
 
 Create `.env` from `.env.example`:
 
@@ -26,24 +26,56 @@ MODEL_NAME=MiniMax-M2.7
 
 The real `.env` is ignored by git.
 
+Install and lock dependencies:
+
+```bash
+uv sync
+```
+
 ## Run
 
 List scenarios:
 
 ```bash
-PYTHONPATH=src python -m incident_triage_agent.cli list
+uv run triage list
 ```
 
 Run with deterministic mock LLM output:
 
 ```bash
-PYTHONPATH=src python -m incident_triage_agent.cli run checkout-payment-timeout --mock-llm --trace
+uv run triage run checkout-payment-timeout --mock-llm --trace
 ```
 
 Run with MiniMax:
 
 ```bash
-PYTHONPATH=src python -m incident_triage_agent.cli run checkout-payment-timeout --trace
+uv run triage run checkout-payment-timeout --trace
+```
+
+## Docker
+
+Build the local image:
+
+```bash
+docker build -t incident-triage-agent:local .
+```
+
+List scenarios in Docker:
+
+```bash
+docker run --rm incident-triage-agent:local list
+```
+
+Run the deterministic mock path in Docker:
+
+```bash
+docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-llm --trace
+```
+
+Run the real MiniMax path in Docker:
+
+```bash
+docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
 ## Scenarios
@@ -80,7 +112,7 @@ The provider response is not trusted directly. The adapter extracts text from th
 Run the test suite with stdlib `unittest`:
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests
+uv run python -m unittest discover -s tests
 ```
 
 Tests use fake LLM responses by default. Real MiniMax calls are not required for the suite.

@@ -188,3 +188,36 @@ The fix was not to trust the provider more. The fix was to make the prompt clear
 - Mock CLI runs prove all scenarios are runnable without network calls.
 - A live MiniMax run proves the provider adapter works with the real `.env` configuration.
 - The noisy-alert live run is especially useful because it shows missing runbook context can coexist with a safe `continue_monitoring` recommendation.
+
+## Agent Handoff Learnings: 2026-06-14
+
+The repo now includes `AGENTS.md` as the fast orientation document for future agent sessions.
+
+- [ ] Explain why agent instructions are part of the architecture, not just repo housekeeping.
+- [ ] Explain why future agents need the bounded taxonomy, secret-handling rules, and raw-fixture constraint in one obvious place.
+- [ ] Explain why `AGENTS.md` points to deeper topic docs instead of duplicating every planning detail.
+
+### Why This Matters
+
+Agent handoff files reduce accidental drift. This project is especially sensitive to drift because a small convenience change, such as adding suspected causes into fixtures or letting provider output skip validation, can quietly invalidate the proof of concept. `AGENTS.md` keeps the next contributor focused on the same central rule: the workflow controls the system, and the LLM contributes one validated bounded judgment.
+
+## Tooling Learnings: 2026-06-14
+
+The project now uses `uv` as the local Python runner and Docker as the containerized runtime path.
+
+- [ ] Explain why `uv run triage ...` is preferred over setting `PYTHONPATH` manually.
+- [ ] Explain why Docker should call the same `triage` entrypoint as local development.
+- [ ] Explain why `.env` is excluded from both git and Docker build context.
+- [ ] Explain why tests still run without real MiniMax credentials.
+
+### Why This Matters
+
+Tooling should reinforce the architecture instead of creating a second way for it to behave. Using `uv` locally and the same `triage` console script inside Docker means local runs, tests, and container demos exercise the same package entrypoint. Excluding `.env` from the image build context keeps credentials out of the artifact while still allowing real provider calls with `docker run --env-file .env`.
+
+## Compound Learning: 2026-06-14
+
+The architecture has been captured as a reusable solution learning in `docs/solutions/architecture-patterns/bounded-llm-incident-triage-workflow.md`, and the first project vocabulary seed now lives in `CONCEPTS.md`.
+
+- [ ] Explain why `docs/solutions/` is different from `docs/learnings.md`: the former is a searchable durable solution store, while the latter is the running teaching checklist for this session.
+- [ ] Explain why `CONCEPTS.md` defines domain terms without implementation file paths or current enum values.
+- [ ] Explain why documenting this as an architecture pattern helps future work avoid collapsing model reasoning, workflow control, safety policy, and evaluation into one blob.
