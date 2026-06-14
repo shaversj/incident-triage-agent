@@ -1,0 +1,43 @@
+{
+  "incident": {
+    "incident_id": "INC-2026-017",
+    "title": "Inventory API transient alert",
+    "severity": "SEV4",
+    "status": "active",
+    "started_at": "2026-06-14T19:42:00Z",
+    "service": "inventory-api",
+    "symptoms": [
+      "single latency alert fired",
+      "no customer reports",
+      "latency recovered before second check"
+    ],
+    "alerts": [
+      "inventory-api HighLatency"
+    ],
+    "recent_changes": [],
+    "log_signals": [
+      "one slow upstream cache call",
+      "latency returned to baseline within 90 seconds",
+      "no correlated errors"
+    ],
+    "runbook_refs": [],
+    "prior_incident_refs": [],
+    "verification_signals": [
+      "latency is back within SLO",
+      "error rate remains below alert threshold"
+    ]
+  },
+  "expected": {
+    "incident_class": "noisy_alert",
+    "allowed_next_actions": [
+      "continue_monitoring",
+      "gather_more_context"
+    ],
+    "required_evidence_prefixes": [
+      "alert:",
+      "log:",
+      "verification:"
+    ],
+    "approval_required": false
+  }
+}

@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "incident-triage-agent"
+version = "0.1.0"
+description = "A CLI proof of concept for bounded LLM-assisted incident triage."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+triage = "incident_triage_agent.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

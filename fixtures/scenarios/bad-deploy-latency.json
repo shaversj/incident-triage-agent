@@ -1,0 +1,53 @@
+{
+  "incident": {
+    "incident_id": "INC-2026-015",
+    "title": "Checkout API latency after retry rollout",
+    "severity": "SEV2",
+    "status": "active",
+    "started_at": "2026-06-14T16:21:00Z",
+    "service": "checkout-api",
+    "symptoms": [
+      "p95 latency above 3000ms",
+      "error budget burn rate above 8x",
+      "latency started within 10 minutes of deploy"
+    ],
+    "alerts": [
+      "checkout-api HighLatency",
+      "checkout-api ErrorBudgetBurn"
+    ],
+    "recent_changes": [
+      {
+        "time": "2026-06-14T16:10:00Z",
+        "service": "checkout-api",
+        "change": "Deployed v2.19.0 with new retry feature flag defaulted on"
+      }
+    ],
+    "log_signals": [
+      "retry attempts per request increased from 1 to 5",
+      "upstream payment responses are healthy",
+      "checkout worker queue depth increasing"
+    ],
+    "runbook_refs": [
+      "bad-deploy"
+    ],
+    "prior_incident_refs": [
+      "INC-2025-144"
+    ],
+    "verification_signals": [
+      "latency remains elevated after deploy",
+      "payment-gateway timeout rate is normal"
+    ]
+  },
+  "expected": {
+    "incident_class": "bad_deploy",
+    "allowed_next_actions": [
+      "request_rollback_approval"
+    ],
+    "required_evidence_prefixes": [
+      "deploy:",
+      "log:",
+      "runbook:"
+    ],
+    "approval_required": true
+  }
+}

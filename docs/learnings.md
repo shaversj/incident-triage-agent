@@ -1,0 +1,190 @@
+# Learnings
+
+This is the running teaching document for the incident triage agent project. Use it to check whether the human understands the problem, the solution, the design branches, the edge cases, and why this architecture matters.
+
+## Session: 2026-06-14
+
+Artifacts created:
+
+- `docs/brainstorms/2026-06-14-incident-triage-agent-requirements.md`
+- `docs/plans/2026-06-14-001-feat-incident-triage-agent-plan.md`
+
+## Understanding Checklist
+
+### 1. Problem Understanding
+
+- [ ] Explain the core problem in one sentence: we want to prove an LLM can make useful incident-triage decisions from incident-related data when the surrounding system controls context, state, validation, safety, and evaluation.
+- [ ] Explain why this is not "build an incident chatbot."
+- [ ] Explain why the PoC uses mock incident data instead of real production integrations.
+- [ ] Explain why raw incident data is more valuable for this PoC than pre-enriched data with suspected causes and recommended actions.
+- [ ] Explain why the input fixtures must not contain `suspected_causes`, `recommended_actions`, or `requires_approval`.
+- [ ] Explain why the first surface is a CLI instead of a web UI.
+- [ ] Explain why production execution is out of scope.
+- [ ] Explain why a single polished scenario is not enough to prove the architecture.
+- [ ] Explain the main failure modes this project is trying to expose: bad LLM reasoning, missing context, invalid output, unsafe recommendations, hardcoded scenario logic, and secret leakage.
+
+### 2. Branches Considered
+
+- [ ] Explain the difference between an interview portfolio artifact and an architecture PoC.
+- [ ] Explain why the project shifted away from interview-specific packaging.
+- [ ] Explain why the first version uses a single workflow instead of a multi-agent system.
+- [ ] Explain why the workflow uses a fixed global taxonomy instead of freeform decisions.
+- [ ] Explain why team-defined classifications were deferred.
+- [ ] Explain why multiple runnable scenarios were chosen over one scenario plus hidden eval fixtures.
+- [ ] Explain why MiniMax is behind an adapter boundary instead of being called directly from workflow code.
+- [ ] Explain why the plan uses the Anthropic-compatible MiniMax endpoint instead of the OpenAI-compatible endpoint.
+- [ ] Explain why provider-side structured output is not treated as the safety mechanism.
+
+### 3. Solution Understanding
+
+- [ ] Draw the core flow from memory: raw fixture -> mock tools -> evidence package -> MiniMax decision -> local validation -> safety gate -> verification plan -> scorecard.
+- [ ] Explain what the state machine does and why state transitions are part of the architecture proof.
+- [ ] Explain the difference between fixture facts, gathered evidence, LLM output, validation result, safety decision, audit event, and scorecard.
+- [ ] Explain what the LLM is allowed to decide.
+- [ ] Explain what the deterministic workflow owns.
+- [ ] Explain why the workflow validates the LLM response before state transitions.
+- [ ] Explain why the scorecard should be deterministic and not graded by the LLM.
+- [ ] Explain how runbooks are used: grounding and policy context, not answer leakage.
+- [ ] Explain why approval-sensitive actions are staged and audited rather than executed.
+- [ ] Explain why missing non-critical context can produce caveats, but missing critical context should ask for human input.
+
+### 4. Design Decisions
+
+- [ ] Explain why Python CLI was selected for the greenfield MVP.
+- [ ] Explain what `MINIMAX_API_KEY` and `MODEL_NAME` do and why they live in `.env`.
+- [ ] Explain why `.env.example` exists and why the real `.env` must be ignored.
+- [ ] Explain why the MiniMax adapter must handle Anthropic-style content blocks.
+- [ ] Explain why response extraction and schema validation are separate concerns.
+- [ ] Explain why the global taxonomy must be present in the plan, not only in the requirements document.
+- [ ] Explain why fixture validation should reject answer-like fields.
+- [ ] Explain why each mock tool should return stable evidence IDs.
+- [ ] Explain why the CLI trace is part of the product surface, not just debug output.
+
+### 5. Edge Cases
+
+- [ ] What happens if MiniMax returns malformed JSON?
+- [ ] What happens if MiniMax returns a class or action outside the taxonomy?
+- [ ] What happens if MiniMax returns low confidence?
+- [ ] What happens if the provider response has no usable text block?
+- [ ] What happens if the scenario has no matching runbook?
+- [ ] What happens if verification signals are missing?
+- [ ] What happens if a rollback-like action is recommended?
+- [ ] What happens if config is missing?
+- [ ] What happens if config errors could accidentally expose secrets?
+- [ ] What happens if an eval scenario accidentally includes a suspected cause in raw fixture data?
+
+### 6. Broader Context
+
+- [ ] Explain how this PoC fits the SRE AI operating loop: detect, diagnose, recommend, approve, verify, learn.
+- [ ] Explain why SRE principles act as the control system for AI-assisted operations.
+- [ ] Explain why the architecture delays real actuation.
+- [ ] Explain why evidence grounding matters more than fluent incident prose.
+- [ ] Explain why eval scorecards matter for trust and iteration.
+- [ ] Explain why a successful run is not enough; failed and ambiguous runs must be legible too.
+- [ ] Explain how this PoC could later expand toward real observability tools.
+- [ ] Explain what changes if team-specific classifications are added later.
+- [ ] Explain why this project matters beyond the demo: it tests a reusable pattern for governed LLM-assisted operations.
+
+## Core Mental Model
+
+The LLM is not the system. The workflow is the system.
+
+The LLM contributes a bounded judgment: classify the incident and choose a next action from a fixed vocabulary. The surrounding software gathers context, builds the evidence package, validates the LLM output, applies safety rules, stages approval-sensitive work, and scores the run.
+
+That distinction matters because incident response is high-context and risk-sensitive. If the LLM owns control flow directly, a fluent but wrong answer can become operationally dangerous. If the workflow owns control flow, the LLM becomes a reasoning component inside a governed system.
+
+## Why The Problem Exists
+
+Incident triage is not just "read alert, guess cause." Operators usually need to assemble context from alerts, logs, deploys, runbooks, owners, prior incidents, and verification signals. That context-gathering work is repetitive, time-sensitive, and easy to do inconsistently under pressure.
+
+LLMs are useful here because they can reason across a bundle of evidence. They are risky here because they can hallucinate, overstate confidence, or recommend unsafe actions. The project exists in that tension: use the LLM for judgment, but use deterministic architecture for boundaries.
+
+The proof of concept must therefore answer a sharper question than "can an LLM summarize an incident?" It must answer: can a controlled workflow feed raw incident context to an LLM, constrain the decision, verify the output, and make the result inspectable enough to trust or reject?
+
+## Why The Chosen Solution Fits
+
+The chosen architecture keeps the demo small without making it fake.
+
+- Raw fixtures prove the system can infer from evidence instead of echoing pre-written suspected causes.
+- Mock tools preserve the shape of real operational integrations without needing production access.
+- A state machine makes progress, pauses, failures, and safety gates visible.
+- A fixed taxonomy prevents freeform LLM output from becoming control flow.
+- Local validation protects the workflow from malformed or unsupported provider output.
+- A simulated approval gate demonstrates governance without creating real blast radius.
+- Scorecards turn every run into a learning artifact.
+
+The design is intentionally not production automation. That restraint is part of the architecture. A good SRE AI system earns autonomy through evidence; it does not start there.
+
+## Implementation Shape To Understand
+
+The plan breaks the work into seven units:
+
+- Project scaffold and configuration.
+- Domain model and fixture schema.
+- Mock operational tools and evidence package.
+- MiniMax Anthropic adapter and decision validation.
+- Stateful triage workflow and safety policy.
+- Eval scorecards and scenario suite.
+- CLI trace output and README walkthrough.
+
+The dependency order matters. Config and domain models come first because they define contracts. Mock tools come before the LLM because the prompt needs an evidence package. The LLM adapter comes before workflow integration because provider behavior must be isolated. Scoring comes after workflow because scorecards need terminal states and decisions to evaluate.
+
+## Drill-Down Questions
+
+Use these to test depth, not memorization.
+
+- Why is a bounded taxonomy safer than freeform action selection?
+- Why is raw fixture validation a safety feature?
+- Why should eval expectations live outside the raw incident facts?
+- Why does the provider adapter return provider metadata and parsed decision data?
+- Why does the workflow need a recoverable failure state?
+- Why is "continue with caveats" different from "ask human"?
+- Why should missing verification signals block readiness?
+- Why does a staged audit payload matter if no real action is executed?
+- Why is the CLI trace a product surface?
+- Why does this architecture make future real integrations easier?
+
+## Current Confidence
+
+- Requirements clarity: high.
+- Architecture direction: high.
+- MiniMax endpoint choice: confirmed as Anthropic-compatible.
+- Implementation stack: selected as Python CLI for the MVP.
+- Production-readiness: intentionally out of scope.
+- Main remaining risk: implementation must preserve the separation between raw facts, derived evidence, LLM decisions, deterministic validation, and eval metadata.
+
+## Implementation Learnings: 2026-06-14
+
+The first implementation pass proved the architecture can run end to end:
+
+- Raw scenario fixtures load through typed domain models.
+- Mock operational tools turn fixture facts into stable evidence IDs.
+- MiniMax is called through the Anthropic-compatible endpoint using `X-Api-Key`.
+- The LLM decision is parsed locally and checked against the global taxonomy.
+- The workflow moves through explicit states and fails closed on invalid output.
+- Approval-sensitive actions produce staged payloads and simulated audit events.
+- Scorecards make the outcome inspectable across multiple scenarios.
+
+### What The Human Should Understand From Implementation
+
+- [ ] Why the provider adapter uses `X-Api-Key` for the Anthropic-compatible MiniMax endpoint.
+- [ ] Why live provider responses can be semantically correct but still differ in shape from the prompt.
+- [ ] Why validation normalizes harmless shape variation, such as a single string where a string list was requested.
+- [ ] Why validation still rejects unsupported taxonomy values, unknown evidence IDs, malformed JSON, and low confidence.
+- [ ] Why the state machine must append terminal states before scoring.
+- [ ] Why mock scenarios and fake LLM responses are useful even when the real MiniMax path works.
+- [ ] Why real MiniMax calls should not be required for the default test suite.
+- [ ] Why CLI output polish matters: the trace is part of the architecture proof, not an afterthought.
+
+### Provider Boundary Lesson
+
+The live MiniMax call originally returned the right incident class and next action, but gave `caveats` and `verification_plan` as strings instead of arrays. That was not a reasoning failure. It was a response-shape mismatch.
+
+The fix was not to trust the provider more. The fix was to make the prompt clearer and make local validation normalize the harmless case while preserving hard boundaries. This is a useful general rule for LLM systems: be strict about semantic control fields, but tolerant about presentation-shaped variation when it can be safely normalized.
+
+### Test And Verification Lessons
+
+- Unit tests protect the local contracts: config loading, fixture validation, evidence packaging, decision validation, safety policy, workflow states, scoring, and CLI output.
+- Mock CLI runs prove all scenarios are runnable without network calls.
+- A live MiniMax run proves the provider adapter works with the real `.env` configuration.
+- The noisy-alert live run is especially useful because it shows missing runbook context can coexist with a safe `continue_monitoring` recommendation.

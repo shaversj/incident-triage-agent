@@ -1,0 +1,48 @@
+{
+  "incident": {
+    "incident_id": "INC-2026-016",
+    "title": "Search API saturation",
+    "severity": "SEV3",
+    "status": "active",
+    "started_at": "2026-06-14T18:03:00Z",
+    "service": "search-api",
+    "symptoms": [
+      "CPU above 92%",
+      "request queue depth increasing",
+      "p95 latency above 1800ms"
+    ],
+    "alerts": [
+      "search-api HighCPU",
+      "search-api QueueDepth"
+    ],
+    "recent_changes": [],
+    "log_signals": [
+      "worker pool at max concurrency",
+      "no deploys in the last 24 hours",
+      "traffic 2.4x normal baseline"
+    ],
+    "runbook_refs": [
+      "capacity-saturation"
+    ],
+    "prior_incident_refs": [
+      "INC-2025-088"
+    ],
+    "verification_signals": [
+      "CPU remains above threshold",
+      "error rate is stable"
+    ]
+  },
+  "expected": {
+    "incident_class": "capacity_saturation",
+    "allowed_next_actions": [
+      "apply_runbook_step_with_approval",
+      "gather_more_context"
+    ],
+    "required_evidence_prefixes": [
+      "alert:",
+      "log:",
+      "runbook:"
+    ],
+    "approval_required": true
+  }
+}

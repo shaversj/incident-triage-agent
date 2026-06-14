@@ -1,0 +1,54 @@
+{
+  "incident": {
+    "incident_id": "INC-2026-014",
+    "title": "Checkout API latency spike",
+    "severity": "SEV2",
+    "status": "active",
+    "started_at": "2026-06-14T14:07:00Z",
+    "service": "checkout-api",
+    "symptoms": [
+      "p95 latency above 2500ms",
+      "checkout error rate above 4%",
+      "customer reports of failed payments"
+    ],
+    "alerts": [
+      "checkout-api HighLatency",
+      "payment-gateway ElevatedErrors"
+    ],
+    "recent_changes": [
+      {
+        "time": "2026-06-14T13:48:00Z",
+        "service": "checkout-api",
+        "change": "Deployed v2.18.0 with payment retry logging changes"
+      }
+    ],
+    "log_signals": [
+      "payment gateway timeout exceeded after 3000ms",
+      "checkout retry queue depth increasing",
+      "checkout request timed out while waiting for payment authorization"
+    ],
+    "runbook_refs": [
+      "dependency-outage"
+    ],
+    "prior_incident_refs": [
+      "INC-2025-102"
+    ],
+    "verification_signals": [
+      "payment-gateway timeout rate elevated",
+      "checkout-api latency remains above SLO"
+    ]
+  },
+  "expected": {
+    "incident_class": "dependency_outage",
+    "allowed_next_actions": [
+      "escalate_owner",
+      "gather_more_context"
+    ],
+    "required_evidence_prefixes": [
+      "alert:",
+      "log:",
+      "runbook:"
+    ],
+    "approval_required": false
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "checkout-api": {
+    "owner": "Checkout Platform",
+    "escalation": "checkout-platform-oncall"
+  },
+  "payment-gateway": {
+    "owner": "Payments Platform",
+    "escalation": "payments-oncall"
+  },
+  "search-api": {
+    "owner": "Search Platform",
+    "escalation": "search-platform-oncall"
+  },
+  "inventory-api": {
+    "owner": "Inventory Platform",
+    "escalation": "inventory-platform-oncall"
+  }
+}

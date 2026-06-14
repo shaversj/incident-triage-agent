@@ -1,0 +1,20 @@
+[
+  {
+    "incident_id": "INC-2025-102",
+    "service": "checkout-api",
+    "summary": "Checkout latency rose when the payment gateway timed out.",
+    "resolution": "Escalated to payments on-call and monitored checkout recovery after provider timeout rate dropped."
+  },
+  {
+    "incident_id": "INC-2025-144",
+    "service": "checkout-api",
+    "summary": "Retry rollout caused request amplification and checkout latency.",
+    "resolution": "Requested rollback approval, disabled retry flag after approval, and verified latency recovery."
+  },
+  {
+    "incident_id": "INC-2025-088",
+    "service": "search-api",
+    "summary": "Search workers saturated during traffic spike.",
+    "resolution": "Applied runbook-guided capacity mitigation and verified CPU returned below threshold."
+  }
+]
