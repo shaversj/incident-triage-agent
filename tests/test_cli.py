@@ -66,6 +66,42 @@ class CliTests(unittest.TestCase):
         self.assertIn("Scorecard", output)
         self.assertNotIn("MINIMAX_API_KEY", output)
 
+    def test_cli_debug_logs_include_detailed_steps(self) -> None:
+        code, _, error = self.run_cli([
+            "--log-level",
+            "DEBUG",
+            "run",
+            "checkout-payment-timeout",
+            "--mock-llm",
+        ])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Starting triage run", error)
+        self.assertIn("State transition: received", error)
+        self.assertIn("Scorecard complete", error)
+
+    def test_cli_default_logs_high_level_steps(self) -> None:
+        code, _, error = self.run_cli(["run", "checkout-payment-timeout", "--mock-llm"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Starting triage run", error)
+        self.assertIn("Evidence package ready", error)
+        self.assertIn("Scorecard complete", error)
+        self.assertNotIn("State transition: received", error)
+        self.assertNotIn("Collected 2 alerts", error)
+
+    def test_cli_warning_log_level_suppresses_info_logs(self) -> None:
+        code, _, error = self.run_cli([
+            "--log-level",
+            "WARNING",
+            "run",
+            "checkout-payment-timeout",
+            "--mock-llm",
+        ])
+
+        self.assertEqual(code, 0)
+        self.assertNotIn("Starting triage run", error)
+
 
 if __name__ == "__main__":
     unittest.main()

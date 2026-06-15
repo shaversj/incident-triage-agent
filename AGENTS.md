@@ -63,6 +63,8 @@ Run the real MiniMax path:
 uv run triage run checkout-payment-timeout --trace
 ```
 
+CLI logs are emitted to stderr. Default logs show high-level milestones; use `--log-level DEBUG` for detailed step logs or `--log-level WARNING` for quiet output. Keep stdout reserved for scenario results.
+
 Build the Docker image:
 
 ```bash
@@ -122,6 +124,7 @@ git diff --check
 - Prefer `uv run ...` for local commands and keep Docker using the installed `triage` entrypoint from the uv-managed environment.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, safety gating, and scorecard results.
+- Keep diagnostic logs on stderr so stdout remains usable for the triage report.
 - When changing library, SDK, API, CLI, framework, or cloud-service usage, fetch current docs with `ctx7` first as described by the repo instructions.
 
 ## Topic Docs

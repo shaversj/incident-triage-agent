@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "A CLI proof of concept for bounded LLM-assisted incident triage."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "loguru>=0.7.3",
+]
 
 [project.scripts]
 triage = "incident_triage_agent.cli:main"

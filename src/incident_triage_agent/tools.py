@@ -3,7 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from loguru import logger
+
 from .domain import Evidence, EvidencePackage, FixtureError, Incident, Scenario
+
+
+log = logger.bind(component="tools")
 
 
 class MockOperationalTools:
@@ -12,42 +17,62 @@ class MockOperationalTools:
 
     def build_evidence_package(self, scenario: Scenario) -> EvidencePackage:
         incident = scenario.incident
+        log.debug("Building evidence package for scenario '{}'.", scenario.name)
         evidence: list[Evidence] = []
         missing: list[str] = []
 
-        evidence.extend(self.alert_evidence(incident))
-        evidence.extend(self.symptom_evidence(incident))
-        evidence.extend(self.deploy_evidence(incident))
-        evidence.extend(self.log_evidence(incident))
+        for source_name, records in (
+            ("alerts", self.alert_evidence(incident)),
+            ("symptoms", self.symptom_evidence(incident)),
+            ("deploys", self.deploy_evidence(incident)),
+            ("logs", self.log_evidence(incident)),
+        ):
+            log.debug("Collected {} {} evidence record(s).", len(records), source_name)
+            evidence.extend(records)
 
         service = self.service_evidence(incident)
         if service:
             evidence.append(service)
+            log.debug("Collected service ownership evidence for {}.", incident.service)
         else:
             missing.append(f"service:{incident.service}")
+            log.warning("Missing service ownership evidence for {}.", incident.service)
 
         runbooks = self.runbook_evidence(incident)
         if runbooks:
             evidence.extend(runbooks)
+            log.debug("Collected {} runbook evidence record(s).", len(runbooks))
         else:
             missing.append("runbook")
+            log.warning("Missing runbook evidence.")
 
         prior = self.prior_incident_evidence(incident)
         if prior:
             evidence.extend(prior)
+            log.debug("Collected {} prior incident evidence record(s).", len(prior))
         elif incident.prior_incident_refs:
             missing.append("prior_incident")
+            log.warning("Prior incident references were present but no matching evidence was found.")
 
-        evidence.extend(self.verification_evidence(incident))
+        verification = self.verification_evidence(incident)
+        evidence.extend(verification)
+        log.debug("Collected {} verification evidence record(s).", len(verification))
         if not incident.verification_signals:
             missing.append("verification")
+            log.warning("Missing verification evidence.")
 
-        return EvidencePackage(
+        package = EvidencePackage(
             scenario_name=scenario.name,
             incident=incident,
             evidence=tuple(evidence),
             missing_context=tuple(missing),
         )
+        log.info(
+            "Evidence package ready with {} evidence item(s) and {} missing context marker(s).",
+            len(package.evidence),
+            len(package.missing_context),
+        )
+        return package
 
     def alert_evidence(self, incident: Incident) -> list[Evidence]:
         return [

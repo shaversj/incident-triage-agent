@@ -4,9 +4,12 @@ from pathlib import Path
 
 from incident_triage_agent.domain import IncidentClass, NextAction, load_scenario
 from incident_triage_agent.llm import (
+    MiniMaxAnthropicClient,
+    ProviderFailure,
     extract_text_from_anthropic_response,
     parse_decision_text,
 )
+from incident_triage_agent.config import AppConfig
 from incident_triage_agent.tools import load_tools
 
 
@@ -125,6 +128,36 @@ class LLMTests(unittest.TestCase):
     def test_anthropic_response_without_text_is_rejected(self) -> None:
         with self.assertRaisesRegex(Exception, "usable text"):
             extract_text_from_anthropic_response({"content": [{"type": "thinking", "thinking": "x"}]})
+
+    def test_prompt_guides_model_to_cite_runbook_when_present(self) -> None:
+        from incident_triage_agent.llm import build_decision_prompt
+
+        prompt = build_decision_prompt(self.evidence_package())
+
+        self.assertIn("runbook evidence", prompt)
+        self.assertIn("runbook:dependency-outage", prompt)
+
+    def test_prompt_includes_exact_allowed_evidence_id_contract(self) -> None:
+        from incident_triage_agent.llm import build_decision_prompt
+
+        prompt = build_decision_prompt(self.evidence_package())
+
+        self.assertIn("Allowed evidence_ids:", prompt)
+        self.assertIn("- prior:INC-2025-102", prompt)
+        self.assertIn("Copy evidence IDs exactly as written.", prompt)
+        self.assertIn("Do not invent, shorten, rename, reformat, or convert evidence IDs.", prompt)
+        self.assertIn("appears exactly in Allowed evidence_ids", prompt)
+
+    def test_provider_failure_returns_recoverable_validation_result(self) -> None:
+        class FailingClient(MiniMaxAnthropicClient):
+            def _post_messages(self, payload):
+                raise ProviderFailure("provider unavailable")
+
+        client = FailingClient(AppConfig(minimax_api_key="secret", model_name="test-model"))
+        result = client.decide(self.evidence_package())
+
+        self.assertFalse(result.valid)
+        self.assertIn("provider unavailable", result.errors[0])
 
 
 if __name__ == "__main__":

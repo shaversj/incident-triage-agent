@@ -58,6 +58,23 @@ class ScoringTests(unittest.TestCase):
         assert run.scorecard is not None
         self.assertFalse(run.scorecard.scores["classification_quality"])
 
+    def test_scorecard_notes_missing_required_evidence_prefixes(self) -> None:
+        run = self.run_with_response(
+            "checkout-payment-timeout",
+            {
+                "incident_class": "dependency_outage",
+                "next_action": "escalate_owner",
+                "confidence": 0.88,
+                "evidence_ids": ["alert:1", "log:0"],
+                "caveats": [],
+                "verification_plan": ["Watch payment-gateway timeout rate."]
+            },
+        )
+
+        assert run.scorecard is not None
+        self.assertFalse(run.scorecard.scores["evidence_grounding"])
+        self.assertIn("Missing required evidence prefixes: runbook:", run.scorecard.notes)
+
     def run_with_response(self, scenario_name: str, response: dict):
         scenario = load_scenario(Path("fixtures"), scenario_name)
         workflow = TriageWorkflow(

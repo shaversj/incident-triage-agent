@@ -221,3 +221,29 @@ The architecture has been captured as a reusable solution learning in `docs/solu
 - [ ] Explain why `docs/solutions/` is different from `docs/learnings.md`: the former is a searchable durable solution store, while the latter is the running teaching checklist for this session.
 - [ ] Explain why `CONCEPTS.md` defines domain terms without implementation file paths or current enum values.
 - [ ] Explain why documenting this as an architecture pattern helps future work avoid collapsing model reasoning, workflow control, safety policy, and evaluation into one blob.
+
+## Logging Learnings: 2026-06-15
+
+The CLI now uses Loguru for detailed step-by-step diagnostics.
+
+- [ ] Explain why logs go to stderr while the triage report stays on stdout.
+- [ ] Explain why package logging is disabled by default and enabled by the CLI setup path.
+- [ ] Explain why default `INFO` logs are limited to high-level milestones while detailed step diagnostics require `--log-level DEBUG`.
+- [ ] Explain why logs should describe workflow phases, evidence counts, validation outcomes, safety decisions, and scorecard results without leaking secrets.
+
+### Why This Matters
+
+Incident triage tools need observability for their own reasoning path. The trace explains the run to a human reader, while logs help debug the system boundary by boundary: CLI setup, fixture loading, evidence gathering, LLM request or mock response, validation, policy gating, scoring, and rendering. Keeping those logs on stderr preserves stdout as a stable report surface for demos, scripts, and tests.
+
+## Prompt Contract Learnings: 2026-06-15
+
+The decision prompt now lists exact allowed evidence IDs and tells the model to copy them without renaming or reformatting.
+
+- [ ] Explain why prompt guidance is the first fix for near-miss evidence citations.
+- [ ] Explain why strict validation still matters even with a clearer prompt.
+- [ ] Explain why the prompt includes a positive allowed-ID list instead of relying only on examples.
+- [ ] Explain why we chose not to normalize aliases like `prior_incident:0` for now.
+
+### Why This Matters
+
+The model can infer plausible ID patterns that are not part of the contract. Listing exact allowed IDs reduces that tendency while preserving the validator's role as the authority. This keeps the PoC honest: model output must match the evidence package, and near-misses remain visible instead of being silently accepted.

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from loguru import logger
+
 from .domain import EvidencePackage, NextAction, SafetyResult, SafetyStatus, TriageDecision
 
 
@@ -9,12 +11,15 @@ APPROVAL_REQUIRED_ACTIONS = {
     NextAction.REQUEST_ROLLBACK_APPROVAL,
     NextAction.APPLY_RUNBOOK_STEP_WITH_APPROVAL,
 }
+log = logger.bind(component="policy")
 
 
 def evaluate_safety(decision: TriageDecision, evidence_package: EvidencePackage) -> SafetyResult:
     missing = set(evidence_package.missing_context)
+    log.info("Evaluating safety for next action '{}'.", decision.next_action.value)
 
     if decision.next_action == NextAction.APPLY_RUNBOOK_STEP_WITH_APPROVAL and "runbook" in missing:
+        log.warning("Runbook-guided action blocked because runbook context is missing.")
         return SafetyResult(
             status=SafetyStatus.NEEDS_HUMAN_INPUT.value,
             approval_required=False,
@@ -22,6 +27,7 @@ def evaluate_safety(decision: TriageDecision, evidence_package: EvidencePackage)
         )
 
     if decision.next_action in APPROVAL_REQUIRED_ACTIONS and "verification" in missing:
+        log.warning("Approval-sensitive action blocked because verification context is missing.")
         return SafetyResult(
             status=SafetyStatus.NEEDS_HUMAN_INPUT.value,
             approval_required=False,
@@ -30,6 +36,7 @@ def evaluate_safety(decision: TriageDecision, evidence_package: EvidencePackage)
 
     if decision.next_action in APPROVAL_REQUIRED_ACTIONS:
         staged_payload = build_staged_payload(decision, evidence_package)
+        log.info("Action requires approval; staged payload created.")
         return SafetyResult(
             status=SafetyStatus.APPROVAL_REQUIRED.value,
             approval_required=True,
@@ -44,12 +51,14 @@ def evaluate_safety(decision: TriageDecision, evidence_package: EvidencePackage)
         )
 
     if decision.next_action == NextAction.ASK_HUMAN:
+        log.info("Decision selected human input as safest next step.")
         return SafetyResult(
             status=SafetyStatus.NEEDS_HUMAN_INPUT.value,
             approval_required=False,
             reason="LLM selected human input as the safest next step.",
         )
 
+    log.info("Action is safe to recommend without approval.")
     return SafetyResult(
         status=SafetyStatus.SAFE_RECOMMENDATION.value,
         approval_required=False,

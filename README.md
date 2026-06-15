@@ -52,6 +52,15 @@ Run with MiniMax:
 uv run triage run checkout-payment-timeout --trace
 ```
 
+Logs are emitted to stderr and scenario output is emitted to stdout. Default
+logging shows high-level milestones; use `DEBUG` for detailed step logs or
+`WARNING` for quiet output:
+
+```bash
+uv run triage --log-level DEBUG run checkout-payment-timeout --mock-llm
+uv run triage --log-level WARNING run checkout-payment-timeout --mock-llm
+```
+
 ## Docker
 
 Build the local image:

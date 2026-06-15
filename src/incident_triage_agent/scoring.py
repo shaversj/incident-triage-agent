@@ -6,9 +6,14 @@ from .domain import (
     TriageRun,
     WorkflowState,
 )
+from loguru import logger
+
+
+log = logger.bind(component="scoring")
 
 
 def score_run(run: TriageRun) -> Scorecard:
+    log.info("Scoring triage run for scenario '{}'.", run.scenario.name)
     scores: dict[str, bool] = {
         "state_correctness": _state_correctness(run),
         "evidence_grounding": _evidence_grounding(run),
@@ -17,6 +22,8 @@ def score_run(run: TriageRun) -> Scorecard:
         "next_action_quality": _next_action_quality(run),
     }
     notes = tuple(_notes(run, scores))
+    passed = sum(1 for value in scores.values() if value)
+    log.info("Scorecard complete: {}/{} checks passed.", passed, len(scores))
     return Scorecard(scenario_name=run.scenario.name, scores=scores, notes=notes)
 
 
@@ -44,6 +51,17 @@ def _evidence_grounding(run: TriageRun) -> bool:
     return evidence_ids.issubset(known_ids) and all(
         any(item.startswith(prefix) for item in evidence_ids)
         for prefix in required_prefixes
+    )
+
+
+def _missing_required_evidence_prefixes(run: TriageRun) -> tuple[str, ...]:
+    if not run.validation or not run.validation.valid or not run.validation.decision:
+        return ()
+    evidence_ids = set(run.validation.decision.evidence_ids)
+    return tuple(
+        prefix
+        for prefix in run.scenario.expected.required_evidence_prefixes
+        if not any(item.startswith(prefix) for item in evidence_ids)
     )
 
 
@@ -85,6 +103,9 @@ def _notes(run: TriageRun, scores: dict[str, bool]) -> list[str]:
         notes.extend(run.validation.errors)
     if run.safety and run.safety.status == SafetyStatus.NEEDS_HUMAN_INPUT.value:
         notes.append(run.safety.reason)
+    missing_prefixes = _missing_required_evidence_prefixes(run)
+    if missing_prefixes:
+        notes.append(f"Missing required evidence prefixes: {', '.join(missing_prefixes)}")
     failed = [name for name, passed in scores.items() if not passed]
     if failed:
         notes.append(f"Failed checks: {', '.join(failed)}")

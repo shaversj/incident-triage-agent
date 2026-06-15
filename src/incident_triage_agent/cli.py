@@ -5,17 +5,29 @@ import json
 from pathlib import Path
 import sys
 
+from loguru import logger
+
 from .config import ConfigError, load_config
 from .domain import FixtureError, Scenario, TriageRun, load_scenario, list_scenarios
 from .llm import MiniMaxAnthropicClient, StaticLLMClient
+from .observability import configure_logging
 from .tools import load_tools
 from .workflow import TriageWorkflow
+
+
+LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="triage",
         description="Run bounded LLM-assisted incident triage scenarios.",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=LOG_LEVELS,
+        default="INFO",
+        help="Log level for step-by-step diagnostic logs emitted to stderr.",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -41,38 +53,61 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    configure_logging(args.log_level)
+    log = logger.bind(component="cli")
+    log.debug("CLI command parsed: {}", args.command or "help")
 
     if args.command is None:
+        log.debug("No command provided; printing help.")
         parser.print_help()
         return 0
 
     if args.command == "list":
-        for name in list_scenarios(Path("fixtures")):
+        fixtures_dir = Path("fixtures")
+        log.debug("Listing scenarios from {}.", fixtures_dir)
+        scenarios = list_scenarios(fixtures_dir)
+        log.info("Found {} scenario(s).", len(scenarios))
+        for name in scenarios:
             print(name)
         return 0
 
     if args.command == "run":
         fixtures_dir = Path(args.fixtures_dir)
+        log = log.bind(scenario=args.scenario)
+        log.info("Starting triage run for scenario '{}' using fixtures at {}.", args.scenario, fixtures_dir)
         try:
             scenario = load_scenario(fixtures_dir, args.scenario)
+            log.info(
+                "Loaded incident {} for service {}.",
+                scenario.incident.incident_id,
+                scenario.incident.service,
+            )
             tools = load_tools(fixtures_dir)
+            log.debug("Loaded mock operational tools.")
         except FixtureError as error:
+            log.error("Fixture loading failed: {}", error)
             print(f"Fixture error: {error}", file=sys.stderr)
             return 2
 
         if args.mock_llm:
+            log.info("Using deterministic mock LLM response.")
             llm_client = StaticLLMClient({scenario.name: json.dumps(mock_decision_for(scenario))})
         else:
             try:
+                log.debug("Loading MiniMax configuration from .env.")
                 config = load_config(Path(".env"))
             except ConfigError as error:
+                log.error("Configuration loading failed: {}", error)
                 print(f"Configuration error: {error}", file=sys.stderr)
                 return 2
+            log.info("Using MiniMax model '{}' at {}.", config.model_name, config.minimax_base_url)
             llm_client = MiniMaxAnthropicClient(config)
 
         workflow = TriageWorkflow(tools=tools, llm_client=llm_client)
         run = workflow.run(scenario)
+        log.debug("Rendering triage run output.")
         render_run(run, trace=args.trace)
+        log.info("Triage run complete.")
         return 0
 
     parser.error(f"Unknown command: {args.command}")

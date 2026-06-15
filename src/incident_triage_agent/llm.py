@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 from typing import Any, Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from loguru import logger
 
 from .config import AppConfig, redact_secret
 from .domain import (
@@ -18,6 +19,7 @@ from .domain import (
 
 
 LOW_CONFIDENCE_THRESHOLD = 0.55
+log = logger.bind(component="llm")
 
 
 class LLMClient(Protocol):
@@ -25,17 +27,22 @@ class LLMClient(Protocol):
         ...
 
 
-@dataclass(frozen=True)
-class ProviderFailure:
-    message: str
+class ProviderFailure(Exception):
+    """Raised when the LLM provider boundary fails before returning a decision."""
 
 
 def build_decision_prompt(evidence_package: EvidencePackage) -> str:
     incident = evidence_package.incident
+    log.debug(
+        "Building decision prompt for incident {} with {} evidence item(s).",
+        incident.incident_id,
+        len(evidence_package.evidence),
+    )
     evidence_lines = [
         f"- {item.evidence_id} [{item.source}] {item.summary}: {item.detail}"
         for item in evidence_package.evidence
     ]
+    allowed_evidence_ids = [f"- {item.evidence_id}" for item in evidence_package.evidence]
     missing = ", ".join(evidence_package.missing_context) or "none"
     classes = ", ".join(item.value for item in IncidentClass)
     actions = ", ".join(item.value for item in NextAction)
@@ -47,11 +54,21 @@ def build_decision_prompt(evidence_package: EvidencePackage) -> str:
             "Return only one JSON object.",
             "Use this shape exactly: {\"incident_class\":\"...\",\"next_action\":\"...\",\"confidence\":0.0,\"evidence_ids\":[\"...\"],\"caveats\":[\"...\"],\"verification_plan\":[\"...\"]}.",
             "The evidence_ids, caveats, and verification_plan fields must be arrays of strings.",
+            "Cite the strongest direct evidence IDs across relevant source types.",
+            "Evidence ID rules:",
+            "- Copy evidence IDs exactly as written.",
+            "- Do not invent, shorten, rename, reformat, or convert evidence IDs.",
+            "- Use only IDs from the Allowed evidence_ids list below.",
+            "If runbook evidence is present and relevant to the decision, include at least one runbook evidence ID.",
+            "If deploy evidence weakens or strengthens a suspected bad deploy, cite it explicitly.",
+            "Before returning, verify every evidence_ids item appears exactly in Allowed evidence_ids.",
             "",
             f"Incident: {incident.incident_id} - {incident.title}",
             f"Service: {incident.service}",
             f"Severity: {incident.severity}",
             f"Missing context: {missing}",
+            "Allowed evidence_ids:",
+            *allowed_evidence_ids,
             "Evidence:",
             *evidence_lines,
         ]
@@ -89,9 +106,11 @@ def _strip_json_fence(text: str) -> str:
 
 def parse_decision_text(text: str, evidence_package: EvidencePackage | None = None) -> ValidationResult:
     cleaned = _strip_json_fence(text)
+    log.debug("Parsing LLM decision text.")
     try:
         payload = json.loads(cleaned)
     except json.JSONDecodeError as error:
+        log.warning("LLM decision was not valid JSON: {}.", error.msg)
         return ValidationResult(
             decision=None,
             valid=False,
@@ -102,8 +121,15 @@ def parse_decision_text(text: str, evidence_package: EvidencePackage | None = No
     try:
         decision = validate_decision_payload(payload, evidence_package)
     except DecisionValidationError as error:
+        log.warning("LLM decision validation failed: {}", error)
         return ValidationResult(decision=None, valid=False, errors=(str(error),), raw_text=text)
 
+    log.info(
+        "LLM decision validated: class={}, action={}, confidence={:.2f}.",
+        decision.incident_class.value,
+        decision.next_action.value,
+        decision.confidence,
+    )
     return ValidationResult(decision=decision, valid=True, raw_text=text)
 
 
@@ -113,6 +139,7 @@ def validate_decision_payload(
 ) -> TriageDecision:
     if not isinstance(payload, dict):
         raise DecisionValidationError("Decision payload must be an object.")
+    log.debug("Validating LLM decision payload fields.")
 
     try:
         incident_class = IncidentClass(payload["incident_class"])
@@ -142,6 +169,7 @@ def validate_decision_payload(
         unknown = sorted(item for item in evidence_ids if item not in known_ids)
         if unknown:
             raise DecisionValidationError(f"Decision cited unknown evidence IDs: {', '.join(unknown)}.")
+        log.debug("Decision cited {} known evidence ID(s).", len(evidence_ids))
 
     return TriageDecision(
         incident_class=incident_class,
@@ -163,7 +191,7 @@ def _require_string_tuple(payload: dict[str, Any], key: str) -> tuple[str, ...]:
 
 
 class MiniMaxAnthropicClient:
-    def __init__(self, config: AppConfig, timeout_seconds: int = 30) -> None:
+    def __init__(self, config: AppConfig, timeout_seconds: int = 60) -> None:
         self.config = config
         self.timeout_seconds = timeout_seconds
 
@@ -174,9 +202,11 @@ class MiniMaxAnthropicClient:
             "messages": [{"role": "user", "content": prompt}],
         }
         try:
+            log.info("Requesting MiniMax decision from Anthropic-compatible endpoint.")
             response_payload = self._post_messages(request_payload)
             text = extract_text_from_anthropic_response(response_payload)
         except (DecisionValidationError, ProviderFailure) as error:
+            log.error("MiniMax decision request failed: {}", error)
             return ValidationResult(decision=None, valid=False, errors=(str(error),), raw_text="")
 
         return parse_decision_text(text, evidence_package)
@@ -194,7 +224,9 @@ class MiniMaxAnthropicClient:
         )
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                payload = json.loads(response.read().decode("utf-8"))
+                log.info("MiniMax response received.")
+                return payload
         except HTTPError as error:
             raise ProviderFailure(f"MiniMax HTTP error: {error.code}.") from error
         except URLError as error:
@@ -211,9 +243,11 @@ class StaticLLMClient:
     def decide(self, evidence_package: EvidencePackage) -> ValidationResult:
         text = self.responses.get(evidence_package.scenario_name)
         if text is None:
+            log.warning("No static LLM response configured for scenario '{}'.", evidence_package.scenario_name)
             return ValidationResult(
                 decision=None,
                 valid=False,
                 errors=(f"No static LLM response for scenario: {evidence_package.scenario_name}.",),
             )
+        log.info("Using static LLM response for scenario '{}'.", evidence_package.scenario_name)
         return parse_decision_text(text, evidence_package)
