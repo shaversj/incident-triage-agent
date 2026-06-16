@@ -24,6 +24,7 @@ Create `.env` from `.env.example`:
 ```text
 MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
+MINIMAX_BASE_URL=https://api.minimax.io
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
@@ -92,16 +93,18 @@ Run the real MiniMax path in Docker:
 docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
-Run the local Grafana/Loki integration stack:
+Run the local Grafana/Loki integration stack with the synthetic checkout service and mock LLM:
 
 ```bash
 docker compose up -d --build
 ```
 
-Seed synthetic Loki logs:
+Generate synthetic checkout logs from a real local service request:
 
 ```bash
-uv run python scripts/seed_loki_logs.py --loki-url http://localhost:3100 --service checkout-api
+curl -s http://localhost:8081/checkout \
+  -H 'Content-Type: application/json' \
+  --data '{"checkout_id":"local-demo-001"}'
 ```
 
 Send the sample Grafana webhook payload:
@@ -120,6 +123,14 @@ docker compose down -v
 ```
 
 The Compose path is still synthetic. Grafana and Loki provide observability-shaped facts; they do not grant the agent production access or execution authority.
+
+Run the same local stack with a live MiniMax call:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
+```
+
+The live override removes `--mock-llm` from the agent and passes MiniMax settings through runtime environment interpolation. It may spend provider credits and can vary because it calls the real model.
 
 ## Grafana Webhook Server
 
@@ -188,6 +199,14 @@ The Docker-backed Grafana/Loki E2E test is opt-in:
 ```bash
 RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
 ```
+
+That test uses a real synthetic checkout service to generate Loki logs, while keeping the LLM deterministic. The live MiniMax E2E is a separate opt-in test:
+
+```bash
+RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
+```
+
+The live test requires Docker plus usable `MINIMAX_API_KEY` and `MODEL_NAME` config. It asserts the bounded response contract, evidence citations, provenance, and safety behavior instead of exact model wording.
 
 ## Why Actions Are Simulated
 

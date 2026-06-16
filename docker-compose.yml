@@ -16,6 +16,19 @@ services:
     depends_on:
       - loki
 
+  synthetic-checkout:
+    build: .
+    entrypoint: ["python", "-m", "services.synthetic_checkout_service"]
+    ports:
+      - "8081:8081"
+    environment:
+      HOST: "0.0.0.0"
+      PORT: "8081"
+      LOKI_URL: "http://loki:3100"
+      SERVICE_NAME: "checkout-api"
+    depends_on:
+      - loki
+
   agent:
     build: .
     command: ["serve", "--host", "0.0.0.0", "--port", "8080", "--mock-llm"]
@@ -28,3 +41,4 @@ services:
     depends_on:
       - loki
       - grafana
+      - synthetic-checkout

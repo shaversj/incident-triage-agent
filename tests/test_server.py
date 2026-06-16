@@ -58,6 +58,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(loki.last_query["labels"], {"service": "checkout-api"})
         self.assertEqual(loki.last_query["direction"], "forward")
 
+    def test_invalid_llm_response_is_recoverable_without_safety_action(self) -> None:
+        status, response = handle_grafana_webhook(
+            self.load_payload(),
+            "test-secret",
+            self.runtime(
+                loki_client=FakeLokiClient(),
+                llm_client=StaticLLMClient({"grafana-checkout-api": "{not json"}),
+            ),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response["status"], "ok")
+        self.assertFalse(response["validation"]["valid"])
+        self.assertIn("not valid JSON", response["validation"]["errors"][0])
+        self.assertNotIn("decision", response)
+        self.assertNotIn("safety", response)
+
     def test_resolved_webhook_is_ignored(self) -> None:
         payload = self.load_payload()
         payload["status"] = "resolved"
@@ -74,9 +91,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(response["status"], "ignored")
         self.assertEqual(response["reason"], "resolved_alert")
 
-    def runtime(self, loki_client=None) -> WebhookRuntime:
+    def runtime(self, loki_client=None, llm_client=None) -> WebhookRuntime:
         scenario_name = "grafana-checkout-api"
-        llm = StaticLLMClient(
+        llm = llm_client or StaticLLMClient(
             {
                 scenario_name: json.dumps(
                     {

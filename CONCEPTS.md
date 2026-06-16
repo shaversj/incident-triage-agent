@@ -28,6 +28,12 @@ The bounded log-enrichment step that queries Loki for service-specific logs arou
 ### Integration E2E
 A Docker-backed test path that exercises external-system-shaped inputs while still using synthetic alerts, logs, and services.
 
+### Synthetic Incident Service
+A local fake service that handles real test requests and generates incident-shaped logs for the triage workflow.
+
+### Live Provider E2E
+An opt-in E2E path that calls the real LLM provider while still using synthetic local incident data and no remediation authority.
+
 ### Bounded Decision
 An LLM judgment constrained to the project's allowed incident classes and next actions, with confidence, evidence citations, caveats, and verification steps.
 
@@ -39,4 +45,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Loki Log Lookup can add operational log evidence to that package. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard or Integration E2E assertions.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. A Synthetic Incident Service can generate logs that Loki Log Lookup adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard, Integration E2E assertions, or Live Provider E2E assertions.

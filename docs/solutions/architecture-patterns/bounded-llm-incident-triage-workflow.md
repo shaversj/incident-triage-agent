@@ -41,6 +41,13 @@ Grafana webhook -> raw incident normalization -> Loki log lookup
   -> evidence package -> LLM decision -> validation -> safety gate
 ```
 
+The stronger local E2E variant adds a synthetic service before Loki:
+
+```text
+synthetic checkout request -> service-generated Loki logs -> Grafana webhook
+  -> Loki log lookup -> evidence package -> LLM decision -> validation -> safety gate
+```
+
 The workflow should own:
 
 - Context gathering through tool-like boundaries.
@@ -136,6 +143,14 @@ docker build -t incident-triage-agent:local .
 docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-llm --trace
 RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
 ```
+
+The live provider E2E should remain opt-in:
+
+```bash
+RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
+```
+
+Use this only when provider credentials, spend, network dependency, and model variance are acceptable for the validation pass.
 
 ## Related
 

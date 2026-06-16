@@ -9,6 +9,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 COPY fixtures ./fixtures
+COPY services ./services
 
 RUN uv sync --frozen --no-dev
 

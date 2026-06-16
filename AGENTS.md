@@ -27,6 +27,10 @@ Primary code lives in `src/incident_triage_agent/`:
 - `scoring.py`: deterministic eval scorecard.
 - `workflow.py`: triage state machine.
 
+Local synthetic service code lives in `services/`:
+
+- `synthetic_checkout_service.py`: tiny checkout-like HTTP service for E2E tests. It emits request-derived incident logs to Loki and has no production authority.
+
 The project intentionally uses mock operational data. It should prove the architecture and decision boundaries without integrating with production incident, deploy, ticketing, chat, or observability systems.
 
 ## Quick Start
@@ -38,6 +42,7 @@ Create a local `.env` from `.env.example`:
 ```text
 MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
+MINIMAX_BASE_URL=https://api.minimax.io
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
@@ -101,6 +106,20 @@ Run the local Grafana/Loki stack:
 docker compose up -d --build
 ```
 
+Generate synthetic checkout logs through the local service:
+
+```bash
+curl -s http://localhost:8081/checkout \
+  -H 'Content-Type: application/json' \
+  --data '{"checkout_id":"local-demo-001"}'
+```
+
+Run the live MiniMax Compose override only when you explicitly want provider variance and cost:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
+```
+
 Run tests:
 
 ```bash
@@ -143,6 +162,8 @@ git diff --check
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.
+- Live MiniMax E2E must remain separate from the mock Docker E2E and require `RUN_LIVE_LLM_E2E=1`.
+- Synthetic services may generate incident-shaped evidence, but they must not execute remediation or connect to production systems.
 - Prefer `uv run ...` for local commands and keep Docker using the installed `triage` entrypoint from the uv-managed environment.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, safety gating, and scorecard results.
@@ -163,4 +184,6 @@ git diff --check
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads for integration tests.
 - [docker-compose.yml](docker-compose.yml): local Grafana, Loki, and webhook-agent stack.
+- [docker-compose.live.yml](docker-compose.live.yml): opt-in live MiniMax override for the local stack.
+- [services/synthetic_checkout_service.py](services/synthetic_checkout_service.py): local service that generates Loki logs from test requests.
 - [scripts/seed_loki_logs.py](scripts/seed_loki_logs.py): synthetic Loki log seeding helper.

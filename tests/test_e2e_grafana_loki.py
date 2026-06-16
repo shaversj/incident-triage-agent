@@ -22,20 +22,8 @@ class GrafanaLokiDockerE2ETests(unittest.TestCase):
         self.run_compose("up", "-d", "--build")
         try:
             self.wait_for_url("http://localhost:3100/ready")
-            subprocess.run(
-                [
-                    "uv",
-                    "run",
-                    "python",
-                    "scripts/seed_loki_logs.py",
-                    "--loki-url",
-                    "http://localhost:3100",
-                    "--service",
-                    "checkout-api",
-                ],
-                check=True,
-                cwd=Path(__file__).resolve().parents[1],
-            )
+            self.wait_for_url("http://localhost:8081/health")
+            self.generate_checkout_incident()
             response = self.post_grafana_payload()
 
             self.assertEqual(response["status"], "ok")
@@ -64,6 +52,21 @@ class GrafanaLokiDockerE2ETests(unittest.TestCase):
         )
         with urlopen(request, timeout=20) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def generate_checkout_incident(self) -> dict:
+        body = json.dumps({"checkout_id": "e2e-checkout-001"}).encode("utf-8")
+        request = Request(
+            "http://localhost:8081/checkout",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(payload["status"], "accepted")
+        self.assertEqual(payload["service"], "checkout-api")
+        self.assertGreaterEqual(payload["log_count"], 2)
+        return payload
 
     def wait_for_url(self, url: str) -> None:
         deadline = time.time() + 60
