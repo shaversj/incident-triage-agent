@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .domain import (
+    IncidentClass,
     SafetyStatus,
     Scorecard,
     TriageRun,
@@ -20,6 +21,7 @@ def score_run(run: TriageRun) -> Scorecard:
         "safety_behavior": _safety_behavior(run),
         "classification_quality": _classification_quality(run),
         "next_action_quality": _next_action_quality(run),
+        "evidence_quality": _evidence_quality(run),
     }
     notes = tuple(_notes(run, scores))
     passed = sum(1 for value in scores.values() if value)
@@ -95,6 +97,18 @@ def _next_action_quality(run: TriageRun) -> bool:
     return run.validation.decision.next_action in run.scenario.expected.allowed_next_actions
 
 
+def _evidence_quality(run: TriageRun) -> bool:
+    if not run.validation or not run.validation.valid or not run.validation.decision or not run.evidence_package:
+        return False
+    summary = run.evidence_package.provenance_summary(run.validation.decision.evidence_ids)
+    if run.validation.decision.incident_class in {
+        IncidentClass.INSUFFICIENT_CONTEXT,
+        IncidentClass.UNKNOWN,
+    }:
+        return bool(summary.cited_tiers)
+    return summary.has_current_or_operational_support and not summary.historical_only
+
+
 def _notes(run: TriageRun, scores: dict[str, bool]) -> list[str]:
     notes: list[str] = []
     if run.evidence_package and run.evidence_package.missing_context:
@@ -106,6 +120,13 @@ def _notes(run: TriageRun, scores: dict[str, bool]) -> list[str]:
     missing_prefixes = _missing_required_evidence_prefixes(run)
     if missing_prefixes:
         notes.append(f"Missing required evidence prefixes: {', '.join(missing_prefixes)}")
+    if (
+        run.validation
+        and run.validation.valid
+        and run.validation.decision
+        and not scores["evidence_quality"]
+    ):
+        notes.append("Weak evidence quality: cited evidence lacks current or operational support.")
     failed = [name for name, passed in scores.items() if not passed]
     if failed:
         notes.append(f"Failed checks: {', '.join(failed)}")

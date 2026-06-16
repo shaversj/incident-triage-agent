@@ -5,7 +5,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from incident_triage_agent.cli import main
+from incident_triage_agent.cli import main, render_run
+from incident_triage_agent.domain import load_scenario
+from incident_triage_agent.llm import StaticLLMClient
+from incident_triage_agent.tools import load_tools
+from incident_triage_agent.workflow import TriageWorkflow
 
 
 FIXTURES_DIR = str(Path(__file__).resolve().parents[1] / "fixtures")
@@ -55,6 +59,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("checkout-payment-timeout", output)
         self.assertIn("LLM decision", output)
+        self.assertIn("Provenance", output)
+        self.assertIn("current_or_operational", output)
 
     def test_cli_trace_includes_state_evidence_and_scorecard(self) -> None:
         code, output, _ = self.run_cli(["run", "bad-deploy-latency", "--mock-llm", "--trace"])
@@ -62,9 +68,28 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("State trace", output)
         self.assertIn("deploy:0", output)
+        self.assertIn("[deploy/operational_context]", output)
         self.assertIn("Safety gate", output)
         self.assertIn("Scorecard", output)
         self.assertNotIn("MINIMAX_API_KEY", output)
+
+    def test_cli_invalid_decision_still_renders_provenance(self) -> None:
+        scenario = load_scenario(Path("fixtures"), "checkout-payment-timeout")
+        workflow = TriageWorkflow(
+            tools=load_tools(Path("fixtures")),
+            llm_client=StaticLLMClient({"checkout-payment-timeout": "{not json"}),
+        )
+        run = workflow.run(scenario)
+        stdout = StringIO()
+
+        with redirect_stdout(stdout):
+            render_run(run, trace=False)
+
+        output = stdout.getvalue()
+        self.assertIn("LLM decision: invalid", output)
+        self.assertIn("Provenance", output)
+        self.assertIn("available_tiers: current_signal, operational_context, guidance, historical_context", output)
+        self.assertIn("cited_tiers: none", output)
 
     def test_cli_debug_logs_include_detailed_steps(self) -> None:
         code, _, error = self.run_cli([
