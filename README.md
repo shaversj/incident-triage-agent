@@ -132,6 +132,14 @@ docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
 
 The live override removes `--mock-llm` from the agent and passes MiniMax settings through runtime environment interpolation. It may spend provider credits and can vary because it calls the real model.
 
+Run the full live demo probe as one command:
+
+```bash
+uv run python scripts/run_live_e2e_probe.py
+```
+
+The probe starts the live Compose stack, generates checkout logs through the synthetic service, posts the Grafana webhook, prints the LLM decision summary, and cleans up the stack. Use `--json` to print the sanitized response shape. A saved example lives at `docs/examples/live-e2e-response.json`.
+
 ## Grafana Webhook Server
 
 Run the webhook server locally with deterministic mock LLM output:

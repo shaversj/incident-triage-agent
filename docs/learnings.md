@@ -326,3 +326,16 @@ The implementation added a small synthetic checkout service and split E2E valida
 ### Why This Matters
 
 This gives the project a better architecture proof without making daily development fragile. The real-service/mock-LLM path proves the local observability loop deterministically. The live-service/live-LLM path proves the provider boundary when deliberately enabled. Those are different kinds of confidence, and keeping them separate is what makes the test suite useful instead of noisy.
+
+## Live Demo Probe And Example Response: 2026-06-16
+
+The project now has a one-command live demo probe plus a sanitized saved response example.
+
+- [ ] Explain why a demo probe is different from a test: it optimizes for human inspection of the architecture path, not only assertions.
+- [ ] Explain why the probe prints a sanitized summary instead of raw provider or prompt data.
+- [ ] Explain how the saved example helps reviewers understand evidence citations, provenance, safety, and scorecard output without spending live provider credits.
+- [ ] Explain why the probe must always clean up the Compose stack, including failure cases.
+
+### Why This Matters
+
+The E2E tests prove the behavior. The demo probe makes the behavior easy to show. That distinction matters for portfolio-quality engineering: a good project should be verifiable by tests and legible to a human who wants to understand the system quickly.

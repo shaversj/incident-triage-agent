@@ -120,6 +120,12 @@ Run the live MiniMax Compose override only when you explicitly want provider var
 docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
 ```
 
+Run the one-command live demo probe:
+
+```bash
+uv run python scripts/run_live_e2e_probe.py
+```
+
 Run tests:
 
 ```bash
@@ -186,4 +192,6 @@ git diff --check
 - [docker-compose.yml](docker-compose.yml): local Grafana, Loki, and webhook-agent stack.
 - [docker-compose.live.yml](docker-compose.live.yml): opt-in live MiniMax override for the local stack.
 - [services/synthetic_checkout_service.py](services/synthetic_checkout_service.py): local service that generates Loki logs from test requests.
+- [scripts/run_live_e2e_probe.py](scripts/run_live_e2e_probe.py): one-command live demo probe that starts the stack, prints the LLM decision, and cleans up.
+- [docs/examples/live-e2e-response.json](docs/examples/live-e2e-response.json): sanitized example of a successful live-provider response.
 - [scripts/seed_loki_logs.py](scripts/seed_loki_logs.py): synthetic Loki log seeding helper.
