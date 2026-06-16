@@ -48,6 +48,10 @@ def build_decision_prompt(evidence_package: EvidencePackage) -> str:
     actions = ", ".join(item.value for item in NextAction)
     return "\n".join(
         [
+            "You are an incident triage decision agent.",
+            "Your mission is to classify one incident and choose one bounded next action using only the supplied evidence package.",
+            "You are not an incident commander. You do not execute production changes. You do not invent missing evidence.",
+            "",
             "Classify this incident and choose the next bounded action.",
             f"Allowed incident_class values: {classes}.",
             f"Allowed next_action values: {actions}.",

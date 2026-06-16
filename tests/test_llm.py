@@ -137,6 +137,17 @@ class LLMTests(unittest.TestCase):
         self.assertIn("runbook evidence", prompt)
         self.assertIn("runbook:dependency-outage", prompt)
 
+    def test_prompt_includes_mission_and_scope_boundary(self) -> None:
+        from incident_triage_agent.llm import build_decision_prompt
+
+        prompt = build_decision_prompt(self.evidence_package())
+
+        self.assertIn("You are an incident triage decision agent.", prompt)
+        self.assertIn("using only the supplied evidence package", prompt)
+        self.assertIn("You are not an incident commander.", prompt)
+        self.assertIn("You do not execute production changes.", prompt)
+        self.assertIn("You do not invent missing evidence.", prompt)
+
     def test_prompt_includes_exact_allowed_evidence_id_contract(self) -> None:
         from incident_triage_agent.llm import build_decision_prompt
 
