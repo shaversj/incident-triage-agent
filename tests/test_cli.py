@@ -127,6 +127,23 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("Starting triage run", error)
 
+    def test_cli_serve_requires_webhook_secret(self) -> None:
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            try:
+                code, _, error = self.run_cli([
+                    "serve",
+                    "--mock-llm",
+                    "--fixtures-dir",
+                    FIXTURES_DIR,
+                ])
+            finally:
+                os.chdir(original_cwd)
+
+        self.assertEqual(code, 2)
+        self.assertIn("GRAFANA_WEBHOOK_SECRET", error)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -19,6 +19,15 @@ A trust category assigned to evidence so the workflow can distinguish live incid
 ### Provenance Summary
 A compact explanation of which evidence sources shaped a triage result, how strong those sources are, and which context is missing.
 
+### Grafana Webhook Ingestion
+A local observability integration surface that accepts Grafana alert payloads as raw alert facts for the triage workflow.
+
+### Loki Log Lookup
+The bounded log-enrichment step that queries Loki for service-specific logs around an alert window and converts results into operational evidence.
+
+### Integration E2E
+A Docker-backed test path that exercises external-system-shaped inputs while still using synthetic alerts, logs, and services.
+
 ### Bounded Decision
 An LLM judgment constrained to the project's allowed incident classes and next actions, with confidence, evidence citations, caveats, and verification steps.
 
@@ -30,4 +39,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture is transformed into an Evidence Package. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Loki Log Lookup can add operational log evidence to that package. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard or Integration E2E assertions.

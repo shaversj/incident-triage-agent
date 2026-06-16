@@ -18,6 +18,9 @@ Primary code lives in `src/incident_triage_agent/`:
 - `cli.py`: command-line interface.
 - `config.py`: `.env` loading for MiniMax config.
 - `domain.py`: dataclasses, taxonomy, fixture loading, validation.
+- `grafana.py`: Grafana webhook payload normalization into raw incidents.
+- `loki.py`: bounded Loki `query_range` client and log evidence conversion.
+- `server.py`: local Grafana webhook server and JSON response rendering.
 - `tools.py`: deterministic mock SRE context tools.
 - `llm.py`: MiniMax Anthropic-compatible adapter and decision parsing.
 - `policy.py`: safety gate and simulated approval handling.
@@ -35,6 +38,9 @@ Create a local `.env` from `.env.example`:
 ```text
 MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
+GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
+LOKI_BASE_URL=http://localhost:3100
+LOKI_LIMIT=20
 ```
 
 The real `.env` is ignored by git and must stay untracked.
@@ -83,6 +89,18 @@ Run the real MiniMax path through Docker:
 docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
+Run the Grafana webhook server locally with mock LLM output:
+
+```bash
+uv run triage serve --mock-llm
+```
+
+Run the local Grafana/Loki stack:
+
+```bash
+docker compose up -d --build
+```
+
 Run tests:
 
 ```bash
@@ -102,6 +120,9 @@ git diff --check
 - Never commit `.env`, API keys, provider secrets, or real credentials.
 - Do not print secret values in CLI output, test failures, logs, docs, or exceptions.
 - Keep fixtures raw. Scenario incident data must not contain `suspected_causes`, `recommended_actions`, or `requires_approval`.
+- Keep Grafana webhook ingestion raw. Alert labels and annotations may become facts, but they must not become suspected causes, recommended actions, or eval expectations.
+- Keep Loki lookup bounded by service labels, time window, and result limit before prompt assembly.
+- Keep webhook secrets out of output and logs. Use `X-Webhook-Secret` only as an auth boundary, never as evidence.
 - Do not let LLM output drive workflow state until local validation passes.
 - Keep the incident class taxonomy bounded to:
   - `dependency_outage`
@@ -121,6 +142,7 @@ git diff --check
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
+- Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.
 - Prefer `uv run ...` for local commands and keep Docker using the installed `triage` entrypoint from the uv-managed environment.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, safety gating, and scorecard results.
@@ -139,3 +161,6 @@ git diff --check
 - [fixtures/runbooks/](fixtures/runbooks/): runbook grounding context.
 - [fixtures/services/services.json](fixtures/services/services.json): mock service ownership metadata.
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
+- [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads for integration tests.
+- [docker-compose.yml](docker-compose.yml): local Grafana, Loki, and webhook-agent stack.
+- [scripts/seed_loki_logs.py](scripts/seed_loki_logs.py): synthetic Loki log seeding helper.

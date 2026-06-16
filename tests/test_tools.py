@@ -2,7 +2,10 @@ import unittest
 from pathlib import Path
 
 from incident_triage_agent.domain import SourceTier, load_scenario
+from incident_triage_agent.grafana import normalize_grafana_payload
+from incident_triage_agent.loki import LokiClient, LokiLogEntry
 from incident_triage_agent.tools import load_tools
+import json
 
 
 class ToolsTests(unittest.TestCase):
@@ -66,6 +69,28 @@ class ToolsTests(unittest.TestCase):
         second = tools.build_evidence_package(scenario)
 
         self.assertEqual(first, second)
+
+    def test_external_evidence_package_combines_grafana_and_loki_context(self) -> None:
+        payload = json.loads(Path("fixtures/grafana/checkout-payment-timeout-webhook.json").read_text())
+        normalized = normalize_grafana_payload(payload)
+        logs = LokiClient.to_evidence(
+            (
+                LokiLogEntry("1781622420000000000", "payment timeout after 3000ms", {"service": "checkout-api"}),
+            )
+        )
+
+        package = load_tools(Path("fixtures")).build_evidence_package_from_incident(
+            normalized.scenario_name,
+            normalized.incident,
+            log_evidence=logs,
+        )
+
+        evidence = package.by_id()
+        self.assertEqual(evidence["alert:0"].source_tier, SourceTier.CURRENT_SIGNAL)
+        self.assertEqual(evidence["log:0"].source_tier, SourceTier.OPERATIONAL_CONTEXT)
+        self.assertEqual(evidence["runbook:dependency-outage"].source_tier, SourceTier.GUIDANCE)
+        self.assertEqual(evidence["service:checkout-api"].source_tier, SourceTier.OPERATIONAL_CONTEXT)
+        self.assertNotIn("logs", package.missing_context)
 
 
 if __name__ == "__main__":

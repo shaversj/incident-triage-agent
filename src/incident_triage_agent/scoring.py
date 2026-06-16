@@ -19,10 +19,11 @@ def score_run(run: TriageRun) -> Scorecard:
         "state_correctness": _state_correctness(run),
         "evidence_grounding": _evidence_grounding(run),
         "safety_behavior": _safety_behavior(run),
-        "classification_quality": _classification_quality(run),
-        "next_action_quality": _next_action_quality(run),
         "evidence_quality": _evidence_quality(run),
     }
+    if run.scenario.expected:
+        scores["classification_quality"] = _classification_quality(run)
+        scores["next_action_quality"] = _next_action_quality(run)
     notes = tuple(_notes(run, scores))
     passed = sum(1 for value in scores.values() if value)
     log.info("Scorecard complete: {}/{} checks passed.", passed, len(scores))
@@ -49,6 +50,8 @@ def _evidence_grounding(run: TriageRun) -> bool:
         return False
     known_ids = run.evidence_package.ids()
     evidence_ids = set(run.validation.decision.evidence_ids)
+    if not run.scenario.expected:
+        return evidence_ids.issubset(known_ids)
     required_prefixes = run.scenario.expected.required_evidence_prefixes
     return evidence_ids.issubset(known_ids) and all(
         any(item.startswith(prefix) for item in evidence_ids)
@@ -58,6 +61,8 @@ def _evidence_grounding(run: TriageRun) -> bool:
 
 def _missing_required_evidence_prefixes(run: TriageRun) -> tuple[str, ...]:
     if not run.validation or not run.validation.valid or not run.validation.decision:
+        return ()
+    if not run.scenario.expected:
         return ()
     evidence_ids = set(run.validation.decision.evidence_ids)
     return tuple(
@@ -72,7 +77,7 @@ def _safety_behavior(run: TriageRun) -> bool:
         return WorkflowState.RECOVERABLE_FAILURE in run.states
     if not run.safety:
         return False
-    if run.scenario.expected.approval_required:
+    if run.scenario.expected and run.scenario.expected.approval_required:
         return (
             run.safety.status == SafetyStatus.APPROVAL_REQUIRED.value
             and run.safety.approval_required
@@ -88,11 +93,15 @@ def _safety_behavior(run: TriageRun) -> bool:
 def _classification_quality(run: TriageRun) -> bool:
     if not run.validation or not run.validation.valid or not run.validation.decision:
         return False
+    if not run.scenario.expected:
+        return False
     return run.validation.decision.incident_class == run.scenario.expected.incident_class
 
 
 def _next_action_quality(run: TriageRun) -> bool:
     if not run.validation or not run.validation.valid or not run.validation.decision:
+        return False
+    if not run.scenario.expected:
         return False
     return run.validation.decision.next_action in run.scenario.expected.allowed_next_actions
 

@@ -24,6 +24,9 @@ Create `.env` from `.env.example`:
 ```text
 MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
+GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
+LOKI_BASE_URL=http://localhost:3100
+LOKI_LIMIT=20
 ```
 
 The real `.env` is ignored by git.
@@ -89,6 +92,47 @@ Run the real MiniMax path in Docker:
 docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
+Run the local Grafana/Loki integration stack:
+
+```bash
+docker compose up -d --build
+```
+
+Seed synthetic Loki logs:
+
+```bash
+uv run python scripts/seed_loki_logs.py --loki-url http://localhost:3100 --service checkout-api
+```
+
+Send the sample Grafana webhook payload:
+
+```bash
+curl -s http://localhost:8080/webhooks/grafana \
+  -H 'Content-Type: application/json' \
+  -H 'X-Webhook-Secret: local-webhook-secret' \
+  --data @fixtures/grafana/checkout-payment-timeout-webhook.json
+```
+
+Stop the stack:
+
+```bash
+docker compose down -v
+```
+
+The Compose path is still synthetic. Grafana and Loki provide observability-shaped facts; they do not grant the agent production access or execution authority.
+
+## Grafana Webhook Server
+
+Run the webhook server locally with deterministic mock LLM output:
+
+```bash
+uv run triage serve --mock-llm
+```
+
+The server accepts `POST /webhooks/grafana` and requires the `X-Webhook-Secret` header to match `GRAFANA_WEBHOOK_SECRET`. It normalizes Grafana alert payloads into raw incident facts, queries Loki for bounded log context when configured, builds the normal evidence package, and runs the same workflow used by fixture scenarios.
+
+Resolved-only Grafana payloads are ignored by default. Missing Loki logs become missing context instead of a crash.
+
 ## Scenarios
 
 - `checkout-payment-timeout`: dependency outage path.
@@ -138,6 +182,12 @@ uv run python -m unittest discover -s tests
 ```
 
 Tests use fake LLM responses by default. Real MiniMax calls are not required for the suite.
+
+The Docker-backed Grafana/Loki E2E test is opt-in:
+
+```bash
+RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
+```
 
 ## Why Actions Are Simulated
 

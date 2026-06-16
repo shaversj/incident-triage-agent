@@ -92,7 +92,7 @@ class EvalExpectation:
 class Scenario:
     name: str
     incident: Incident
-    expected: EvalExpectation
+    expected: EvalExpectation | None = None
 
 
 @dataclass(frozen=True)

@@ -16,19 +16,33 @@ class MockOperationalTools:
         self.fixtures_dir = fixtures_dir
 
     def build_evidence_package(self, scenario: Scenario) -> EvidencePackage:
-        incident = scenario.incident
-        log.debug("Building evidence package for scenario '{}'.", scenario.name)
+        return self.build_evidence_package_from_incident(scenario.name, scenario.incident)
+
+    def build_evidence_package_from_incident(
+        self,
+        scenario_name: str,
+        incident: Incident,
+        log_evidence: tuple[Evidence, ...] = (),
+        extra_missing_context: tuple[str, ...] = (),
+    ) -> EvidencePackage:
+        log.debug("Building evidence package for scenario '{}'.", scenario_name)
         evidence: list[Evidence] = []
-        missing: list[str] = []
+        missing: list[str] = list(extra_missing_context)
 
         for source_name, records in (
             ("alerts", self.alert_evidence(incident)),
             ("symptoms", self.symptom_evidence(incident)),
             ("deploys", self.deploy_evidence(incident)),
-            ("logs", self.log_evidence(incident)),
         ):
             log.debug("Collected {} {} evidence record(s).", len(records), source_name)
             evidence.extend(records)
+
+        logs = tuple(log_evidence) or tuple(self.log_evidence(incident))
+        log.debug("Collected {} logs evidence record(s).", len(logs))
+        evidence.extend(logs)
+        if not logs:
+            missing.append("logs")
+            log.warning("Missing log evidence.")
 
         service = self.service_evidence(incident)
         if service:
@@ -62,10 +76,10 @@ class MockOperationalTools:
             log.warning("Missing verification evidence.")
 
         package = EvidencePackage(
-            scenario_name=scenario.name,
+            scenario_name=scenario_name,
             incident=incident,
             evidence=tuple(evidence),
-            missing_context=tuple(missing),
+            missing_context=tuple(dict.fromkeys(missing)),
         )
         log.info(
             "Evidence package ready with {} evidence item(s) and {} missing context marker(s).",
@@ -170,3 +184,11 @@ def load_tools(fixtures_dir: Path) -> MockOperationalTools:
     if not fixtures_dir.exists():
         raise FixtureError(f"Fixture directory does not exist: {fixtures_dir}.")
     return MockOperationalTools(fixtures_dir)
+
+
+class PrebuiltOperationalTools:
+    def __init__(self, package: EvidencePackage) -> None:
+        self.package = package
+
+    def build_evidence_package(self, _scenario: Scenario) -> EvidencePackage:
+        return self.package

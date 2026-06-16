@@ -1,0 +1,70 @@
+{
+  "receiver": "incident-triage-agent",
+  "status": "firing",
+  "orgId": 1,
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "checkout-api HighLatency",
+        "service": "checkout-api",
+        "severity": "sev2"
+      },
+      "annotations": {
+        "summary": "Checkout API p95 latency above 2500ms",
+        "description": "Customer checkout latency has exceeded the page threshold.",
+        "runbook_ref": "dependency-outage"
+      },
+      "startsAt": "2026-06-16T14:07:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://grafana.local/alerting/checkout-latency",
+      "fingerprint": "checkout-latency-001",
+      "silenceURL": "http://grafana.local/alerting/silence/new",
+      "dashboardURL": "http://grafana.local/d/checkout",
+      "panelURL": "http://grafana.local/d/checkout?viewPanel=12",
+      "values": {
+        "p95_ms": 2840,
+        "error_rate": 0.047
+      }
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "payment-gateway ElevatedErrors",
+        "service": "checkout-api",
+        "dependency": "payment-gateway"
+      },
+      "annotations": {
+        "summary": "Payment gateway timeout rate elevated",
+        "description": "Gateway timeout rate is above baseline for checkout requests."
+      },
+      "startsAt": "2026-06-16T14:08:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://grafana.local/alerting/payment-errors",
+      "fingerprint": "payment-errors-001",
+      "silenceURL": "http://grafana.local/alerting/silence/new",
+      "dashboardURL": "http://grafana.local/d/payment",
+      "panelURL": "http://grafana.local/d/payment?viewPanel=9",
+      "values": {
+        "timeout_rate": 0.061
+      }
+    }
+  ],
+  "groupLabels": {
+    "service": "checkout-api"
+  },
+  "commonLabels": {
+    "service": "checkout-api",
+    "severity": "sev2"
+  },
+  "commonAnnotations": {
+    "summary": "Checkout API latency spike"
+  },
+  "externalURL": "http://grafana.local/",
+  "version": "1",
+  "groupKey": "{}:{service=\"checkout-api\"}",
+  "truncatedAlerts": 0,
+  "title": "[FIRING:2] Checkout API latency spike",
+  "state": "alerting",
+  "message": "Checkout API latency and payment gateway errors are firing."
+}

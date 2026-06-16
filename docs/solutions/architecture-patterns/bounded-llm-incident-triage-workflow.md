@@ -34,6 +34,13 @@ raw fixture -> mock tools -> evidence package -> LLM decision
   -> local validation -> safety gate -> verification plan -> scorecard
 ```
 
+The observability integration variant keeps the same center:
+
+```text
+Grafana webhook -> raw incident normalization -> Loki log lookup
+  -> evidence package -> LLM decision -> validation -> safety gate
+```
+
 The workflow should own:
 
 - Context gathering through tool-like boundaries.
@@ -55,6 +62,8 @@ Provider output should never be trusted directly. In this project, the adapter e
 Safety belongs outside the prompt. Rollback-like or runbook-action recommendations are staged as approval-required payloads and audit events. Missing critical context moves the run to human input instead of letting a fluent answer masquerade as a safe action.
 
 The same architecture should be runnable through the normal local and container paths. Here, `uv run triage ...` and the Docker image both exercise the same package entrypoint, so local demos, tests, and container demos do not drift into separate execution paths.
+
+When adding observability integrations, preserve the same separation. Grafana webhook payloads should be normalized into raw alert facts, and Loki query results should become operational evidence. Neither source should carry expected incident classes, next actions, suspected causes, or approval hints into the model prompt.
 
 ## Why This Matters
 
@@ -125,6 +134,7 @@ uv run triage list
 uv run python -m unittest discover -s tests
 docker build -t incident-triage-agent:local .
 docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-llm --trace
+RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
 ```
 
 ## Related

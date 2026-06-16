@@ -24,6 +24,21 @@ class AppConfig:
         }
 
 
+@dataclass(frozen=True)
+class WebhookConfig:
+    grafana_webhook_secret: str
+    loki_base_url: str = "http://localhost:3100"
+    loki_limit: int = 20
+
+    @property
+    def redacted(self) -> dict[str, str]:
+        return {
+            "GRAFANA_WEBHOOK_SECRET": "<redacted>",
+            "LOKI_BASE_URL": self.loki_base_url,
+            "LOKI_LIMIT": str(self.loki_limit),
+        }
+
+
 def load_dotenv(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.exists():
@@ -58,6 +73,31 @@ def load_config(env_path: Path | None = None, environ: dict[str, str] | None = N
         minimax_api_key=source["MINIMAX_API_KEY"],
         model_name=source["MODEL_NAME"],
         minimax_base_url=source.get("MINIMAX_BASE_URL", "https://api.minimax.io"),
+    )
+
+
+def load_webhook_config(
+    env_path: Path | None = None,
+    environ: dict[str, str] | None = None,
+) -> WebhookConfig:
+    env_path = env_path or Path(".env")
+    source = dict(environ if environ is not None else os.environ)
+    source.update(load_dotenv(env_path))
+
+    if not source.get("GRAFANA_WEBHOOK_SECRET"):
+        raise ConfigError("Missing required configuration: GRAFANA_WEBHOOK_SECRET.")
+
+    try:
+        loki_limit = int(source.get("LOKI_LIMIT", "20"))
+    except ValueError as error:
+        raise ConfigError("LOKI_LIMIT must be an integer.") from error
+    if loki_limit <= 0:
+        raise ConfigError("LOKI_LIMIT must be greater than 0.")
+
+    return WebhookConfig(
+        grafana_webhook_secret=source["GRAFANA_WEBHOOK_SECRET"],
+        loki_base_url=source.get("LOKI_BASE_URL", "http://localhost:3100"),
+        loki_limit=loki_limit,
     )
 
 

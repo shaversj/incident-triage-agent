@@ -263,3 +263,36 @@ The architecture now includes source tiering plus deterministic provenance outpu
 ### Why This Matters
 
 Evidence grounding is not only about whether a cited ID exists. It is also about whether the cited evidence is strong enough for the recommendation being made. Source tiering gives the workflow a vocabulary for that distinction, and provenance output gives the operator a compact explanation of the recommendation's trust basis. The scorecard now separates weak evidence quality from malformed output and unknown evidence IDs, which makes failure modes easier to interpret.
+
+## Grafana And Loki Integration Planning: 2026-06-16
+
+The next architectural step is a local integration path that accepts Grafana-shaped alert payloads, enriches them with Loki log evidence, and runs the existing triage workflow without using production systems.
+
+- [ ] Explain why this is an ingestion problem before it is an E2E testing problem.
+- [ ] Explain why Grafana alert payloads should be treated as raw facts, not as recommendations.
+- [ ] Explain why Loki logs become operational evidence rather than a second source of decisions.
+- [ ] Explain why production Grafana, real service logs, and real remediation remain out of scope for the default E2E.
+- [ ] Explain why the default E2E should use a mock LLM even though the project supports live MiniMax calls.
+- [ ] Explain why eval expectations must stay outside Grafana webhook payloads.
+- [ ] Explain why a synchronous webhook response is enough for the PoC, while queues and async workers can wait.
+- [ ] Explain why a recorded Grafana default webhook payload may be a better first E2E step than relying on Grafana scheduler timing.
+
+### Why This Matters
+
+The project is moving from static mock fixtures toward real observability shapes. That matters because the architecture should prove it can consume alerts and logs the way an SRE tool would, while still preserving the central safety rule: the workflow controls context, validation, safety, and evaluation, and the LLM contributes one bounded judgment.
+
+## Grafana And Loki Integration Implementation: 2026-06-16
+
+The implementation added a local webhook path, Grafana payload normalization, Loki log lookup, external evidence-package construction, JSON triage responses, and an opt-in Docker E2E test.
+
+- [ ] Explain why `Scenario.expected` is optional for webhook runs but still required for fixture eval scenarios.
+- [ ] Explain why fixture scorecards keep `classification_quality` and `next_action_quality`, while external webhook runs omit those expectation-dependent checks.
+- [ ] Explain why the webhook server authenticates with `X-Webhook-Secret` before parsing payload content.
+- [ ] Explain why Grafana resolved-only notifications are ignored instead of starting a new active triage.
+- [ ] Explain why Loki failures become missing context instead of endpoint crashes.
+- [ ] Explain why the Docker E2E is opt-in and the default unit suite still avoids containers and real network dependencies.
+- [ ] Explain why the Compose path uses synthetic Grafana/Loki data rather than production Grafana Cloud or private logs.
+
+### Why This Matters
+
+The project now proves two surfaces with one architecture: fixture CLI runs for deterministic architecture demos and webhook ingestion for observability-shaped inputs. The important design win is reuse. The webhook path does not get a special, looser decision flow; it still builds evidence, calls the bounded LLM adapter, validates the result, applies safety policy, and reports provenance.

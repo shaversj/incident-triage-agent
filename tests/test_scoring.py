@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 
 from incident_triage_agent.domain import WorkflowState, load_scenario
+from incident_triage_agent.grafana import normalize_grafana_payload
 from incident_triage_agent.llm import StaticLLMClient
+from incident_triage_agent.loki import LokiClient, LokiLogEntry
+from incident_triage_agent.server import WebhookRuntime, handle_grafana_webhook
 from incident_triage_agent.tools import load_tools
 from incident_triage_agent.workflow import TriageWorkflow
 
@@ -95,6 +98,40 @@ class ScoringTests(unittest.TestCase):
             run.scorecard.notes,
         )
 
+    def test_integration_scorecard_omits_fixture_expectation_checks(self) -> None:
+        payload = json.loads(Path("fixtures/grafana/checkout-payment-timeout-webhook.json").read_text())
+        normalized = normalize_grafana_payload(payload)
+        llm = StaticLLMClient(
+            {
+                normalized.scenario_name: json.dumps(
+                    {
+                        "incident_class": "dependency_outage",
+                        "next_action": "escalate_owner",
+                        "confidence": 0.86,
+                        "evidence_ids": ["alert:0", "log:0", "runbook:dependency-outage"],
+                        "caveats": [],
+                        "verification_plan": ["Watch timeout rate."],
+                    }
+                )
+            }
+        )
+
+        status, response = handle_grafana_webhook(
+            payload,
+            "test-secret",
+            WebhookRuntime(
+                fixtures_dir=Path("fixtures"),
+                webhook_secret="test-secret",
+                llm_client=llm,
+                loki_client=FakeLokiClient(),
+            ),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertNotIn("classification_quality", response["scorecard"]["scores"])
+        self.assertNotIn("next_action_quality", response["scorecard"]["scores"])
+        self.assertTrue(response["scorecard"]["scores"]["evidence_grounding"])
+
     def run_with_response(self, scenario_name: str, response: dict):
         scenario = load_scenario(Path("fixtures"), scenario_name)
         workflow = TriageWorkflow(
@@ -102,6 +139,16 @@ class ScoringTests(unittest.TestCase):
             llm_client=StaticLLMClient({scenario_name: json.dumps(response)}),
         )
         return workflow.run(scenario)
+
+
+class FakeLokiClient:
+    def query_range(self, *_args, **_kwargs):
+        return (
+            LokiLogEntry("1781622420000000000", "payment timeout after 3000ms", {"service": "checkout-api"}),
+        )
+
+    def to_evidence(self, entries):
+        return LokiClient.to_evidence(entries)
 
 
 if __name__ == "__main__":

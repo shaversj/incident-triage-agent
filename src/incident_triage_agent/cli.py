@@ -7,10 +7,12 @@ import sys
 
 from loguru import logger
 
-from .config import ConfigError, load_config
+from .config import ConfigError, load_config, load_webhook_config
 from .domain import FixtureError, Scenario, TriageRun, load_scenario, list_scenarios
 from .llm import MiniMaxAnthropicClient, StaticLLMClient
+from .loki import LokiClient
 from .observability import configure_logging
+from .server import WebhookRuntime, serve
 from .tools import load_tools
 from .workflow import TriageWorkflow
 
@@ -45,6 +47,25 @@ def build_parser() -> argparse.ArgumentParser:
         "--fixtures-dir",
         default="fixtures",
         help="Path to fixture directory.",
+    )
+
+    serve_parser = subparsers.add_parser("serve", help="Run the Grafana webhook server.")
+    serve_parser.add_argument("--host", default="0.0.0.0", help="Host for the webhook server.")
+    serve_parser.add_argument("--port", type=int, default=8080, help="Port for the webhook server.")
+    serve_parser.add_argument(
+        "--fixtures-dir",
+        default="fixtures",
+        help="Path to fixture directory.",
+    )
+    serve_parser.add_argument(
+        "--mock-llm",
+        action="store_true",
+        help="Use deterministic fake LLM responses instead of MiniMax.",
+    )
+    serve_parser.add_argument(
+        "--no-loki",
+        action="store_true",
+        help="Skip Loki lookup and mark logs as missing context.",
     )
 
     return parser
@@ -108,6 +129,58 @@ def main(argv: list[str] | None = None) -> int:
         log.debug("Rendering triage run output.")
         render_run(run, trace=args.trace)
         log.info("Triage run complete.")
+        return 0
+
+    if args.command == "serve":
+        fixtures_dir = Path(args.fixtures_dir)
+        try:
+            if not fixtures_dir.exists():
+                raise FixtureError(f"Fixture directory does not exist: {fixtures_dir}.")
+            webhook_config = load_webhook_config(Path(".env"))
+        except (FixtureError, ConfigError) as error:
+            log.error("Webhook server configuration failed: {}", error)
+            print(f"Configuration error: {error}", file=sys.stderr)
+            return 2
+
+        if args.mock_llm:
+            log.info("Using deterministic mock LLM response for webhook server.")
+            llm_client = StaticLLMClient(
+                {
+                    "grafana-checkout-api": json.dumps(
+                        {
+                            "incident_class": "dependency_outage",
+                            "next_action": "escalate_owner",
+                            "confidence": 0.87,
+                            "evidence_ids": ["alert:0", "log:0", "runbook:dependency-outage"],
+                            "caveats": ["Synthetic Grafana/Loki integration path."],
+                            "verification_plan": ["Watch payment timeout rate."],
+                        }
+                    )
+                }
+            )
+        else:
+            try:
+                config = load_config(Path(".env"))
+            except ConfigError as error:
+                log.error("MiniMax configuration loading failed: {}", error)
+                print(f"Configuration error: {error}", file=sys.stderr)
+                return 2
+            log.info("Using MiniMax model '{}' at {}.", config.model_name, config.minimax_base_url)
+            llm_client = MiniMaxAnthropicClient(config)
+
+        loki_client = None
+        if not args.no_loki:
+            loki_client = LokiClient(webhook_config.loki_base_url)
+            log.info("Using Loki at {}.", webhook_config.loki_base_url)
+
+        runtime = WebhookRuntime(
+            fixtures_dir=fixtures_dir,
+            webhook_secret=webhook_config.grafana_webhook_secret,
+            llm_client=llm_client,
+            loki_client=loki_client,
+            loki_limit=webhook_config.loki_limit,
+        )
+        serve(args.host, args.port, runtime)
         return 0
 
     parser.error(f"Unknown command: {args.command}")
