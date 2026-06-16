@@ -13,6 +13,8 @@ raw fixture -> mock tools -> evidence package -> MiniMax decision
 
 The workflow owns control flow. The LLM owns one bounded judgment.
 
+Evidence records also carry source tiers so the workflow can distinguish live incident signals from operational context, runbook guidance, and historical analogy.
+
 ## Setup
 
 Use `uv` with Python 3.11 or newer.
@@ -115,6 +117,17 @@ Allowed `next_action` values:
 - `gather_more_context`
 
 The provider response is not trusted directly. The adapter extracts text from the Anthropic-compatible MiniMax response, then local validation checks JSON shape, taxonomy values, confidence, and evidence IDs.
+
+## Evidence Provenance
+
+Evidence tiers are assigned by the workflow, not by the LLM:
+
+- `current_signal`: active alerts, symptoms, and verification signals.
+- `operational_context`: logs, deploys, and service ownership.
+- `guidance`: runbook context.
+- `historical_context`: prior incidents.
+
+CLI output includes a provenance section showing available tiers, cited tiers, cited sources, missing context, and whether the cited evidence includes current or operational support. Historical context can support a recommendation, but a confident concrete classification should not rely on historical context alone.
 
 ## Tests
 

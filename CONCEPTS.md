@@ -13,6 +13,12 @@ The governed process that gathers incident context, asks for a bounded model jud
 ### Evidence Package
 The traceable bundle of incident context assembled from operational sources before the model is asked to decide.
 
+### Source Tier
+A trust category assigned to evidence so the workflow can distinguish live incident signals, operational context, guidance, and historical context.
+
+### Provenance Summary
+A compact explanation of which evidence sources shaped a triage result, how strong those sources are, and which context is missing.
+
 ### Bounded Decision
 An LLM judgment constrained to the project's allowed incident classes and next actions, with confidence, evidence citations, caveats, and verification steps.
 
@@ -24,4 +30,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture is transformed into an Evidence Package. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard.
+A Raw Incident Fixture is transformed into an Evidence Package. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard.

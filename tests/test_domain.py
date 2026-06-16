@@ -4,9 +4,12 @@ import unittest
 from pathlib import Path
 
 from incident_triage_agent.domain import (
+    Evidence,
+    EvidencePackage,
     FixtureError,
     IncidentClass,
     NextAction,
+    SourceTier,
     list_scenarios,
     load_scenario,
 )
@@ -61,6 +64,41 @@ class DomainTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             NextAction("do_anything")
+
+    def test_source_tier_values_are_stable_strings(self) -> None:
+        self.assertEqual(SourceTier.CURRENT_SIGNAL.value, "current_signal")
+        self.assertEqual(SourceTier.OPERATIONAL_CONTEXT.value, "operational_context")
+        self.assertEqual(SourceTier.GUIDANCE.value, "guidance")
+        self.assertEqual(SourceTier.HISTORICAL_CONTEXT.value, "historical_context")
+
+    def test_evidence_preserves_source_tier(self) -> None:
+        evidence = Evidence("alert:0", "alert", SourceTier.CURRENT_SIGNAL, "High latency")
+
+        self.assertEqual(evidence.source_tier, SourceTier.CURRENT_SIGNAL)
+
+    def test_provenance_summary_reports_available_and_cited_tiers(self) -> None:
+        scenario = load_scenario(Path("fixtures"), "checkout-payment-timeout")
+        package = EvidencePackage(
+            scenario_name=scenario.name,
+            incident=scenario.incident,
+            evidence=(
+                Evidence("alert:0", "alert", SourceTier.CURRENT_SIGNAL, "High latency"),
+                Evidence("prior:INC-1", "prior_incident", SourceTier.HISTORICAL_CONTEXT, "Similar issue"),
+            ),
+            missing_context=("runbook",),
+        )
+
+        summary = package.provenance_summary(("prior:INC-1",))
+
+        self.assertEqual(
+            summary.available_tiers,
+            (SourceTier.CURRENT_SIGNAL, SourceTier.HISTORICAL_CONTEXT),
+        )
+        self.assertEqual(summary.cited_tiers, (SourceTier.HISTORICAL_CONTEXT,))
+        self.assertEqual(summary.cited_sources, ("prior_incident",))
+        self.assertEqual(summary.missing_context, ("runbook",))
+        self.assertTrue(summary.historical_only)
+        self.assertFalse(summary.has_current_or_operational_support)
 
 
 if __name__ == "__main__":

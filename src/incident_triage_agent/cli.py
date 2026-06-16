@@ -175,7 +175,7 @@ def render_run(run: TriageRun, trace: bool) -> None:
         if run.evidence_package:
             print("\nEvidence:")
             for item in run.evidence_package.evidence:
-                print(f"- {item.evidence_id} [{item.source}] {item.summary}")
+                print(f"- {item.evidence_id} [{item.source}/{item.source_tier.value}] {item.summary}")
             if run.evidence_package.missing_context:
                 print(f"- missing: {', '.join(run.evidence_package.missing_context)}")
 
@@ -196,6 +196,8 @@ def render_run(run: TriageRun, trace: bool) -> None:
         print("\nLLM decision: invalid")
         for error in run.validation.errors:
             print(f"- {error}")
+
+    render_provenance(run)
 
     if run.safety:
         print("\nSafety gate:")
@@ -225,6 +227,29 @@ def format_value(value) -> str:
     if isinstance(value, list):
         return ", ".join(str(item) for item in value) or "none"
     return str(value)
+
+
+def render_provenance(run: TriageRun) -> None:
+    if not run.evidence_package:
+        return
+    cited_ids: tuple[str, ...] = ()
+    if run.validation and run.validation.decision:
+        cited_ids = run.validation.decision.evidence_ids
+    summary = run.evidence_package.provenance_summary(cited_ids)
+
+    print("\nProvenance:")
+    print(f"- available_tiers: {format_value([tier.value for tier in summary.available_tiers])}")
+    print(f"- cited_tiers: {format_value([tier.value for tier in summary.cited_tiers])}")
+    print(f"- cited_sources: {format_value(list(summary.cited_sources))}")
+    if summary.missing_context:
+        print(f"- missing_context: {', '.join(summary.missing_context)}")
+    if summary.historical_only:
+        support = "historical_only"
+    elif summary.has_current_or_operational_support:
+        support = "current_or_operational"
+    else:
+        support = "none"
+    print(f"- support: {support}")
 
 
 if __name__ == "__main__":

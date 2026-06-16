@@ -41,6 +41,13 @@ class WorkflowState(StrEnum):
     SCORED = "scored"
 
 
+class SourceTier(StrEnum):
+    CURRENT_SIGNAL = "current_signal"
+    OPERATIONAL_CONTEXT = "operational_context"
+    GUIDANCE = "guidance"
+    HISTORICAL_CONTEXT = "historical_context"
+
+
 class FixtureError(Exception):
     """Raised when fixture data violates the raw-data contract."""
 
@@ -92,8 +99,29 @@ class Scenario:
 class Evidence:
     evidence_id: str
     source: str
+    source_tier: SourceTier
     summary: str
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class ProvenanceSummary:
+    available_tiers: tuple[SourceTier, ...]
+    cited_tiers: tuple[SourceTier, ...]
+    cited_sources: tuple[str, ...]
+    cited_evidence_ids: tuple[str, ...]
+    missing_context: tuple[str, ...] = ()
+
+    @property
+    def has_current_or_operational_support(self) -> bool:
+        return any(
+            tier in {SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT}
+            for tier in self.cited_tiers
+        )
+
+    @property
+    def historical_only(self) -> bool:
+        return bool(self.cited_tiers) and self.cited_tiers == (SourceTier.HISTORICAL_CONTEXT,)
 
 
 @dataclass(frozen=True)
@@ -108,6 +136,21 @@ class EvidencePackage:
 
     def by_id(self) -> dict[str, Evidence]:
         return {item.evidence_id: item for item in self.evidence}
+
+    def provenance_summary(self, cited_evidence_ids: tuple[str, ...] = ()) -> ProvenanceSummary:
+        evidence_by_id = self.by_id()
+        cited = tuple(
+            evidence_by_id[evidence_id]
+            for evidence_id in cited_evidence_ids
+            if evidence_id in evidence_by_id
+        )
+        return ProvenanceSummary(
+            available_tiers=_ordered_tiers(item.source_tier for item in self.evidence),
+            cited_tiers=_ordered_tiers(item.source_tier for item in cited),
+            cited_sources=_ordered_strings(item.source for item in cited),
+            cited_evidence_ids=tuple(item.evidence_id for item in cited),
+            missing_context=self.missing_context,
+        )
 
 
 @dataclass(frozen=True)
@@ -217,3 +260,18 @@ def list_scenarios(fixtures_dir: Path) -> list[str]:
     if not scenarios_dir.exists():
         return []
     return sorted(path.stem for path in scenarios_dir.glob("*.json"))
+
+
+def _ordered_tiers(values) -> tuple[SourceTier, ...]:
+    seen = set(values)
+    return tuple(tier for tier in SourceTier if tier in seen)
+
+
+def _ordered_strings(values) -> tuple[str, ...]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            ordered.append(value)
+    return tuple(ordered)

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from .domain import Evidence, EvidencePackage, FixtureError, Incident, Scenario
+from .domain import Evidence, EvidencePackage, FixtureError, Incident, Scenario, SourceTier
 
 
 log = logger.bind(component="tools")
@@ -76,13 +76,19 @@ class MockOperationalTools:
 
     def alert_evidence(self, incident: Incident) -> list[Evidence]:
         return [
-            Evidence(f"alert:{index}", "alert", alert, f"Alert fired for {incident.service}: {alert}")
+            Evidence(
+                f"alert:{index}",
+                "alert",
+                SourceTier.CURRENT_SIGNAL,
+                alert,
+                f"Alert fired for {incident.service}: {alert}",
+            )
             for index, alert in enumerate(incident.alerts)
         ]
 
     def symptom_evidence(self, incident: Incident) -> list[Evidence]:
         return [
-            Evidence(f"symptom:{index}", "symptom", symptom, symptom)
+            Evidence(f"symptom:{index}", "symptom", SourceTier.CURRENT_SIGNAL, symptom, symptom)
             for index, symptom in enumerate(incident.symptoms)
         ]
 
@@ -91,6 +97,7 @@ class MockOperationalTools:
             Evidence(
                 f"deploy:{index}",
                 "deploy",
+                SourceTier.OPERATIONAL_CONTEXT,
                 f"{change.service} change at {change.time}",
                 change.change,
             )
@@ -99,7 +106,7 @@ class MockOperationalTools:
 
     def log_evidence(self, incident: Incident) -> list[Evidence]:
         return [
-            Evidence(f"log:{index}", "log", signal, signal)
+            Evidence(f"log:{index}", "log", SourceTier.OPERATIONAL_CONTEXT, signal, signal)
             for index, signal in enumerate(incident.log_signals)
         ]
 
@@ -116,6 +123,7 @@ class MockOperationalTools:
         return Evidence(
             f"service:{incident.service}",
             "service",
+            SourceTier.OPERATIONAL_CONTEXT,
             f"{incident.service} owned by {owner}",
             f"Escalation: {escalation}",
         )
@@ -127,7 +135,7 @@ class MockOperationalTools:
             if path.exists():
                 text = path.read_text().strip()
                 first_line = text.splitlines()[0].lstrip("# ").strip() if text else ref
-                evidence.append(Evidence(f"runbook:{ref}", "runbook", first_line, text))
+                evidence.append(Evidence(f"runbook:{ref}", "runbook", SourceTier.GUIDANCE, first_line, text))
         return evidence
 
     def prior_incident_evidence(self, incident: Incident) -> list[Evidence]:
@@ -144,6 +152,7 @@ class MockOperationalTools:
                     Evidence(
                         f"prior:{ref}",
                         "prior_incident",
+                        SourceTier.HISTORICAL_CONTEXT,
                         item["summary"],
                         item["resolution"],
                     )
@@ -152,7 +161,7 @@ class MockOperationalTools:
 
     def verification_evidence(self, incident: Incident) -> list[Evidence]:
         return [
-            Evidence(f"verification:{index}", "verification", signal, signal)
+            Evidence(f"verification:{index}", "verification", SourceTier.CURRENT_SIGNAL, signal, signal)
             for index, signal in enumerate(incident.verification_signals)
         ]
 

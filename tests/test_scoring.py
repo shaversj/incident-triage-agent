@@ -75,6 +75,26 @@ class ScoringTests(unittest.TestCase):
         self.assertFalse(run.scorecard.scores["evidence_grounding"])
         self.assertIn("Missing required evidence prefixes: runbook:", run.scorecard.notes)
 
+    def test_scorecard_flags_historical_only_evidence_quality(self) -> None:
+        run = self.run_with_response(
+            "checkout-payment-timeout",
+            {
+                "incident_class": "dependency_outage",
+                "next_action": "escalate_owner",
+                "confidence": 0.88,
+                "evidence_ids": ["prior:INC-2025-102"],
+                "caveats": ["Only historical evidence was cited."],
+                "verification_plan": ["Watch payment-gateway timeout rate."]
+            },
+        )
+
+        assert run.scorecard is not None
+        self.assertFalse(run.scorecard.scores["evidence_quality"])
+        self.assertIn(
+            "Weak evidence quality: cited evidence lacks current or operational support.",
+            run.scorecard.notes,
+        )
+
     def run_with_response(self, scenario_name: str, response: dict):
         scenario = load_scenario(Path("fixtures"), scenario_name)
         workflow = TriageWorkflow(

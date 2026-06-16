@@ -39,7 +39,7 @@ def build_decision_prompt(evidence_package: EvidencePackage) -> str:
         len(evidence_package.evidence),
     )
     evidence_lines = [
-        f"- {item.evidence_id} [{item.source}] {item.summary}: {item.detail}"
+        f"- {item.evidence_id} [{item.source}/{item.source_tier.value}] {item.summary}: {item.detail}"
         for item in evidence_package.evidence
     ]
     allowed_evidence_ids = [f"- {item.evidence_id}" for item in evidence_package.evidence]
@@ -59,6 +59,9 @@ def build_decision_prompt(evidence_package: EvidencePackage) -> str:
             "Use this shape exactly: {\"incident_class\":\"...\",\"next_action\":\"...\",\"confidence\":0.0,\"evidence_ids\":[\"...\"],\"caveats\":[\"...\"],\"verification_plan\":[\"...\"]}.",
             "The evidence_ids, caveats, and verification_plan fields must be arrays of strings.",
             "Cite the strongest direct evidence IDs across relevant source types.",
+            "Prefer current_signal and operational_context evidence when identifying the active incident.",
+            "Use guidance evidence for safe response context.",
+            "Use historical_context evidence only as supporting analogy, never as the sole basis for a confident concrete class.",
             "Evidence ID rules:",
             "- Copy evidence IDs exactly as written.",
             "- Do not invent, shorten, rename, reformat, or convert evidence IDs.",

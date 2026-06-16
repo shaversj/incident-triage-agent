@@ -159,6 +159,19 @@ class LLMTests(unittest.TestCase):
         self.assertIn("Do not invent, shorten, rename, reformat, or convert evidence IDs.", prompt)
         self.assertIn("appears exactly in Allowed evidence_ids", prompt)
 
+    def test_prompt_includes_source_tiers_without_changing_output_schema(self) -> None:
+        from incident_triage_agent.llm import build_decision_prompt
+
+        prompt = build_decision_prompt(self.evidence_package())
+
+        self.assertIn("[alert/current_signal]", prompt)
+        self.assertIn("[log/operational_context]", prompt)
+        self.assertIn("[runbook/guidance]", prompt)
+        self.assertIn("[prior_incident/historical_context]", prompt)
+        self.assertIn("Use historical_context evidence only as supporting analogy", prompt)
+        self.assertIn("\"verification_plan\":[\"...\"]", prompt)
+        self.assertNotIn("\"provenance\"", prompt)
+
     def test_provider_failure_returns_recoverable_validation_result(self) -> None:
         class FailingClient(MiniMaxAnthropicClient):
             def _post_messages(self, payload):
