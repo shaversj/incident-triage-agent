@@ -339,3 +339,33 @@ The project now has a one-command live demo probe plus a sanitized saved respons
 ### Why This Matters
 
 The E2E tests prove the behavior. The demo probe makes the behavior easy to show. That distinction matters for portfolio-quality engineering: a good project should be verifiable by tests and legible to a human who wants to understand the system quickly.
+
+## Modernization Planning: 2026-06-16
+
+The modernization plan is intentionally behavior-preserving. It treats refactoring as a sequence of small, reviewable passes rather than one broad rewrite.
+
+- [ ] Explain why characterization tests should come before moving code out of oversized modules.
+- [ ] Explain why duplicated E2E/probe orchestration is a better first refactor target than the LLM prompt itself.
+- [ ] Explain why `cli.py`, `llm.py`, `grafana.py`, and `server.py` are large because responsibilities accumulated, not because any one function is obviously broken.
+- [ ] Explain why dependency upgrades, HTTP framework changes, and test framework migrations should be split from behavior-preserving refactors.
+- [ ] Explain why local ignored artifacts under `src/incident_triage_agent/` are cleanup work, not product code.
+- [ ] Explain how each pass proves behavior stayed stable: focused parity tests first, then full default suite, then opt-in Docker/live checks only when relevant.
+
+### Why This Matters
+
+Modernization is safest when it narrows the future change surface without changing what users can observe. The useful mental model is: first freeze behavior with tests, then move code, then delete duplication. That gives the project a cleaner architecture without losing the evidence trail that makes the incident-triage agent trustworthy.
+
+## Outcome-Based Test Suite Planning: 2026-06-17
+
+The next testing plan adds a contract layer that checks the operator-facing triage outcome instead of the model's exact prose or the workflow's internal implementation path.
+
+- [ ] Explain why outcome tests are useful before broad refactors or future agent-selected tool flows.
+- [ ] Explain the difference between unit tests, deterministic scorecards, Docker E2E tests, live provider E2E tests, and outcome tests.
+- [ ] Explain why a "good" triage outcome includes evidence citations, provenance support, safety behavior, and recoverable failure handling.
+- [ ] Explain why live MiniMax tests should assert broad contracts instead of exact caveat or verification-plan wording.
+- [ ] Explain why outcome helpers should compose existing workflow, response, provenance, safety, and scorecard surfaces instead of becoming a second evaluator.
+- [ ] Explain why default outcome tests must stay deterministic and avoid Docker, MiniMax credentials, and network access.
+
+### Why This Matters
+
+Outcome tests answer the question a reviewer or operator cares about: did the system produce a bounded, grounded, safe recommendation, or did it fail closed in a legible way? That is different from asking whether one function parsed JSON correctly or whether one live model response used the same words as last time. This layer gives the project stronger refactor safety while preserving the core architecture rule: the workflow controls the system, and the LLM contributes one validated bounded judgment.
