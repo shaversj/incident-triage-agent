@@ -10,7 +10,8 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from incident_triage_agent.config import ConfigError, load_dotenv
-from incident_triage_agent.domain import IncidentClass, NextAction
+from incident_triage_agent.domain import IncidentClass, NextAction, SourceTier
+from tests.support.outcomes import assert_valid_response_outcome
 
 
 RUN_LIVE_LLM_E2E = os.environ.get("RUN_LIVE_LLM_E2E") == "1"
@@ -31,22 +32,16 @@ class RealServiceLiveLLME2ETests(unittest.TestCase):
 
             response = self.post_grafana_payload(live_config["GRAFANA_WEBHOOK_SECRET"])
 
-            self.assertEqual(response["status"], "ok")
-            self.assertTrue(response["validation"]["valid"], response["validation"].get("errors"))
+            assert_valid_response_outcome(
+                self,
+                response,
+                evidence_prefixes=("alert:", "log:"),
+                available_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT),
+                cited_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT),
+                require_safety=True,
+            )
             self.assertIn(response["decision"]["incident_class"], {item.value for item in IncidentClass})
             self.assertIn(response["decision"]["next_action"], {item.value for item in NextAction})
-            self.assertTrue(
-                any(evidence_id.startswith("alert:") for evidence_id in response["decision"]["evidence_ids"]),
-                response["decision"]["evidence_ids"],
-            )
-            self.assertTrue(
-                any(evidence_id.startswith("log:") for evidence_id in response["decision"]["evidence_ids"]),
-                response["decision"]["evidence_ids"],
-            )
-            self.assertIn("current_signal", response["provenance"]["available_tiers"])
-            self.assertIn("operational_context", response["provenance"]["available_tiers"])
-            audit_event = response["safety"].get("audit_event") or {}
-            self.assertNotEqual(audit_event.get("executed"), True)
         finally:
             self.run_compose("down", "-v")
 

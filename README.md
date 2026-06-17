@@ -202,6 +202,8 @@ uv run python -m unittest discover -s tests
 
 Tests use fake LLM responses by default. Real MiniMax calls are not required for the suite.
 
+Outcome tests live in `tests/test_triage_outcomes.py` and `tests/test_webhook_outcomes.py`, with shared assertions in `tests/support/outcomes.py`. Use them when a change should preserve the operator-facing triage contract: bounded class/action, evidence citations, provenance support, safety behavior, and recoverable failure handling. Unit tests should still cover local parsing and policy details; scorecards still evaluate deterministic run quality.
+
 The Docker-backed Grafana/Loki E2E test is opt-in:
 
 ```bash

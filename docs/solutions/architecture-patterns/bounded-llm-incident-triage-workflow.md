@@ -56,6 +56,7 @@ The workflow should own:
 - State transitions and terminal states.
 - Safety policy for approval-sensitive actions.
 - Deterministic scorecards.
+- Outcome tests that verify the operator-facing contract across fixture, webhook, Docker E2E, and live-provider paths.
 
 The LLM should own one bounded judgment:
 
@@ -151,6 +152,8 @@ RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_ll
 ```
 
 Use this only when provider credentials, spend, network dependency, and model variance are acceptable for the validation pass.
+
+Outcome-based tests sit between unit tests and E2E tests. They should assert that a run or webhook response has a bounded decision, cited evidence, source-tier provenance, safe or approval-gated behavior, and recoverable failure handling. They should not assert exact model caveat wording or reimplement scorecard calculations.
 
 ## Related
 

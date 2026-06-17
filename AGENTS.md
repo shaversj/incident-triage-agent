@@ -165,6 +165,7 @@ git diff --check
   - `gather_more_context`
 - Approval-sensitive actions must be staged and audited, not executed.
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
+- Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, provenance support, safety behavior, and recoverable failure handling.
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.
@@ -189,6 +190,7 @@ git diff --check
 - [fixtures/services/services.json](fixtures/services/services.json): mock service ownership metadata.
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads for integration tests.
+- [tests/support/outcomes.py](tests/support/outcomes.py): shared outcome assertions for workflow, webhook, Docker E2E, and live-provider contract tests.
 - [docker-compose.yml](docker-compose.yml): local Grafana, Loki, and webhook-agent stack.
 - [docker-compose.live.yml](docker-compose.live.yml): opt-in live MiniMax override for the local stack.
 - [services/synthetic_checkout_service.py](services/synthetic_checkout_service.py): local service that generates Loki logs from test requests.

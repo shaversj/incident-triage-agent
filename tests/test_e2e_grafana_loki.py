@@ -9,6 +9,9 @@ import unittest
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from incident_triage_agent.domain import IncidentClass, NextAction, SafetyStatus, SourceTier
+from tests.support.outcomes import assert_valid_response_outcome
+
 
 RUN_DOCKER_E2E = os.environ.get("RUN_DOCKER_E2E") == "1"
 
@@ -26,12 +29,19 @@ class GrafanaLokiDockerE2ETests(unittest.TestCase):
             self.generate_checkout_incident()
             response = self.post_grafana_payload()
 
-            self.assertEqual(response["status"], "ok")
             self.assertEqual(response["incident"]["service"], "checkout-api")
-            self.assertIn("alert:0", response["decision"]["evidence_ids"])
-            self.assertIn("log:0", response["decision"]["evidence_ids"])
-            self.assertIn("current_signal", response["provenance"]["available_tiers"])
-            self.assertIn("operational_context", response["provenance"]["available_tiers"])
+            assert_valid_response_outcome(
+                self,
+                response,
+                incident_class=IncidentClass.DEPENDENCY_OUTAGE,
+                next_action=NextAction.ESCALATE_OWNER,
+                evidence_prefixes=("alert:", "log:", "runbook:"),
+                cited_sources=("alert", "log", "runbook"),
+                available_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT, SourceTier.GUIDANCE),
+                cited_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT, SourceTier.GUIDANCE),
+                safety_status=SafetyStatus.SAFE_RECOMMENDATION,
+                approval_required=False,
+            )
         finally:
             self.run_compose("down", "-v")
 
