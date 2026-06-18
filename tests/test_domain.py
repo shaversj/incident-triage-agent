@@ -71,11 +71,6 @@ class DomainTests(unittest.TestCase):
         self.assertEqual(SourceTier.GUIDANCE.value, "guidance")
         self.assertEqual(SourceTier.HISTORICAL_CONTEXT.value, "historical_context")
 
-    def test_evidence_preserves_source_tier(self) -> None:
-        evidence = Evidence("alert:0", "alert", SourceTier.CURRENT_SIGNAL, "High latency")
-
-        self.assertEqual(evidence.source_tier, SourceTier.CURRENT_SIGNAL)
-
     def test_provenance_summary_reports_available_and_cited_tiers(self) -> None:
         scenario = load_scenario(Path("fixtures"), "checkout-payment-timeout")
         package = EvidencePackage(

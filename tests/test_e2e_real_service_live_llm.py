@@ -6,6 +6,7 @@ import subprocess
 import time
 from datetime import datetime, timezone
 import unittest
+from unittest.mock import patch
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -43,18 +44,32 @@ SCENARIOS = {
 }
 
 
+class LiveScenarioSelectionTests(unittest.TestCase):
+    def test_empty_live_scenario_selector_skips_explicitly(self) -> None:
+        test_case = RealServiceLiveLLME2ETests(
+            methodName="test_real_service_logs_and_live_llm_decision_reach_agent"
+        )
+
+        with patch.dict(os.environ, {LIVE_E2E_SCENARIOS_ENV: ""}):
+            with self.assertRaises(unittest.SkipTest) as context:
+                test_case.selected_scenarios()
+
+        self.assertIn("no live E2E scenarios selected", str(context.exception))
+
+
 @unittest.skipUnless(RUN_LIVE_LLM_E2E, "set RUN_LIVE_LLM_E2E=1 to run live MiniMax Docker E2E")
 class RealServiceLiveLLME2ETests(unittest.TestCase):
     def test_real_service_logs_and_live_llm_decision_reach_agent(self) -> None:
         if not shutil.which("docker"):
             self.skipTest("docker is not installed")
+        selected_scenarios = self.selected_scenarios()
         live_config = self.live_config_or_skip()
 
         self.run_compose("up", "-d", "--build")
         try:
             self.wait_for_url("http://localhost:3100/ready")
             self.wait_for_url("http://localhost:8081/health")
-            for name, scenario in self.selected_scenarios().items():
+            for name, scenario in selected_scenarios.items():
                 with self.subTest(scenario=name):
                     self.generate_scenario_logs(scenario)
                     response = self.post_grafana_payload(
@@ -79,6 +94,8 @@ class RealServiceLiveLLME2ETests(unittest.TestCase):
     def selected_scenarios(self) -> dict[str, dict]:
         raw = os.environ.get(LIVE_E2E_SCENARIOS_ENV, "checkout-payment-timeout")
         requested = tuple(name.strip() for name in raw.split(",") if name.strip())
+        if not requested:
+            self.skipTest(f"no live E2E scenarios selected; set {LIVE_E2E_SCENARIOS_ENV}")
         if requested == ("all",):
             return dict(SCENARIOS)
 

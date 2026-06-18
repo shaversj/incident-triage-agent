@@ -29,6 +29,7 @@ SCENARIOS = (
         "cited_sources": ("alert", "log", "runbook"),
         "safety_status": SafetyStatus.SAFE_RECOMMENDATION,
         "approval_required": False,
+        "log_contains": "payment timeout",
     },
     {
         "name": "capacity-saturation",
@@ -42,6 +43,7 @@ SCENARIOS = (
         "cited_sources": ("alert", "log", "runbook"),
         "safety_status": SafetyStatus.APPROVAL_REQUIRED,
         "approval_required": True,
+        "log_contains": "queue_depth",
     },
     {
         "name": "bad-deploy-latency",
@@ -55,6 +57,7 @@ SCENARIOS = (
         "cited_sources": ("alert", "deploy", "log", "runbook"),
         "safety_status": SafetyStatus.APPROVAL_REQUIRED,
         "approval_required": True,
+        "log_contains": "v2.19.0",
     },
 )
 
@@ -87,8 +90,20 @@ class GrafanaLokiDockerE2ETests(unittest.TestCase):
                         safety_status=scenario["safety_status"],
                         approval_required=scenario["approval_required"],
                     )
+                    self.assert_log_evidence_contains(response, scenario["log_contains"])
         finally:
             self.run_compose("down", "-v")
+
+    def assert_log_evidence_contains(self, response: dict, expected_text: str) -> None:
+        log_summaries = [
+            item.get("summary", "")
+            for item in response.get("evidence", ())
+            if item.get("source") == "log"
+        ]
+        self.assertTrue(
+            any(expected_text in summary for summary in log_summaries),
+            f"expected log evidence containing {expected_text!r}, got {log_summaries!r}",
+        )
 
     def post_grafana_payload(self, fixture_name: str) -> dict:
         payload = json.loads((Path("fixtures/grafana") / fixture_name).read_text())

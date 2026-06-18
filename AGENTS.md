@@ -186,6 +186,18 @@ git diff --check
 - Keep diagnostic logs on stderr so stdout remains usable for the triage report.
 - When changing library, SDK, API, CLI, framework, or cloud-service usage, fetch current docs with `ctx7` first as described by the repo instructions.
 
+## Testing Convention
+
+- Write tests that call actual functions, HTTP handlers, scripts, or local service endpoints and verify returned behavior.
+- Use realistic payload fixtures from `fixtures/` for incident, Grafana, runbook, deploy, service, and prior-incident data.
+- Prefer focused integration or outcome tests over many narrow object-shape tests.
+- Verify parsing, validation, error handling, request/response contracts, evidence citations, provenance, safety behavior, and recoverable failure modes.
+- When mocking, mock only unstable external boundaries such as the LLM provider, Loki transport, Docker availability, or live credentials; keep the parser, workflow, policy, scoring, and response-rendering paths real.
+- Do not add tests that only instantiate local dataclasses and assert the values they were constructed with.
+- Avoid brittle hardcoded string checks unless the string is a public contract, a stable evidence ID, a safety/security guarantee, or a required operator-facing message.
+- Docker and live-provider tests must remain opt-in, but when enabled they should fail or skip explicitly instead of silently passing without exercising a scenario.
+- More tests are not automatically better. Bias toward fewer tests that prove meaningful behavior across real code paths.
+
 ## Topic Docs
 
 - [README.md](README.md): project walkthrough, commands, scenarios, decision contract, and testing notes.
