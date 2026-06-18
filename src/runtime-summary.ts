@@ -1,6 +1,6 @@
-export function runtimeSummary(): { runtime: "bun"; status: string } {
+export function runtimeSummary(): { runtime: "node"; status: string } {
   return {
-    runtime: "bun",
-    status: "typescript scaffold ready",
+    runtime: "node",
+    status: "typescript runtime ready",
   };
 }

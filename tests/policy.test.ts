@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import { parseDecisionText } from "../src/llm";

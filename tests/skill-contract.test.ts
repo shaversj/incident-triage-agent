@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
 test("incident-triage skill declares bounded mission and output fields", () => {
-  const skill = readFileSync("src/flue/skills/incident-triage/SKILL.md", "utf8");
+  const skill = readFileSync(".agents/skills/incident-triage/SKILL.md", "utf8");
 
   expect(skill).toContain("name: incident-triage");
   expect(skill).toContain("You do not execute production changes");

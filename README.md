@@ -40,29 +40,29 @@ uv sync
 
 ## TypeScript Migration
 
-The Bun/TypeScript redesign is being introduced behind the existing Python runtime. It now includes the core fixture workflow, bounded decision validation, source-tiered evidence, safety policy, scorecards, Pino CLI logging, and handler-level Grafana/Loki webhook parity.
+The Node/TypeScript redesign is being introduced behind the existing Python runtime. It now includes the core fixture workflow, bounded decision validation, source-tiered evidence, safety policy, scorecards, Pino CLI logging, and handler-level Grafana/Loki webhook parity.
 
 Install TypeScript dependencies:
 
 ```bash
-bun install
+npm install
 ```
 
 Run the TypeScript tests and typecheck:
 
 ```bash
-bun test
-bun run typecheck
+npm test
+npm run typecheck
 ```
 
 List scenarios and run the deterministic mock path:
 
 ```bash
-bun run list
-bun run triage run checkout-payment-timeout --mock-llm --trace
+npm run list
+npm run triage -- run checkout-payment-timeout --mock-llm --trace
 ```
 
-The TypeScript live LLM path intentionally treats Flue runtime loading as a compatibility boundary. Flue 1.0 beta currently pulls Node-only runtime pieces such as `node:sqlite`, so the Python runtime remains the live MiniMax/Docker demo surface until the Flue execution path is moved to a Node-compatible runtime surface or Bun compatibility is confirmed.
+The TypeScript runtime now uses Node so Flue's `@flue/runtime/node` adapter can load Node-only pieces such as `node:sqlite`. The Python runtime remains the live MiniMax/Docker demo surface until the TypeScript HTTP/server path and Flue skill packaging path are promoted to the live demo.
 
 ## Run
 
@@ -245,8 +245,8 @@ Tests use fake LLM responses by default. Real MiniMax calls are not required for
 Run the TypeScript suite:
 
 ```bash
-bun test
-bun run typecheck
+npm test
+npm run typecheck
 ```
 
 The TypeScript default tests also avoid real MiniMax calls, Docker, and networked Loki. They exercise real parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki, and webhook handler code paths with fixture payloads and fake external transports.

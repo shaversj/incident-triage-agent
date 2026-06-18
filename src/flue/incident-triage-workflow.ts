@@ -4,7 +4,6 @@ import type { AppConfig } from "../config";
 import { incidentClasses, nextActions } from "../domain";
 import type { EvidencePackage } from "../evidence";
 import { incidentTriageDecisionSchema } from "../llm";
-import incidentTriageSkill from "./skills/incident-triage/SKILL.md" with { type: "skill" };
 
 interface IncidentTriagePayload {
   evidencePackage: EvidencePackage;
@@ -35,7 +34,6 @@ export async function runIncidentTriageSkill(evidencePackage: EvidencePackage, _
 function createIncidentTriageAgent(config: AppConfig) {
   return createAgent(() => ({
     model: `anthropic/${config.modelName}`,
-    skills: [incidentTriageSkill],
     sandbox: local({ env: {} }),
   }));
 }

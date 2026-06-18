@@ -1,4 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
+import { spawn } from "node:child_process";
+import { text } from "node:stream/consumers";
 
 test("CLI list prints scenarios without credentials", async () => {
   const result = await runCli(["list"]);
@@ -52,17 +54,14 @@ async function runCli(args: string[], options: { cwd?: string; withoutMiniMaxEnv
     delete env.MODEL_NAME;
     delete env.MINIMAX_BASE_URL;
   }
-  const proc = Bun.spawn({
-    cmd: ["bun", "run", `${process.cwd()}/src/cli.ts`, ...args],
+  const proc = spawn("npx", ["tsx", `${process.cwd()}/src/cli.ts`, ...args], {
     cwd: options.cwd ?? process.cwd(),
-    stdout: "pipe",
-    stderr: "pipe",
     env,
   });
   const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-    proc.exited,
+    text(proc.stdout),
+    text(proc.stderr),
+    new Promise<number | null>((resolve) => proc.on("exit", resolve)),
   ]);
   return { stdout, stderr, exitCode };
 }

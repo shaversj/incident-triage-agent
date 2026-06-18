@@ -1,7 +1,7 @@
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { ConfigError, loadConfig, loadDotenv, loadWebhookConfig, redactSecret } from "../src/config";
 
 test("loadConfig reads required MiniMax values", () => {

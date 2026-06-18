@@ -259,15 +259,16 @@ The architecture now includes source tiering plus deterministic provenance outpu
 - [ ] Explain why historical context can support a recommendation but should not be the only basis for a confident concrete classification.
 - [ ] Explain why invalid LLM output can still have useful available-evidence provenance.
 
-## Bun/TypeScript/Flue Redesign: 2026-06-18
+## Node/TypeScript/Flue Redesign: 2026-06-18
 
-The project is being ported to a Bun and TypeScript runtime with Flue as the skill boundary and Pino as the logging target.
+The project is being ported to a Node and TypeScript runtime with Flue as the skill boundary and Pino as the logging target.
 
 - [ ] Explain why this is a migration, not a behavior rewrite.
 - [ ] Explain why the TypeScript runtime should preserve the same bounded workflow contract before adding new agentic behavior.
 - [ ] Explain why Flue belongs at the skill boundary, while workflow state, validation, safety, and scoring remain deterministic application code.
 - [ ] Explain why the Flue runtime import is isolated from ordinary validation tests.
-- [ ] Explain why the current Bun CLI treats Flue runtime loading as a live-path compatibility boundary.
+- [ ] Explain why moving from Bun to Node removes the `node:sqlite` runtime blocker for Flue.
+- [ ] Explain why Flue `SKILL.md` imports still need a Flue-aware packaging/runtime path.
 - [ ] Explain why scorecards should evaluate outcome behavior, not exact prose from the LLM.
 - [ ] Explain why the workflow must append the `scored` state before computing the scorecard.
 
@@ -275,7 +276,7 @@ The project is being ported to a Bun and TypeScript runtime with Flue as the ski
 
 The state-ordering issue is a small but important example of behavior parity. A scorecard that checks terminal workflow state must see the terminal state before it runs; otherwise the implementation can do the right work but grade itself incorrectly. This is why the migration uses focused outcome tests around the real workflow functions instead of only testing local object construction.
 
-Flue 1.0 beta also exposed a runtime compatibility branch: importing the Flue runtime from the Bun CLI can hit Node-only dependencies such as `node:sqlite`. The architecture should keep this visible rather than hiding it. The next live-integration pass needs to decide whether Flue execution runs through a Node-compatible Flue runtime surface, whether the Bun app keeps Flue as the skill packaging boundary, or whether the project waits for Bun compatibility before making Flue the live execution path.
+Flue 1.0 beta exposed a useful runtime lesson: `@flue/runtime/node` depends on Node's `node:sqlite`, so Bun was the wrong live runtime for this project. Moving TypeScript execution to Node removes that specific blocker. The remaining live-integration question is how the Node app should package and execute imported `SKILL.md` files through Flue's intended runtime/build surface.
 
 ## Grafana/Loki TypeScript Parity: 2026-06-18
 
@@ -432,9 +433,9 @@ The implementation expanded the local observability path from one checkout webho
 
 This turns the integration proof from a happy-path checkout demo into a bounded scenario matrix. The design still teaches the right habit: sources provide facts, the prompt asks for one bounded decision, validation checks the response, safety gates approval-sensitive actions, and outcome tests prove the operator-facing contract.
 
-## Bun, TypeScript, And Flue Redesign Planning: 2026-06-18
+## Node, TypeScript, And Flue Redesign Planning: 2026-06-18
 
-The redesign plan moves the project from Python to a Bun/TypeScript stack and uses Flue for one bounded `incident-triage` skill call. The core behavior does not expand: deterministic code still owns evidence, state, validation, provenance, safety, and scoring.
+The redesign plan moves the project from Python to a Node/TypeScript stack and uses Flue for one bounded `incident-triage` skill call. The core behavior does not expand: deterministic code still owns evidence, state, validation, provenance, safety, and scoring.
 
 - [ ] Explain why this is a runtime and architecture migration, not a product expansion.
 - [ ] Explain why one `incident-triage` skill is the right next step before multi-step autonomous tool selection.

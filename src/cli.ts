@@ -9,7 +9,7 @@ import { TriageWorkflow } from "./workflow";
 
 const logLevels = new Set(["trace", "debug", "info", "warn", "error", "fatal"]);
 
-export async function main(argv = Bun.argv.slice(2)): Promise<number> {
+export async function main(argv = process.argv.slice(2)): Promise<number> {
   const parsed = parseArgs(argv);
   const logger = createLogger(parsed.logLevel);
 
@@ -47,7 +47,7 @@ export async function main(argv = Bun.argv.slice(2)): Promise<number> {
         ? new StaticDecisionClient({ [scenario.name]: JSON.stringify(mockDecisionFor(scenario)) })
         : await liveDecisionClient();
     } catch (error) {
-      console.error(`Configuration error: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`Runtime error: ${error instanceof Error ? error.message : String(error)}`);
       return 2;
     }
 
@@ -123,21 +123,22 @@ interface ParsedArgs {
 }
 
 function printUsage(): void {
-  console.log("Usage: bun run triage [--log-level info] <list|run|serve>");
-  console.log("       bun run triage run <scenario> [--mock-llm] [--trace] [--fixtures-dir fixtures]");
+  console.log("Usage: npm run triage -- [--log-level info] <list|run|serve>");
+  console.log("       npm run triage -- run <scenario> [--mock-llm] [--trace] [--fixtures-dir fixtures]");
 }
 
 async function liveDecisionClient(): Promise<FlueDecisionClient> {
   const config = loadConfig(".env");
-  let runIncidentTriageSkill;
   try {
-    ({ runIncidentTriageSkill } = await import("./flue/incident-triage-workflow"));
+    await import("./flue/incident-triage-workflow");
   } catch (error) {
     throw new Error(
-      `Flue runtime could not be loaded by the Bun CLI: ${error instanceof Error ? error.message : String(error)}`,
+      `Flue runtime could not be loaded by the Node CLI: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  return new FlueDecisionClient(config, runIncidentTriageSkill);
+  throw new Error(
+    `Live Flue execution must run through Flue workflow admission; use --mock-llm for the direct CLI path until the TypeScript Flue server/worker is promoted. Loaded config for model '${config.modelName}'.`,
+  );
 }
 
 function mockDecisionFor(scenario: Scenario): object {

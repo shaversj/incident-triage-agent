@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { LokiClient } from "../src/loki";
 
 test("Loki client queries range and converts logs to evidence", async () => {

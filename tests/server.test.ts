@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { StaticDecisionClient } from "../src/llm";
 import { LokiClient, type LokiLogEntry } from "../src/loki";

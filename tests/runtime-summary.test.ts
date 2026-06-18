@@ -1,9 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { runtimeSummary } from "../src/runtime-summary";
 
-test("runtime scaffold identifies the Bun TypeScript path", () => {
+test("runtime summary identifies the Node TypeScript path", () => {
   expect(runtimeSummary()).toEqual({
-    runtime: "bun",
-    status: "typescript scaffold ready",
+    runtime: "node",
+    status: "typescript runtime ready",
   });
 });

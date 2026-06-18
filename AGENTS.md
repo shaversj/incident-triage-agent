@@ -56,16 +56,16 @@ Install and lock dependencies:
 uv sync
 ```
 
-The Bun/TypeScript/Flue redesign is being introduced incrementally. The TypeScript runtime now covers fixture triage, evidence packaging, bounded decision validation, safety policy, scorecards, Pino CLI logging, and handler-level Grafana/Loki webhook parity. The Python runtime remains the primary live Docker/server surface until the Flue runtime compatibility branch is resolved.
+The Node/TypeScript/Flue redesign is being introduced incrementally. The TypeScript runtime now covers fixture triage, evidence packaging, bounded decision validation, safety policy, scorecards, Pino CLI logging, and handler-level Grafana/Loki webhook parity. The Python runtime remains the primary live Docker/server surface until the TypeScript HTTP/server path and Flue skill packaging path are promoted.
 
 Install and verify the TypeScript runtime:
 
 ```bash
-bun install
-bun test
-bun run typecheck
-bun run list
-bun run triage run checkout-payment-timeout --mock-llm --trace
+npm install
+npm test
+npm run typecheck
+npm run list
+npm run triage -- run checkout-payment-timeout --mock-llm --trace
 ```
 
 List scenarios:
@@ -193,8 +193,8 @@ git diff --check
 - Additional live MiniMax E2E scenarios must remain explicitly selected with `LIVE_E2E_SCENARIOS`; the default live path should stay narrow.
 - Synthetic services may generate incident-shaped evidence, but they must not execute remediation or connect to production systems.
 - Prefer `uv run ...` for local commands and keep Docker using the installed `triage` entrypoint from the uv-managed environment.
-- For TypeScript runtime work, use `bun test`, `bun run typecheck`, and `bun run triage ...`.
-- Do not hide the current Flue/Bun compatibility branch: Flue 1.0 beta can load Node-only runtime pieces such as `node:sqlite`, so direct live Flue execution from Bun needs an explicit runtime decision before being treated as complete.
+- For TypeScript runtime work, use `npm test`, `npm run typecheck`, and `npm run triage -- ...`.
+- Keep Flue live execution honest: Node can load Flue's `node:sqlite` adapter, but direct `SKILL.md` imports still need the appropriate Flue-aware packaging/runtime path before the TypeScript live path is treated as complete.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, safety gating, and scorecard results.
 - Keep diagnostic logs on stderr so stdout remains usable for the triage report.
@@ -220,8 +220,8 @@ git diff --check
 - [CONCEPTS.md](CONCEPTS.md): shared domain vocabulary for project-specific concepts; relevant when orienting to the codebase or discussing incident-triage architecture.
 - [docs/brainstorms/2026-06-14-incident-triage-agent-requirements.md](docs/brainstorms/2026-06-14-incident-triage-agent-requirements.md): original requirements and product framing.
 - [docs/plans/2026-06-14-001-feat-incident-triage-agent-plan.md](docs/plans/2026-06-14-001-feat-incident-triage-agent-plan.md): implementation plan and architecture breakdown.
-- [docs/plans/2026-06-18-001-refactor-bun-typescript-flue-redesign-plan.md](docs/plans/2026-06-18-001-refactor-bun-typescript-flue-redesign-plan.md): Bun/TypeScript/Flue redesign plan and parity checklist.
-- [src/flue/skills/incident-triage/SKILL.md](src/flue/skills/incident-triage/SKILL.md): TypeScript incident-triage skill boundary.
+- [docs/plans/2026-06-18-001-refactor-bun-typescript-flue-redesign-plan.md](docs/plans/2026-06-18-001-refactor-bun-typescript-flue-redesign-plan.md): Node/TypeScript/Flue redesign plan and parity checklist.
+- [.agents/skills/incident-triage/SKILL.md](.agents/skills/incident-triage/SKILL.md): TypeScript incident-triage skill boundary discovered by Flue from the local sandbox.
 - [fixtures/scenarios/](fixtures/scenarios/): raw incident scenarios.
 - [fixtures/runbooks/](fixtures/runbooks/): runbook grounding context.
 - [fixtures/deploys/deploys.json](fixtures/deploys/deploys.json): mock deploy facts used by webhook evidence construction.
