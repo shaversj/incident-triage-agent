@@ -1,6 +1,6 @@
 services:
   agent:
-    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    command: ["serve", "--log-level", "${AGENT_LOG_LEVEL:-info}", "--host", "0.0.0.0", "--port", "8080"]
     environment:
       GRAFANA_WEBHOOK_SECRET: "${GRAFANA_WEBHOOK_SECRET:-local-webhook-secret}"
       LOKI_BASE_URL: "http://loki:3100"

@@ -1,8 +1,11 @@
-import { loadConfig } from "./config";
+import { loadConfig, loadWebhookConfig } from "./config";
 import { type Scenario, listScenarios, loadScenario } from "./domain";
 import { loadTools } from "./evidence";
 import { FlueDecisionClient, StaticDecisionClient } from "./llm";
-import { createLogger } from "./logger";
+import { createLogger, type TriageLogger } from "./logger";
+import { mockDecisionForScenario, mockDecisionResponses } from "./mock-decisions";
+import { LokiClient } from "./loki";
+import { startWebhookServer } from "./server";
 import type { SafetyResult } from "./policy";
 import type { TriageRun } from "./workflow";
 import { TriageWorkflow } from "./workflow";
@@ -44,8 +47,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     let llmClient;
     try {
       llmClient = parsed.mockLlm
-        ? new StaticDecisionClient({ [scenario.name]: JSON.stringify(mockDecisionFor(scenario)) })
-        : await liveDecisionClient();
+        ? new StaticDecisionClient({ [scenario.name]: JSON.stringify(mockDecisionForScenario(scenario)) })
+        : await liveDecisionClient(logger);
     } catch (error) {
       console.error(`Runtime error: ${error instanceof Error ? error.message : String(error)}`);
       return 2;
@@ -59,8 +62,40 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   if (parsed.command === "serve") {
-    console.error("The TypeScript webhook server is not implemented yet.");
-    return 2;
+    let llmClient;
+    let webhookConfig;
+    try {
+      webhookConfig = loadWebhookConfig(".env");
+      llmClient = parsed.mockLlm
+        ? new StaticDecisionClient(mockDecisionResponses())
+        : await liveDecisionClient(logger);
+    } catch (error) {
+      console.error(`Runtime error: ${error instanceof Error ? error.message : String(error)}`);
+      return 2;
+    }
+
+    const server = startWebhookServer({
+      host: parsed.host,
+      port: parsed.port,
+      logger,
+      runtime: {
+        fixturesDir: parsed.fixturesDir,
+        webhookSecret: webhookConfig.grafanaWebhookSecret,
+        llmClient,
+        lokiClient: new LokiClient(webhookConfig.lokiBaseUrl),
+        lokiLimit: webhookConfig.lokiLimit,
+      },
+    });
+    logger.info({
+      component: "cli",
+      host: parsed.host,
+      port: parsed.port,
+      mockLlm: parsed.mockLlm,
+    }, "Starting webhook server");
+    await server.ready;
+    logger.info({ component: "cli", host: parsed.host, port: parsed.port }, "Webhook server ready");
+    await server.closed;
+    return 0;
   }
 
   console.error(`Unknown command: ${parsed.command}`);
@@ -71,6 +106,8 @@ function parseArgs(argv: string[]): ParsedArgs {
   const args = [...argv];
   let logLevel = "info";
   let fixturesDir = "fixtures";
+  let host = "127.0.0.1";
+  let port = 8080;
   let mockLlm = false;
   let trace = false;
   let help = false;
@@ -96,6 +133,19 @@ function parseArgs(argv: string[]): ParsedArgs {
         throw new Error("--fixtures-dir requires a value.");
       }
       fixturesDir = value;
+    } else if (arg === "--host") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("--host requires a value.");
+      }
+      host = value;
+    } else if (arg === "--port") {
+      const value = args[++index];
+      const parsed = Number.parseInt(value ?? "", 10);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        throw new Error("--port must be a positive integer.");
+      }
+      port = parsed;
     } else if (arg !== undefined) {
       positional.push(arg);
     }
@@ -105,6 +155,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     command: positional[0],
     scenario: positional[1],
     fixturesDir,
+    host,
+    port,
     help,
     logLevel,
     mockLlm,
@@ -116,6 +168,8 @@ interface ParsedArgs {
   command: string | undefined;
   scenario: string | undefined;
   fixturesDir: string;
+  host: string;
+  port: number;
   help: boolean;
   logLevel: string;
   mockLlm: boolean;
@@ -125,65 +179,12 @@ interface ParsedArgs {
 function printUsage(): void {
   console.log("Usage: npm run triage -- [--log-level info] <list|run|serve>");
   console.log("       npm run triage -- run <scenario> [--mock-llm] [--trace] [--fixtures-dir fixtures]");
+  console.log("       npm run triage -- serve [--mock-llm] [--host 127.0.0.1] [--port 8080]");
 }
 
-async function liveDecisionClient(): Promise<FlueDecisionClient> {
+async function liveDecisionClient(logger: TriageLogger): Promise<FlueDecisionClient> {
   const config = loadConfig(".env");
-  try {
-    await import("./flue/incident-triage-workflow");
-  } catch (error) {
-    throw new Error(
-      `Flue runtime could not be loaded by the Node CLI: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-  throw new Error(
-    `Live Flue execution must run through Flue workflow admission; use --mock-llm for the direct CLI path until the TypeScript Flue server/worker is promoted. Loaded config for model '${config.modelName}'.`,
-  );
-}
-
-function mockDecisionFor(scenario: Scenario): object {
-  const decisions: Record<string, object> = {
-    "checkout-payment-timeout": {
-      incident_class: "dependency_outage",
-      next_action: "escalate_owner",
-      confidence: 0.88,
-      evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
-      caveats: ["Recent checkout deploy is lower-confidence context than payment timeout evidence."],
-      verification_plan: ["Track payment-gateway timeout rate.", "Confirm checkout latency returns below SLO."],
-    },
-    "bad-deploy-latency": {
-      incident_class: "bad_deploy",
-      next_action: "request_rollback_approval",
-      confidence: 0.9,
-      evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
-      caveats: ["Rollback requires human approval."],
-      verification_plan: ["Check checkout latency.", "Check error budget burn."],
-    },
-    "capacity-saturation": {
-      incident_class: "capacity_saturation",
-      next_action: "apply_runbook_step_with_approval",
-      confidence: 0.83,
-      evidence_ids: ["alert:0", "log:0", "runbook:capacity-saturation"],
-      caveats: ["Scaling or throttling action requires approval."],
-      verification_plan: ["Check CPU.", "Check queue depth.", "Check p95 latency."],
-    },
-    "noisy-alert": {
-      incident_class: "noisy_alert",
-      next_action: "continue_monitoring",
-      confidence: 0.78,
-      evidence_ids: ["alert:0", "log:1", "verification:0"],
-      caveats: ["No runbook was matched, but recovery signals are healthy."],
-      verification_plan: ["Continue monitoring latency and error rate."],
-    },
-  };
-  return decisions[scenario.name] ?? {
-    incident_class: "unknown",
-    next_action: "ask_human",
-    confidence: 0.7,
-    evidence_ids: [],
-    caveats: ["No canned mock decision exists for this scenario."],
-    verification_plan: [],
-  };
+  return new FlueDecisionClient(config, undefined, logger);
 }
 
 export function renderRun(run: TriageRun, trace: boolean): void {

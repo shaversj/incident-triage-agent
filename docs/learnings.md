@@ -203,16 +203,16 @@ Agent handoff files reduce accidental drift. This project is especially sensitiv
 
 ## Tooling Learnings: 2026-06-14
 
-The project now uses `uv` as the local Python runner and Docker as the containerized runtime path.
+The project now uses npm, Node.js, TypeScript, and Docker as the active runtime path.
 
-- [ ] Explain why `uv run triage ...` is preferred over setting `PYTHONPATH` manually.
-- [ ] Explain why Docker should call the same `triage` entrypoint as local development.
+- [ ] Explain why `npm run triage -- ...` should be the same operator path used locally and inside Docker.
+- [ ] Explain why Docker should call the same TypeScript CLI entrypoint as local development.
 - [ ] Explain why `.env` is excluded from both git and Docker build context.
 - [ ] Explain why tests still run without real MiniMax credentials.
 
 ### Why This Matters
 
-Tooling should reinforce the architecture instead of creating a second way for it to behave. Using `uv` locally and the same `triage` console script inside Docker means local runs, tests, and container demos exercise the same package entrypoint. Excluding `.env` from the image build context keeps credentials out of the artifact while still allowing real provider calls with `docker run --env-file .env`.
+Tooling should reinforce the architecture instead of creating a second way for it to behave. Using the same TypeScript CLI locally and inside Docker means local runs, tests, and container demos exercise the same package entrypoint. Excluding `.env` from the image build context keeps credentials out of the artifact while still allowing real provider calls with `docker run --env-file .env`.
 
 ## Compound Learning: 2026-06-14
 
@@ -224,7 +224,7 @@ The architecture has been captured as a reusable solution learning in `docs/solu
 
 ## Logging Learnings: 2026-06-15
 
-The CLI now uses Loguru for detailed step-by-step diagnostics.
+The CLI now uses Pino for detailed step-by-step diagnostics.
 
 - [ ] Explain why logs go to stderr while the triage report stays on stdout.
 - [ ] Explain why package logging is disabled by default and enabled by the CLI setup path.
@@ -379,9 +379,9 @@ The modernization plan is intentionally behavior-preserving. It treats refactori
 
 - [ ] Explain why characterization tests should come before moving code out of oversized modules.
 - [ ] Explain why duplicated E2E/probe orchestration is a better first refactor target than the LLM prompt itself.
-- [ ] Explain why `cli.py`, `llm.py`, `grafana.py`, and `server.py` are large because responsibilities accumulated, not because any one function is obviously broken.
+- [ ] Explain why CLI, LLM, Grafana, and server modules can become large because responsibilities accumulate, not because any one function is obviously broken.
 - [ ] Explain why dependency upgrades, HTTP framework changes, and test framework migrations should be split from behavior-preserving refactors.
-- [ ] Explain why local ignored artifacts under `src/incident_triage_agent/` are cleanup work, not product code.
+- [ ] Explain why retired runtime artifacts are cleanup work, not product code.
 - [ ] Explain how each pass proves behavior stayed stable: focused parity tests first, then full default suite, then opt-in Docker/live checks only when relevant.
 
 ### Why This Matters
@@ -447,3 +447,52 @@ The redesign plan moves the project from Python to a Node/TypeScript stack and u
 ### Why This Matters
 
 The useful part of Flue is not that it makes the system more magical. It gives the project a clean skill boundary: domain reasoning lives in an incident-triage skill, while application code keeps authority over state, validation, and safety. That is the same architecture lesson as before, expressed in a more agent-native stack.
+
+## TypeScript Live Runtime Planning: 2026-06-18
+
+The next plan promotes TypeScript from parity scaffold to the live/demo runtime. The important lesson is sequencing: prove TypeScript live MiniMax, HTTP server, Docker, demo probe, and E2E parity before deleting Python paths.
+
+- [ ] Explain why runtime migration is not complete until the strongest demo path uses the new runtime.
+- [ ] Explain why the live MiniMax path should go through the same decision adapter and Flue skill boundary as tests.
+- [ ] Explain why the HTTP server should wrap the already-tested webhook handler instead of reimplementing triage logic.
+- [ ] Explain why Docker E2E, live E2E, and demo probe orchestration should share helpers where possible.
+- [ ] Explain why docs should replace Python commands only when equivalent TypeScript commands exist.
+- [ ] Explain why Python deletion belongs after parity tests, not at the beginning of the migration.
+
+### Why This Matters
+
+A proof of concept is most convincing when the architecture a reader studies is the same architecture the demo runs. Keeping Python as the live surface after TypeScript owns the workflow creates two truths. Promoting TypeScript end to end removes that split while preserving the safety lesson: the LLM reasons, but code controls the system.
+
+## TypeScript Live Runtime Implementation: 2026-06-18
+
+The implementation promoted TypeScript to the active live/demo runtime, with MiniMax execution through Flue, a real HTTP webhook server, a TypeScript synthetic service, Docker Compose parity, a live demo probe, and TypeScript outcome/E2E tests.
+
+- [ ] Explain why the Flue call belongs behind the `LLMDecisionClient` boundary instead of inside workflow state transitions.
+- [ ] Explain why the Flue workflow lives directly in `src/workflows/incident-triage.ts`: `src/` is the recommended Flue source root for new projects, and the workflow file itself should be the discovered entrypoint.
+- [ ] Explain why `.flue/` would be useful for embedding Flue inside a larger app, but would stop Flue from discovering `src/workflows/`.
+- [ ] Explain why the HTTP server wraps the tested webhook handler instead of owning triage logic.
+- [ ] Explain why the synthetic service is a real local service but still mock incident data.
+- [ ] Explain why MiniMax's Anthropic-compatible Flue provider base is `/anthropic`, allowing the Anthropic-compatible client layer to reach `/v1/messages`.
+- [ ] Explain why response serialization matters: public webhook JSON uses stable operator-facing field names such as `approval_required`.
+- [ ] Explain why outcome tests were ported before removing the old runtime.
+- [ ] Explain why Docker E2E and live MiniMax E2E remain opt-in even after the TypeScript migration.
+- [ ] Explain why deleting the retired runtime reduces ambiguity rather than removing useful functionality.
+
+### Why This Matters
+
+The project now has one active story: TypeScript code owns orchestration and safety, Flue owns the skill invocation boundary, MiniMax supplies one bounded judgment, and Docker proves the same path under a realistic local observability loop. That makes the PoC easier to inspect because there is no second implementation quietly carrying the demo.
+
+## Flue Debug Logging: 2026-06-18
+
+The Flue child process now streams stdout and stderr into the normal Pino logger at debug level while still returning captured output to the validator.
+
+- [ ] Explain why normal operator output should stay clean at `info` level.
+- [ ] Explain why Flue internals belong behind `--log-level debug` instead of being printed unconditionally.
+- [ ] Explain why the CLI logger must be passed into the live `FlueDecisionClient`; otherwise the child workflow can run correctly but remain invisible.
+- [ ] Explain why debug logging happens at the process boundary: that is where Flue stdout, stderr, exit code, and captured JSON all meet.
+- [ ] Explain why secret redaction still applies before Flue process output is logged.
+- [ ] Explain why this is observability, not workflow behavior: validation, safety, provenance, and scorecard semantics remain unchanged.
+
+### Why This Matters
+
+Debug logging should help a human understand the architecture without changing the architecture. In this project, `info` logs show the stable incident-triage lifecycle, and `debug` logs expose the lower-level Flue execution path when needed. That separation keeps demos readable while still making integration issues diagnosable.

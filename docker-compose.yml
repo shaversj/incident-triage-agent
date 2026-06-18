@@ -18,7 +18,7 @@ services:
 
   synthetic-checkout:
     build: .
-    entrypoint: ["python", "-m", "services.synthetic_checkout_service"]
+    entrypoint: ["npm", "run", "synthetic-service"]
     ports:
       - "8081:8081"
     environment:
