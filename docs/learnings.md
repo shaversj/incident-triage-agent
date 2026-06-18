@@ -399,3 +399,18 @@ The implementation expanded the local observability path from one checkout webho
 ### Why This Matters
 
 This turns the integration proof from a happy-path checkout demo into a bounded scenario matrix. The design still teaches the right habit: sources provide facts, the prompt asks for one bounded decision, validation checks the response, safety gates approval-sensitive actions, and outcome tests prove the operator-facing contract.
+
+## Bun, TypeScript, And Flue Redesign Planning: 2026-06-18
+
+The redesign plan moves the project from Python to a Bun/TypeScript stack and uses Flue for one bounded `incident-triage` skill call. The core behavior does not expand: deterministic code still owns evidence, state, validation, provenance, safety, and scoring.
+
+- [ ] Explain why this is a runtime and architecture migration, not a product expansion.
+- [ ] Explain why one `incident-triage` skill is the right next step before multi-step autonomous tool selection.
+- [ ] Explain why Flue should own skill invocation and typed result handling, while TypeScript modules keep safety policy and scorecards deterministic.
+- [ ] Explain why parity/outcome tests should be ported before deleting the Python implementation.
+- [ ] Explain why Pino logs should stay on stderr and report output should stay on stdout.
+- [ ] Explain why live MiniMax and Docker E2E paths must remain opt-in after the migration.
+
+### Why This Matters
+
+The useful part of Flue is not that it makes the system more magical. It gives the project a clean skill boundary: domain reasoning lives in an incident-triage skill, while application code keeps authority over state, validation, and safety. That is the same architecture lesson as before, expressed in a more agent-native stack.

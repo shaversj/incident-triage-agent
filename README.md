@@ -38,6 +38,29 @@ Install and lock dependencies:
 uv sync
 ```
 
+## TypeScript Migration Scaffold
+
+The Bun/TypeScript redesign is being introduced behind the existing Python runtime. The scaffold is intentionally small until behavior parity is ported.
+
+Install TypeScript dependencies:
+
+```bash
+bun install
+```
+
+Run the TypeScript smoke test and typecheck:
+
+```bash
+bun test
+bun run typecheck
+```
+
+The current scaffold command is:
+
+```bash
+bun run list
+```
+
 ## Run
 
 List scenarios:

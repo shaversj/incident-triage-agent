@@ -56,6 +56,17 @@ Install and lock dependencies:
 uv sync
 ```
 
+The Bun/TypeScript/Flue redesign is being introduced incrementally. Until behavior parity is complete, the Python runtime remains the primary product surface and the TypeScript runtime is a scaffold.
+
+Install and verify the TypeScript scaffold:
+
+```bash
+bun install
+bun test
+bun run typecheck
+bun run list
+```
+
 List scenarios:
 
 ```bash
