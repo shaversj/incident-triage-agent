@@ -42,7 +42,7 @@ def normalize_grafana_payload(payload: dict[str, Any]) -> GrafanaNormalizationRe
 
     active_alerts = [alert for alert in alerts if isinstance(alert, dict) and alert.get("status") == "firing"]
     service_key, service = _extract_service(payload, alerts)
-    scenario_name = f"grafana-{_slug(service)}"
+    scenario_name = _scenario_name(payload, active_alerts or alerts, service)
     start = _earliest_start(active_alerts or alerts)
     start_ns, end_ns = _loki_window_ns(start)
 
@@ -143,6 +143,22 @@ def _extract_service(payload: dict[str, Any], alerts: list[Any]) -> tuple[str, s
                 return key, str(labels[key])
 
     raise GrafanaPayloadError("Grafana payload did not include a service, app, or job label.")
+
+
+def _scenario_name(payload: dict[str, Any], alerts: list[Any], service: str) -> str:
+    for labels_key in ("commonLabels", "groupLabels"):
+        labels = payload.get(labels_key)
+        if isinstance(labels, dict) and labels.get("scenario"):
+            return f"grafana-{_slug(str(labels['scenario']))}"
+
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        labels = alert.get("labels")
+        if isinstance(labels, dict) and labels.get("scenario"):
+            return f"grafana-{_slug(str(labels['scenario']))}"
+
+    return f"grafana-{_slug(service)}"
 
 
 def _title(payload: dict[str, Any], service: str) -> str:

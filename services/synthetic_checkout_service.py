@@ -27,12 +27,35 @@ class ServiceConfig:
     service_name: str = "checkout-api"
 
 
+SCENARIO_LOG_LINES = {
+    "payment-timeout": (
+        "checkout_id={incident_id} payment timeout after 3000ms",
+        "checkout_id={incident_id} retry queue depth increasing for payment gateway",
+        "checkout_id={incident_id} customer checkout failed after payment retries",
+    ),
+    "capacity-saturation": (
+        "incident_id={incident_id} search worker cpu=94 queue_depth=438",
+        "incident_id={incident_id} search-api p95 latency elevated while workers saturated",
+        "incident_id={incident_id} autoscaling backlog still above baseline",
+    ),
+    "bad-deploy-latency": (
+        "incident_id={incident_id} checkout-api p95 latency elevated after v2.19.0 traffic ramp",
+        "incident_id={incident_id} checkout retry attempts increased for checkout-api requests",
+        "incident_id={incident_id} checkout error rate above baseline for new version",
+    ),
+}
+
+
 def build_loki_payload(
     *,
     service_name: str,
     checkout_id: str,
     timestamp_ns: str | None = None,
+    scenario: str = "payment-timeout",
 ) -> dict[str, Any]:
+    lines = SCENARIO_LOG_LINES.get(scenario)
+    if lines is None:
+        raise ValueError(f"unknown_scenario:{scenario}")
     timestamp = timestamp_ns or str(int(time.time() * 1_000_000_000))
     return {
         "streams": [
@@ -40,12 +63,11 @@ def build_loki_payload(
                 "stream": {
                     "service": service_name,
                     "component": "synthetic-checkout",
-                    "scenario": "payment-timeout",
+                    "scenario": scenario,
                 },
                 "values": [
-                    [timestamp, f"checkout_id={checkout_id} payment timeout after 3000ms"],
-                    [timestamp, f"checkout_id={checkout_id} retry queue depth increasing for payment gateway"],
-                    [timestamp, f"checkout_id={checkout_id} customer checkout failed after payment retries"],
+                    [timestamp, line.format(incident_id=checkout_id)]
+                    for line in lines
                 ],
             }
         ]
@@ -93,7 +115,27 @@ def _handler_for(config: ServiceConfig):
             self._write_json(200, {"status": "ok", "service": config.service_name})
 
         def do_POST(self) -> None:
-            if self.path != "/checkout":
+            route = {
+                "/checkout": {
+                    "scenario": "payment-timeout",
+                    "service": config.service_name,
+                    "id_field": "checkout_id",
+                    "id_prefix": "checkout",
+                },
+                "/capacity": {
+                    "scenario": "capacity-saturation",
+                    "service": "search-api",
+                    "id_field": "incident_id",
+                    "id_prefix": "capacity",
+                },
+                "/bad-deploy": {
+                    "scenario": "bad-deploy-latency",
+                    "service": "checkout-api",
+                    "id_field": "incident_id",
+                    "id_prefix": "bad-deploy",
+                },
+            }.get(self.path)
+            if route is None:
                 self._write_json(404, {"status": "error", "error": "not_found"})
                 return
 
@@ -103,8 +145,12 @@ def _handler_for(config: ServiceConfig):
                 self._write_json(400, {"status": "error", "error": str(error)})
                 return
 
-            checkout_id = str(request_payload.get("checkout_id") or f"checkout-{int(time.time())}")
-            payload = build_loki_payload(service_name=config.service_name, checkout_id=checkout_id)
+            incident_id = str(request_payload.get(route["id_field"]) or f"{route['id_prefix']}-{int(time.time())}")
+            payload = build_loki_payload(
+                service_name=route["service"],
+                checkout_id=incident_id,
+                scenario=route["scenario"],
+            )
             try:
                 push_loki_logs(config.loki_url, payload)
             except LokiPushError:
@@ -116,8 +162,9 @@ def _handler_for(config: ServiceConfig):
                 202,
                 {
                     "status": "accepted",
-                    "service": config.service_name,
-                    "checkout_id": checkout_id,
+                    "service": route["service"],
+                    "scenario": route["scenario"],
+                    route["id_field"]: incident_id,
                     "log_count": len(payload["streams"][0]["values"]),
                 },
             )

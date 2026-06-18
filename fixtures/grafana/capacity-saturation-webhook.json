@@ -1,0 +1,71 @@
+{
+  "receiver": "incident-triage-agent",
+  "status": "firing",
+  "orgId": 1,
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "search-api HighCPU",
+        "service": "search-api",
+        "severity": "sev3"
+      },
+      "annotations": {
+        "summary": "Search API CPU above 90%",
+        "description": "Worker pool utilization and request queue depth are above baseline.",
+        "runbook_ref": "capacity-saturation"
+      },
+      "startsAt": "2026-06-16T18:03:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://grafana.local/alerting/search-cpu",
+      "fingerprint": "search-cpu-001",
+      "silenceURL": "http://grafana.local/alerting/silence/new",
+      "dashboardURL": "http://grafana.local/d/search",
+      "panelURL": "http://grafana.local/d/search?viewPanel=4",
+      "values": {
+        "cpu_percent": 93,
+        "queue_depth": 420
+      }
+    },
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "search-api QueueDepth",
+        "service": "search-api",
+        "severity": "sev3"
+      },
+      "annotations": {
+        "summary": "Search API queue depth above threshold",
+        "description": "Search worker queue depth has remained elevated for five minutes."
+      },
+      "startsAt": "2026-06-16T18:04:00Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "generatorURL": "http://grafana.local/alerting/search-queue",
+      "fingerprint": "search-queue-001",
+      "silenceURL": "http://grafana.local/alerting/silence/new",
+      "dashboardURL": "http://grafana.local/d/search",
+      "panelURL": "http://grafana.local/d/search?viewPanel=7",
+      "values": {
+        "queue_depth": 450,
+        "p95_ms": 740
+      }
+    }
+  ],
+  "groupLabels": {
+    "service": "search-api"
+  },
+  "commonLabels": {
+    "service": "search-api",
+    "severity": "sev3"
+  },
+  "commonAnnotations": {
+    "summary": "Search API saturation"
+  },
+  "externalURL": "http://grafana.local/",
+  "version": "1",
+  "groupKey": "{}:{service=\"search-api\"}",
+  "truncatedAlerts": 0,
+  "title": "[FIRING:2] Search API saturation",
+  "state": "alerting",
+  "message": "Search API CPU and queue alerts are firing."
+}

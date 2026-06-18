@@ -92,6 +92,30 @@ class ToolsTests(unittest.TestCase):
         self.assertEqual(evidence["service:checkout-api"].source_tier, SourceTier.OPERATIONAL_CONTEXT)
         self.assertNotIn("logs", package.missing_context)
 
+    def test_external_bad_deploy_evidence_uses_deploy_fixture_when_webhook_has_no_recent_changes(self) -> None:
+        payload = json.loads(Path("fixtures/grafana/bad-deploy-latency-webhook.json").read_text())
+        normalized = normalize_grafana_payload(payload)
+
+        package = load_tools(Path("fixtures")).build_evidence_package_from_incident(
+            normalized.scenario_name,
+            normalized.incident,
+            log_evidence=LokiClient.to_evidence(
+                (
+                    LokiLogEntry(
+                        "1781627400000000000",
+                        "checkout-api p95 latency elevated after v2.19.0 traffic ramp",
+                        {"service": "checkout-api"},
+                    ),
+                )
+            ),
+        )
+
+        deploy = package.by_id()["deploy:0"]
+        self.assertEqual(deploy.source, "deploy")
+        self.assertEqual(deploy.source_tier, SourceTier.OPERATIONAL_CONTEXT)
+        self.assertIn("checkout-api change at 2026-06-16T16:10:00Z", deploy.summary)
+        self.assertIn("v2.19.0", deploy.detail)
+
 
 if __name__ == "__main__":
     unittest.main()

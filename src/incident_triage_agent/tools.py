@@ -107,15 +107,35 @@ class MockOperationalTools:
         ]
 
     def deploy_evidence(self, incident: Incident) -> list[Evidence]:
+        if incident.recent_changes:
+            changes = incident.recent_changes
+            return [
+                Evidence(
+                    f"deploy:{index}",
+                    "deploy",
+                    SourceTier.OPERATIONAL_CONTEXT,
+                    f"{change.service} change at {change.time}",
+                    change.change,
+                )
+                for index, change in enumerate(changes)
+            ]
+        return self.fixture_deploy_evidence(incident)
+
+    def fixture_deploy_evidence(self, incident: Incident) -> list[Evidence]:
+        deploys_path = self.fixtures_dir / "deploys" / "deploys.json"
+        if not deploys_path.exists():
+            return []
+        deploys = json.loads(deploys_path.read_text())
+        matching_deploys = [item for item in deploys if item.get("service") == incident.service]
         return [
             Evidence(
                 f"deploy:{index}",
                 "deploy",
                 SourceTier.OPERATIONAL_CONTEXT,
-                f"{change.service} change at {change.time}",
-                change.change,
+                f"{item['service']} change at {item['time']}",
+                item["change"],
             )
-            for index, change in enumerate(incident.recent_changes)
+            for index, item in enumerate(matching_deploys)
         ]
 
     def log_evidence(self, incident: Incident) -> list[Evidence]:

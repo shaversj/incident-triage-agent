@@ -24,18 +24,44 @@ COMPOSE_COMMAND = (
     "-f",
     "docker-compose.live.yml",
 )
+SCENARIOS = {
+    "checkout-payment-timeout": {
+        "fixture": "checkout-payment-timeout-webhook.json",
+        "endpoint": "/checkout",
+        "id_field": "checkout_id",
+        "default_id": "demo-live-checkout-001",
+        "log_label": "synthetic checkout logs",
+    },
+    "capacity-saturation": {
+        "fixture": "capacity-saturation-webhook.json",
+        "endpoint": "/capacity",
+        "id_field": "incident_id",
+        "default_id": "demo-live-capacity-001",
+        "log_label": "synthetic capacity logs",
+    },
+    "bad-deploy-latency": {
+        "fixture": "bad-deploy-latency-webhook.json",
+        "endpoint": "/bad-deploy",
+        "id_field": "incident_id",
+        "default_id": "demo-live-bad-deploy-001",
+        "log_label": "synthetic bad-deploy logs",
+    },
+}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run a local live E2E probe and print the LLM triage decision.",
     )
+    parser.add_argument("--scenario", choices=tuple(SCENARIOS), default="checkout-payment-timeout")
     parser.add_argument("--checkout-id", default="demo-live-checkout-001")
+    parser.add_argument("--incident-id", default=None)
     parser.add_argument("--no-build", action="store_true", help="Start Compose without rebuilding images.")
     parser.add_argument("--json", action="store_true", help="Print the sanitized response as JSON.")
     parser.add_argument("--verbose-compose", action="store_true", help="Show Docker Compose command output.")
     args = parser.parse_args()
     quiet_compose = not args.verbose_compose
+    scenario = SCENARIOS[args.scenario]
 
     command = ("up", "-d")
     if not args.no_build:
@@ -50,12 +76,13 @@ def main() -> int:
         wait_for_url("http://localhost:3100/ready")
         wait_for_url("http://localhost:8081/health")
 
-        emit("Generating synthetic checkout logs...", json_mode=args.json)
-        checkout_response = generate_checkout_incident(args.checkout_id)
+        emit(f"Generating {scenario['log_label']}...", json_mode=args.json)
+        incident_id = args.checkout_id if args.scenario == "checkout-payment-timeout" else args.incident_id
+        service_response = generate_scenario_logs(scenario, incident_id)
         webhook_secret = config.get("GRAFANA_WEBHOOK_SECRET", "local-webhook-secret")
         emit("Posting Grafana webhook and waiting for MiniMax decision...", json_mode=args.json)
-        response = post_grafana_payload(webhook_secret)
-        summary = sanitized_summary(response, checkout_response)
+        response = post_grafana_payload(webhook_secret, scenario["fixture"])
+        summary = sanitized_summary(response, service_response)
 
         if args.json:
             print(json.dumps(summary, indent=2, sort_keys=True))
@@ -113,10 +140,10 @@ def wait_for_url(url: str, timeout_seconds: int = 90) -> None:
     raise TimeoutError(f"Timed out waiting for {url}")
 
 
-def generate_checkout_incident(checkout_id: str) -> dict[str, Any]:
-    body = json.dumps({"checkout_id": checkout_id}).encode("utf-8")
+def generate_scenario_logs(scenario: dict[str, str], incident_id: str | None) -> dict[str, Any]:
+    body = json.dumps({scenario["id_field"]: incident_id or scenario["default_id"]}).encode("utf-8")
     request = Request(
-        "http://localhost:8081/checkout",
+        f"http://localhost:8081{scenario['endpoint']}",
         data=body,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -125,8 +152,8 @@ def generate_checkout_incident(checkout_id: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def post_grafana_payload(webhook_secret: str) -> dict[str, Any]:
-    payload = json.loads((PROJECT_ROOT / "fixtures/grafana/checkout-payment-timeout-webhook.json").read_text())
+def post_grafana_payload(webhook_secret: str, fixture_name: str) -> dict[str, Any]:
+    payload = json.loads((PROJECT_ROOT / "fixtures/grafana" / fixture_name).read_text())
     now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     for alert in payload["alerts"]:
         alert["startsAt"] = now
@@ -144,9 +171,10 @@ def post_grafana_payload(webhook_secret: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
-def sanitized_summary(response: dict[str, Any], checkout_response: dict[str, Any]) -> dict[str, Any]:
+def sanitized_summary(response: dict[str, Any], service_response: dict[str, Any]) -> dict[str, Any]:
     return {
-        "checkout_response": checkout_response,
+        "checkout_response": service_response,
+        "service_response": service_response,
         "incident": response.get("incident"),
         "validation": response.get("validation"),
         "decision": response.get("decision"),

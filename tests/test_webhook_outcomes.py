@@ -93,6 +93,82 @@ class WebhookOutcomeTests(unittest.TestCase):
         self.assertEqual(status, 200)
         assert_recoverable_response(self, response, error_contains="not valid JSON")
 
+    def test_capacity_webhook_outcome_requires_approval_with_current_and_guidance_evidence(self) -> None:
+        status, response = handle_grafana_webhook(
+            self.load_payload("capacity-saturation-webhook.json"),
+            "test-secret",
+            self.runtime(
+                loki_client=FakeLokiClient(
+                    "search worker cpu=94 queue_depth=438",
+                    service="search-api",
+                ),
+                llm_client=self.llm_response(
+                    {
+                        "incident_class": "capacity_saturation",
+                        "next_action": "apply_runbook_step_with_approval",
+                        "confidence": 0.84,
+                        "evidence_ids": ["alert:0", "log:0", "runbook:capacity-saturation"],
+                        "caveats": ["Scaling or throttling changes require approval."],
+                        "verification_plan": ["Check CPU utilization.", "Check queue depth."],
+                    },
+                    scenario_name="grafana-search-api",
+                ),
+            ),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response["incident"]["service"], "search-api")
+        assert_valid_response_outcome(
+            self,
+            response,
+            incident_class=IncidentClass.CAPACITY_SATURATION,
+            next_action=NextAction.APPLY_RUNBOOK_STEP_WITH_APPROVAL,
+            evidence_prefixes=("alert:", "log:", "runbook:"),
+            cited_sources=("alert", "log", "runbook"),
+            available_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT, SourceTier.GUIDANCE),
+            cited_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT, SourceTier.GUIDANCE),
+            safety_status=SafetyStatus.APPROVAL_REQUIRED,
+            approval_required=True,
+        )
+
+    def test_bad_deploy_webhook_outcome_cites_raw_deploy_evidence(self) -> None:
+        status, response = handle_grafana_webhook(
+            self.load_payload("bad-deploy-latency-webhook.json"),
+            "test-secret",
+            self.runtime(
+                loki_client=FakeLokiClient(
+                    "checkout-api p95 latency elevated after v2.19.0 traffic ramp",
+                    service="checkout-api",
+                ),
+                llm_client=self.llm_response(
+                    {
+                        "incident_class": "bad_deploy",
+                        "next_action": "request_rollback_approval",
+                        "confidence": 0.86,
+                        "evidence_ids": ["alert:0", "deploy:0", "log:0", "runbook:bad-deploy"],
+                        "caveats": ["Rollback requires human approval."],
+                        "verification_plan": ["Check checkout p95 latency.", "Check checkout error budget burn."],
+                    },
+                    scenario_name="grafana-bad-deploy-latency",
+                ),
+            ),
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(response["scenario"], "grafana-bad-deploy-latency")
+        assert_valid_response_outcome(
+            self,
+            response,
+            incident_class=IncidentClass.BAD_DEPLOY,
+            next_action=NextAction.REQUEST_ROLLBACK_APPROVAL,
+            evidence_prefixes=("alert:", "deploy:", "log:", "runbook:"),
+            cited_sources=("alert", "deploy", "log", "runbook"),
+            available_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT, SourceTier.GUIDANCE),
+            cited_tiers=(SourceTier.CURRENT_SIGNAL, SourceTier.OPERATIONAL_CONTEXT, SourceTier.GUIDANCE),
+            safety_status=SafetyStatus.APPROVAL_REQUIRED,
+            approval_required=True,
+        )
+
     def runtime(self, loki_client=None, llm_client=None) -> WebhookRuntime:
         return WebhookRuntime(
             fixtures_dir=Path("fixtures"),
@@ -110,17 +186,21 @@ class WebhookOutcomeTests(unittest.TestCase):
             loki_client=loki_client or FakeLokiClient(),
         )
 
-    def llm_response(self, response: dict) -> StaticLLMClient:
-        return StaticLLMClient({"grafana-checkout-api": json.dumps(response)})
+    def llm_response(self, response: dict, scenario_name: str = "grafana-checkout-api") -> StaticLLMClient:
+        return StaticLLMClient({scenario_name: json.dumps(response)})
 
-    def load_payload(self) -> dict:
-        return json.loads(Path("fixtures/grafana/checkout-payment-timeout-webhook.json").read_text())
+    def load_payload(self, fixture_name: str = "checkout-payment-timeout-webhook.json") -> dict:
+        return json.loads((Path("fixtures/grafana") / fixture_name).read_text())
 
 
 class FakeLokiClient:
+    def __init__(self, line: str = "payment timeout after 3000ms", *, service: str = "checkout-api") -> None:
+        self.line = line
+        self.service = service
+
     def query_range(self, *_args, **_kwargs):
         return (
-            LokiLogEntry("1781622420000000000", "payment timeout after 3000ms", {"service": "checkout-api"}),
+            LokiLogEntry("1781622420000000000", self.line, {"service": self.service}),
         )
 
     def to_evidence(self, entries):
