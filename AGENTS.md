@@ -106,12 +106,18 @@ Run the local Grafana/Loki stack:
 docker compose up -d --build
 ```
 
-Generate synthetic checkout logs through the local service:
+Generate synthetic logs through the local service:
 
 ```bash
 curl -s http://localhost:8081/checkout \
   -H 'Content-Type: application/json' \
   --data '{"checkout_id":"local-demo-001"}'
+curl -s http://localhost:8081/capacity \
+  -H 'Content-Type: application/json' \
+  --data '{"incident_id":"local-capacity-001"}'
+curl -s http://localhost:8081/bad-deploy \
+  -H 'Content-Type: application/json' \
+  --data '{"incident_id":"local-bad-deploy-001"}'
 ```
 
 Run the live MiniMax Compose override only when you explicitly want provider variance and cost:
@@ -124,6 +130,7 @@ Run the one-command live demo probe:
 
 ```bash
 uv run python scripts/run_live_e2e_probe.py
+uv run python scripts/run_live_e2e_probe.py --scenario capacity-saturation
 ```
 
 Run tests:
@@ -146,6 +153,7 @@ git diff --check
 - Do not print secret values in CLI output, test failures, logs, docs, or exceptions.
 - Keep fixtures raw. Scenario incident data must not contain `suspected_causes`, `recommended_actions`, or `requires_approval`.
 - Keep Grafana webhook ingestion raw. Alert labels and annotations may become facts, but they must not become suspected causes, recommended actions, or eval expectations.
+- Keep bad-deploy webhook evidence raw. Deployment facts belong in deploy evidence fixtures or real deploy sources, not rollback hints inside Grafana annotations.
 - Keep Loki lookup bounded by service labels, time window, and result limit before prompt assembly.
 - Keep webhook secrets out of output and logs. Use `X-Webhook-Secret` only as an auth boundary, never as evidence.
 - Do not let LLM output drive workflow state until local validation passes.
@@ -170,6 +178,7 @@ git diff --check
 - Tests must not require real MiniMax credentials or network access.
 - Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.
 - Live MiniMax E2E must remain separate from the mock Docker E2E and require `RUN_LIVE_LLM_E2E=1`.
+- Additional live MiniMax E2E scenarios must remain explicitly selected with `LIVE_E2E_SCENARIOS`; the default live path should stay narrow.
 - Synthetic services may generate incident-shaped evidence, but they must not execute remediation or connect to production systems.
 - Prefer `uv run ...` for local commands and keep Docker using the installed `triage` entrypoint from the uv-managed environment.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
@@ -187,6 +196,7 @@ git diff --check
 - [docs/plans/2026-06-14-001-feat-incident-triage-agent-plan.md](docs/plans/2026-06-14-001-feat-incident-triage-agent-plan.md): implementation plan and architecture breakdown.
 - [fixtures/scenarios/](fixtures/scenarios/): raw incident scenarios.
 - [fixtures/runbooks/](fixtures/runbooks/): runbook grounding context.
+- [fixtures/deploys/deploys.json](fixtures/deploys/deploys.json): mock deploy facts used by webhook evidence construction.
 - [fixtures/services/services.json](fixtures/services/services.json): mock service ownership metadata.
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads for integration tests.

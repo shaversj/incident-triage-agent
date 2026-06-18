@@ -93,7 +93,7 @@ Run the real MiniMax path in Docker:
 docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
-Run the local Grafana/Loki integration stack with the synthetic checkout service and mock LLM:
+Run the local Grafana/Loki integration stack with the synthetic incident service and mock LLM:
 
 ```bash
 docker compose up -d --build
@@ -105,6 +105,18 @@ Generate synthetic checkout logs from a real local service request:
 curl -s http://localhost:8081/checkout \
   -H 'Content-Type: application/json' \
   --data '{"checkout_id":"local-demo-001"}'
+```
+
+Generate capacity or bad-deploy logs:
+
+```bash
+curl -s http://localhost:8081/capacity \
+  -H 'Content-Type: application/json' \
+  --data '{"incident_id":"local-capacity-001"}'
+
+curl -s http://localhost:8081/bad-deploy \
+  -H 'Content-Type: application/json' \
+  --data '{"incident_id":"local-bad-deploy-001"}'
 ```
 
 Send the sample Grafana webhook payload:
@@ -138,7 +150,7 @@ Run the full live demo probe as one command:
 uv run python scripts/run_live_e2e_probe.py
 ```
 
-The probe starts the live Compose stack, generates checkout logs through the synthetic service, posts the Grafana webhook, prints the LLM decision summary, and cleans up the stack. Use `--json` to print the sanitized response shape. A saved example lives at `docs/examples/live-e2e-response.json`.
+The probe starts the live Compose stack, generates logs through the synthetic service, posts the Grafana webhook, prints the LLM decision summary, and cleans up the stack. Use `--scenario capacity-saturation` or `--scenario bad-deploy-latency` to demo another incident path, and use `--json` to print the sanitized response shape. A saved example lives at `docs/examples/live-e2e-response.json`.
 
 ## Grafana Webhook Server
 
@@ -148,9 +160,9 @@ Run the webhook server locally with deterministic mock LLM output:
 uv run triage serve --mock-llm
 ```
 
-The server accepts `POST /webhooks/grafana` and requires the `X-Webhook-Secret` header to match `GRAFANA_WEBHOOK_SECRET`. It normalizes Grafana alert payloads into raw incident facts, queries Loki for bounded log context when configured, builds the normal evidence package, and runs the same workflow used by fixture scenarios.
+The server accepts `POST /webhooks/grafana` and requires the `X-Webhook-Secret` header to match `GRAFANA_WEBHOOK_SECRET`. It normalizes Grafana alert payloads into raw incident facts, queries Loki for bounded log context when configured, adds service, runbook, and deploy facts from fixtures, builds the normal evidence package, and runs the same workflow used by fixture scenarios.
 
-Resolved-only Grafana payloads are ignored by default. Missing Loki logs become missing context instead of a crash.
+Resolved-only Grafana payloads are ignored by default. Missing Loki logs become missing context instead of a crash. Bad-deploy webhook fixtures keep rollback language out of Grafana annotations; deploy context comes from `fixtures/deploys/deploys.json`.
 
 ## Scenarios
 
@@ -210,13 +222,13 @@ The Docker-backed Grafana/Loki E2E test is opt-in:
 RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
 ```
 
-That test uses a real synthetic checkout service to generate Loki logs, while keeping the LLM deterministic. The live MiniMax E2E is a separate opt-in test:
+That test uses the synthetic incident service to generate checkout, capacity, and bad-deploy Loki logs, while keeping the LLM deterministic. The live MiniMax E2E is a separate opt-in test:
 
 ```bash
 RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
 ```
 
-The live test requires Docker plus usable `MINIMAX_API_KEY` and `MODEL_NAME` config. It asserts the bounded response contract, evidence citations, provenance, and safety behavior instead of exact model wording.
+The live test requires Docker plus usable `MINIMAX_API_KEY` and `MODEL_NAME` config. It runs `checkout-payment-timeout` by default. Set `LIVE_E2E_SCENARIOS=capacity-saturation,bad-deploy-latency` or `LIVE_E2E_SCENARIOS=all` to run additional live scenarios. It asserts the bounded response contract, evidence citations, provenance, and safety behavior instead of exact model wording.
 
 ## Why Actions Are Simulated
 

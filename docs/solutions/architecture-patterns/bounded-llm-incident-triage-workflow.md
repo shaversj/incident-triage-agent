@@ -44,9 +44,15 @@ Grafana webhook -> raw incident normalization -> Loki log lookup
 The stronger local E2E variant adds a synthetic service before Loki:
 
 ```text
-synthetic checkout request -> service-generated Loki logs -> Grafana webhook
+synthetic incident request -> service-generated Loki logs -> Grafana webhook
   -> Loki log lookup -> evidence package -> LLM decision -> validation -> safety gate
 ```
+
+The observability scenario matrix should exercise more than one alert shape without weakening the raw-data boundary:
+
+- Checkout dependency outage can use alert, log, and runbook facts.
+- Capacity saturation can use alert, log, service, and runbook facts with approval-gated runbook action.
+- Bad deploy should add deploy evidence as operational context rather than hiding rollback recommendations in Grafana annotations.
 
 The workflow should own:
 
@@ -72,6 +78,8 @@ Safety belongs outside the prompt. Rollback-like or runbook-action recommendatio
 The same architecture should be runnable through the normal local and container paths. Here, `uv run triage ...` and the Docker image both exercise the same package entrypoint, so local demos, tests, and container demos do not drift into separate execution paths.
 
 When adding observability integrations, preserve the same separation. Grafana webhook payloads should be normalized into raw alert facts, and Loki query results should become operational evidence. Neither source should carry expected incident classes, next actions, suspected causes, or approval hints into the model prompt.
+
+If a webhook scenario needs deterministic routing because multiple alert shapes use the same service, use neutral test metadata such as a scenario label for mock selection only. Do not treat that label as evidence for the incident class.
 
 ## Why This Matters
 
@@ -145,10 +153,13 @@ docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-
 RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
 ```
 
+That Docker E2E should cover the deterministic observability scenario matrix while still using a mock LLM.
+
 The live provider E2E should remain opt-in:
 
 ```bash
 RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
+LIVE_E2E_SCENARIOS=all RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
 ```
 
 Use this only when provider credentials, spend, network dependency, and model variance are acceptable for the validation pass.

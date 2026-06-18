@@ -144,20 +144,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.mock_llm:
             log.info("Using deterministic mock LLM response for webhook server.")
-            llm_client = StaticLLMClient(
-                {
-                    "grafana-checkout-api": json.dumps(
-                        {
-                            "incident_class": "dependency_outage",
-                            "next_action": "escalate_owner",
-                            "confidence": 0.87,
-                            "evidence_ids": ["alert:0", "log:0", "runbook:dependency-outage"],
-                            "caveats": ["Synthetic Grafana/Loki integration path."],
-                            "verification_plan": ["Watch payment timeout rate."],
-                        }
-                    )
-                }
-            )
+            llm_client = StaticLLMClient(mock_webhook_decisions())
         else:
             try:
                 config = load_config(Path(".env"))
@@ -233,6 +220,41 @@ def mock_decision_for(scenario: Scenario) -> dict:
             "verification_plan": []
         },
     )
+
+
+def mock_webhook_decisions() -> dict[str, str]:
+    return {
+        "grafana-checkout-api": json.dumps(
+            {
+                "incident_class": "dependency_outage",
+                "next_action": "escalate_owner",
+                "confidence": 0.87,
+                "evidence_ids": ["alert:0", "log:0", "runbook:dependency-outage"],
+                "caveats": ["Synthetic Grafana/Loki integration path."],
+                "verification_plan": ["Watch payment timeout rate."],
+            }
+        ),
+        "grafana-search-api": json.dumps(
+            {
+                "incident_class": "capacity_saturation",
+                "next_action": "apply_runbook_step_with_approval",
+                "confidence": 0.84,
+                "evidence_ids": ["alert:0", "log:0", "runbook:capacity-saturation"],
+                "caveats": ["Scaling or throttling changes require approval."],
+                "verification_plan": ["Check CPU utilization.", "Check queue depth.", "Check p95 latency."],
+            }
+        ),
+        "grafana-bad-deploy-latency": json.dumps(
+            {
+                "incident_class": "bad_deploy",
+                "next_action": "request_rollback_approval",
+                "confidence": 0.86,
+                "evidence_ids": ["alert:0", "deploy:0", "log:0", "runbook:bad-deploy"],
+                "caveats": ["Rollback requires human approval."],
+                "verification_plan": ["Check checkout p95 latency.", "Check checkout error budget burn."],
+            }
+        ),
+    }
 
 
 def render_run(run: TriageRun, trace: bool) -> None:

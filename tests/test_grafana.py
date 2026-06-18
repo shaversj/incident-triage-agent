@@ -46,6 +46,26 @@ class GrafanaPayloadTests(unittest.TestCase):
         with self.assertRaises(FixtureError):
             normalize_grafana_payload(payload)
 
+    def test_capacity_payload_routes_by_service_when_no_scenario_label_exists(self) -> None:
+        payload = json.loads(Path("fixtures/grafana/capacity-saturation-webhook.json").read_text())
+
+        result = normalize_grafana_payload(payload)
+
+        self.assertEqual(result.scenario_name, "grafana-search-api")
+        self.assertEqual(result.incident.service, "search-api")
+        self.assertEqual(result.incident.runbook_refs, ("capacity-saturation",))
+        self.assertEqual(result.loki_query_labels, {"service": "search-api"})
+
+    def test_scenario_label_can_disambiguate_same_service_webhooks(self) -> None:
+        payload = json.loads(Path("fixtures/grafana/bad-deploy-latency-webhook.json").read_text())
+
+        result = normalize_grafana_payload(payload)
+
+        self.assertEqual(result.scenario_name, "grafana-bad-deploy-latency")
+        self.assertEqual(result.incident.service, "checkout-api")
+        self.assertEqual(result.incident.runbook_refs, ("bad-deploy",))
+        self.assertEqual(result.incident.recent_changes, ())
+
     def test_missing_service_label_raises_payload_error(self) -> None:
         payload = self.load_payload()
         payload["commonLabels"].pop("service")

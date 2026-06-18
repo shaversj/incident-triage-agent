@@ -32,6 +32,27 @@ class SyntheticCheckoutServiceTests(unittest.TestCase):
             self.assertEqual(timestamp, "1781622420000000000")
             self.assertIn("checkout-123", line)
 
+    def test_build_loki_payload_supports_capacity_and_bad_deploy_scenarios(self) -> None:
+        capacity = build_loki_payload(
+            service_name="search-api",
+            checkout_id="capacity-123",
+            timestamp_ns="1781625780000000000",
+            scenario="capacity-saturation",
+        )
+        bad_deploy = build_loki_payload(
+            service_name="checkout-api",
+            checkout_id="bad-deploy-123",
+            timestamp_ns="1781627400000000000",
+            scenario="bad-deploy-latency",
+        )
+
+        self.assertEqual(capacity["streams"][0]["stream"]["service"], "search-api")
+        self.assertEqual(capacity["streams"][0]["stream"]["scenario"], "capacity-saturation")
+        self.assertIn("queue_depth", capacity["streams"][0]["values"][0][1])
+        self.assertEqual(bad_deploy["streams"][0]["stream"]["service"], "checkout-api")
+        self.assertEqual(bad_deploy["streams"][0]["stream"]["scenario"], "bad-deploy-latency")
+        self.assertIn("v2.19.0", bad_deploy["streams"][0]["values"][0][1])
+
     def test_push_loki_logs_posts_to_loki_push_endpoint(self) -> None:
         seen: dict[str, object] = {}
 

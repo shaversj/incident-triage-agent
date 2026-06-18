@@ -369,3 +369,33 @@ The next testing plan adds a contract layer that checks the operator-facing tria
 ### Why This Matters
 
 Outcome tests answer the question a reviewer or operator cares about: did the system produce a bounded, grounded, safe recommendation, or did it fail closed in a legible way? That is different from asking whether one function parsed JSON correctly or whether one live model response used the same words as last time. This layer gives the project stronger refactor safety while preserving the core architecture rule: the workflow controls the system, and the LLM contributes one validated bounded judgment.
+
+## Observability Scenario Matrix Planning: 2026-06-17
+
+The next test expansion should add capacity saturation to the Grafana/Loki E2E path, then add bad deploy with a raw deploy evidence source.
+
+- [ ] Explain why fixture outcome coverage and observability E2E coverage answer different questions.
+- [ ] Explain why capacity saturation is the best next E2E scenario: it exercises current alerts, operational logs, runbook guidance, and approval-gated safety.
+- [ ] Explain why live MiniMax scenario expansion must stay opt-in and selectable.
+- [ ] Explain why bad deploy needs a raw deploy evidence source instead of putting rollback hints in Grafana annotations.
+- [ ] Explain why scenario fixtures should provide facts while test code owns expected outcomes.
+- [ ] Explain why adding more scenarios should reuse outcome assertions instead of adding one-off E2E checks.
+
+### Why This Matters
+
+More scenarios make the architecture proof stronger only if they preserve the same boundaries. Capacity saturation is valuable because it proves the local observability path can handle a different service, different log shape, and approval-sensitive safety result. Bad deploy is valuable because it proves the workflow can combine alert, log, deploy, and runbook evidence without letting Grafana annotations become recommendations. The important discipline is not to chase breadth by weakening inputs. Grafana, Loki, and deploy evidence should still provide facts; the workflow, model validation, safety gate, provenance, and scorecard still decide whether the outcome is usable.
+
+## Observability Scenario Matrix Implementation: 2026-06-17
+
+The implementation expanded the local observability path from one checkout webhook to a small deterministic matrix: checkout dependency outage, search capacity saturation, and checkout bad deploy.
+
+- [ ] Explain why the deterministic Docker E2E can assert exact classes and actions while the live MiniMax E2E should stay selectable and contract-based.
+- [ ] Explain why bad deploy needed `fixtures/deploys/deploys.json`: Grafana supplied alert facts, Loki supplied runtime log facts, and deploy evidence supplied change facts.
+- [ ] Explain why the bad-deploy webhook uses a neutral `scenario` label only for deterministic mock routing, not as an incident-class answer.
+- [ ] Explain why `/capacity` and `/bad-deploy` endpoints generate real Loki log records but still remain synthetic, local, and non-remediating.
+- [ ] Explain why approval-required outcomes must include staged audit payloads and must not execute rollback, scaling, or throttling.
+- [ ] Explain why the live test defaults to checkout and requires `LIVE_E2E_SCENARIOS` for broader provider-backed coverage.
+
+### Why This Matters
+
+This turns the integration proof from a happy-path checkout demo into a bounded scenario matrix. The design still teaches the right habit: sources provide facts, the prompt asks for one bounded decision, validation checks the response, safety gates approval-sensitive actions, and outcome tests prove the operator-facing contract.
