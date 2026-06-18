@@ -267,12 +267,15 @@ The project is being ported to a Bun and TypeScript runtime with Flue as the ski
 - [ ] Explain why the TypeScript runtime should preserve the same bounded workflow contract before adding new agentic behavior.
 - [ ] Explain why Flue belongs at the skill boundary, while workflow state, validation, safety, and scoring remain deterministic application code.
 - [ ] Explain why the Flue runtime import is isolated from ordinary validation tests.
+- [ ] Explain why the current Bun CLI treats Flue runtime loading as a live-path compatibility boundary.
 - [ ] Explain why scorecards should evaluate outcome behavior, not exact prose from the LLM.
 - [ ] Explain why the workflow must append the `scored` state before computing the scorecard.
 
 ### Why This Matters
 
 The state-ordering issue is a small but important example of behavior parity. A scorecard that checks terminal workflow state must see the terminal state before it runs; otherwise the implementation can do the right work but grade itself incorrectly. This is why the migration uses focused outcome tests around the real workflow functions instead of only testing local object construction.
+
+Flue 1.0 beta also exposed a runtime compatibility branch: importing the Flue runtime from the Bun CLI can hit Node-only dependencies such as `node:sqlite`. The architecture should keep this visible rather than hiding it. The next live-integration pass needs to decide whether Flue execution runs through a Node-compatible Flue runtime surface, whether the Bun app keeps Flue as the skill packaging boundary, or whether the project waits for Bun compatibility before making Flue the live execution path.
 - [ ] Explain why this work happened before Grafana ingestion or larger playbook systems.
 
 ### Why This Matters

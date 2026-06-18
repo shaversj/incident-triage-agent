@@ -26,6 +26,12 @@ export async function run({ init, payload }: FlueContext<IncidentTriagePayload>)
   return response.data;
 }
 
+export async function runIncidentTriageSkill(evidencePackage: EvidencePackage, _config: AppConfig): Promise<unknown> {
+  throw new Error(
+    `Direct Flue skill execution is only available through the Flue workflow runtime. Scenario '${evidencePackage.scenarioName}' was not submitted to a Flue context.`,
+  );
+}
+
 function createIncidentTriageAgent(config: AppConfig) {
   return createAgent(() => ({
     model: `anthropic/${config.modelName}`,
