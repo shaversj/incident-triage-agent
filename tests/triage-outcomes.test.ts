@@ -11,8 +11,14 @@ test("checkout payment timeout outcome escalates dependency owner", async () => 
     next_action: "escalate_owner",
     confidence: 0.88,
     evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
-    caveats: ["Checkout deploy is lower-confidence context."],
-    verification_plan: ["Watch payment-gateway timeout rate."],
+    caveats: [
+      "Recent checkout deploy is weaker than current payment-gateway timeout and log evidence.",
+    ],
+    verification_plan: [
+      "Confirm payment-gateway timeout and error rates return to baseline.",
+      "Confirm checkout p95 latency and error rate recover after upstream stabilization.",
+      "Check retry queue depth drains instead of continuing to amplify payment calls.",
+    ],
   });
 
   assertValidRunOutcome(run, {
@@ -41,7 +47,10 @@ test("bad deploy outcome requires rollback approval without execution", async ()
     confidence: 0.9,
     evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
     caveats: [],
-    verification_plan: ["Check checkout latency and error burn."],
+    verification_plan: [
+      "Confirm checkout latency and error budget burn improve after approved rollback.",
+      "Verify the suspect version is no longer receiving production traffic.",
+    ],
   });
 
   assertValidRunOutcome(run, {
@@ -64,7 +73,10 @@ test("capacity saturation outcome stages runbook action for approval", async () 
     confidence: 0.91,
     evidence_ids: ["alert:0", "log:0", "runbook:capacity-saturation"],
     caveats: ["Scaling or throttling requires oncall approval."],
-    verification_plan: ["Check CPU and queue depth after mitigation."],
+    verification_plan: [
+      "Confirm CPU returns below the saturation threshold after approved mitigation.",
+      "Confirm queue depth drains and p95 latency returns below the service threshold.",
+    ],
   });
 
   assertValidRunOutcome(run, {
@@ -86,7 +98,9 @@ test("noisy alert outcome continues monitoring without mutation", async () => {
     confidence: 0.82,
     evidence_ids: ["alert:0", "log:1", "verification:0"],
     caveats: ["No runbook evidence was found, but signals recovered."],
-    verification_plan: ["Keep watching latency and error rate."],
+    verification_plan: [
+      "Continue monitoring latency, error rate, and alert recurrence through the next evaluation window.",
+    ],
   });
 
   assertValidRunOutcome(run, {

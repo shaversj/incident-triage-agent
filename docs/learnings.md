@@ -496,3 +496,49 @@ The Flue child process now streams stdout and stderr into the normal Pino logger
 ### Why This Matters
 
 Debug logging should help a human understand the architecture without changing the architecture. In this project, `info` logs show the stable incident-triage lifecycle, and `debug` logs expose the lower-level Flue execution path when needed. That separation keeps demos readable while still making integration issues diagnosable.
+
+## TypeScript Modernization Planning: 2026-06-18
+
+The modernization plan after the TypeScript live-runtime migration focuses on small behavior-preserving refactor passes rather than another architecture rewrite.
+
+- [ ] Explain why characterization tests should come before moving broad modules like CLI, server, Grafana parsing, and LLM boundaries.
+- [ ] Explain why duplicated Docker/live E2E/probe orchestration is the best first structural cleanup target.
+- [ ] Explain why large files are not automatically bad; the useful split is by responsibility and public contract.
+- [ ] Explain why `normalizeGrafanaPayload`, `handleGrafanaWebhook`, `runToResponse`, `FlueDecisionClient`, and `validateDecisionPayload` should remain stable facades during refactors.
+- [ ] Explain why framework changes, dependency upgrades, BullMQ conversion, prompt optimization, and provider upgrades are separate migration tasks.
+- [ ] Explain why historical Python/Bun-era plans should remain historical while active docs should clearly point to TypeScript, npm, Docker, Flue, and Vitest.
+
+### Why This Matters
+
+Modernization is not a license to churn working code. The right move is to make future changes cheaper while preserving the operator contract: bounded decisions, evidence citations, provenance, safety, scorecard, and opt-in live-provider behavior. The plan protects that contract first, then cleans structure in reviewable passes.
+
+## Human Investigation Skill Planning: 2026-06-18
+
+The next skill prompt improvement should make the model reason more like an on-call SRE while preserving the same bounded output contract.
+
+- [ ] Explain why human-style investigation order belongs inside the skill instructions, not in new workflow state yet.
+- [ ] Explain the investigation loop: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, safe next action, and verification.
+- [ ] Explain why temporal correlation from deploy evidence is weaker than logs or verification signals unless corroborated.
+- [ ] Explain why runbooks guide response and prior incidents support analogy, but neither should be treated as primary proof.
+- [ ] Explain why the output schema should stay unchanged even though the reasoning instructions improve.
+- [ ] Explain why future agent-selected read-only tools should be a separate architecture step after the one-shot skill is stronger.
+
+### Why This Matters
+
+The project gets better when the model's reasoning process resembles real SRE triage, but it stays trustworthy because the application still validates the result. This is the balance to preserve: make the skill smarter about investigation without letting it become the system of record or the safety mechanism.
+
+## Human Investigation Skill Implementation: 2026-06-18
+
+The incident-triage skill now explicitly tells the LLM to investigate like an on-call SRE before returning the same six-field structured result.
+
+- [ ] Explain why the skill now starts from current signal and impact instead of jumping straight to a cause label.
+- [ ] Explain why recent changes are compared against the incident timeline but are not treated as proof without corroborating logs or verification signals.
+- [ ] Explain why "dependency-vs-local evidence" matters: it forces the model to compare dependency outage, bad deploy, capacity saturation, noisy alert, insufficient context, and unknown before choosing.
+- [ ] Explain why the output schema did not change: better reasoning instructions should still feed the same validator, evidence citation checker, safety gate, and renderer.
+- [ ] Explain why the skill says not to call tools or create tickets: the workflow supplies evidence, and this PoC recommends bounded next actions rather than taking operational authority.
+- [ ] Explain why verification plans should include concrete recovery checks that a human can use to confirm or falsify the recommendation.
+- [ ] Explain why the skill contract test is intentionally prompt-facing: it protects the domain reasoning boundary without asserting brittle provider wording.
+
+### Why This Matters
+
+This is the smallest useful step toward more agentic incident investigation. The prompt now has a recognizable human triage path, but the architecture is still deterministic where it needs to be: code gathers evidence, validates citations, applies safety, and reports provenance. That keeps the PoC educational and trustworthy while making the LLM's contribution more realistic.

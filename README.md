@@ -12,7 +12,7 @@ raw incident data -> evidence package -> incident-triage skill
   -> safety gate -> operator output -> scorecard
 ```
 
-The workflow owns control flow, state, validation, provenance, safety, and scoring. The LLM owns one bounded judgment.
+The workflow owns control flow, state, validation, provenance, safety, and scoring. The LLM owns one bounded judgment. The `incident-triage` skill guides that judgment through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
 
 ## Setup
 

@@ -14,6 +14,8 @@ raw incident data -> evidence package -> incident-triage skill
   -> safety gate -> operator output -> scorecard
 ```
 
+The `incident-triage` skill should make its bounded judgment by following a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
+
 Primary TypeScript code lives in `src/`:
 
 - `cli.ts`: command-line interface.
