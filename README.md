@@ -38,9 +38,9 @@ Install and lock dependencies:
 uv sync
 ```
 
-## TypeScript Migration Scaffold
+## TypeScript Migration
 
-The Bun/TypeScript redesign is being introduced behind the existing Python runtime. The scaffold is intentionally small until behavior parity is ported.
+The Bun/TypeScript redesign is being introduced behind the existing Python runtime. It now includes the core fixture workflow, bounded decision validation, source-tiered evidence, safety policy, scorecards, Pino CLI logging, and handler-level Grafana/Loki webhook parity.
 
 Install TypeScript dependencies:
 
@@ -48,18 +48,21 @@ Install TypeScript dependencies:
 bun install
 ```
 
-Run the TypeScript smoke test and typecheck:
+Run the TypeScript tests and typecheck:
 
 ```bash
 bun test
 bun run typecheck
 ```
 
-The current scaffold command is:
+List scenarios and run the deterministic mock path:
 
 ```bash
 bun run list
+bun run triage run checkout-payment-timeout --mock-llm --trace
 ```
+
+The TypeScript live LLM path intentionally treats Flue runtime loading as a compatibility boundary. Flue 1.0 beta currently pulls Node-only runtime pieces such as `node:sqlite`, so the Python runtime remains the live MiniMax/Docker demo surface until the Flue execution path is moved to a Node-compatible runtime surface or Bun compatibility is confirmed.
 
 ## Run
 
@@ -187,6 +190,8 @@ The server accepts `POST /webhooks/grafana` and requires the `X-Webhook-Secret` 
 
 Resolved-only Grafana payloads are ignored by default. Missing Loki logs become missing context instead of a crash. Bad-deploy webhook fixtures keep rollback language out of Grafana annotations; deploy context comes from `fixtures/deploys/deploys.json`.
 
+The TypeScript runtime currently includes Grafana payload normalization, Loki query/evidence conversion, and a tested webhook handler function. The TypeScript HTTP `serve` command is not enabled yet; use the Python server for local webhook demos.
+
 ## Scenarios
 
 - `checkout-payment-timeout`: dependency outage path.
@@ -236,6 +241,17 @@ uv run python -m unittest discover -s tests
 ```
 
 Tests use fake LLM responses by default. Real MiniMax calls are not required for the suite.
+
+Run the TypeScript suite:
+
+```bash
+bun test
+bun run typecheck
+```
+
+The TypeScript default tests also avoid real MiniMax calls, Docker, and networked Loki. They exercise real parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki, and webhook handler code paths with fixture payloads and fake external transports.
+
+A sanitized TypeScript webhook-handler response example lives at `docs/examples/typescript-webhook-response.json`.
 
 Outcome tests live in `tests/test_triage_outcomes.py` and `tests/test_webhook_outcomes.py`, with shared assertions in `tests/support/outcomes.py`. Use them when a change should preserve the operator-facing triage contract: bounded class/action, evidence citations, provenance support, safety behavior, and recoverable failure handling. Unit tests should still cover local parsing and policy details; scorecards still evaluate deterministic run quality.
 
