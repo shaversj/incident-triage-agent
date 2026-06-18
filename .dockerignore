@@ -7,5 +7,8 @@ __pycache__/
 *.egg-info/
 build/
 dist/
+node_modules/
+bun.lockb
+.tsbuildinfo
 docs/
 tests/
