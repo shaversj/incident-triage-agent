@@ -258,6 +258,21 @@ The architecture now includes source tiering plus deterministic provenance outpu
 - [ ] Explain why provenance should be computed deterministically instead of added as another model output field.
 - [ ] Explain why historical context can support a recommendation but should not be the only basis for a confident concrete classification.
 - [ ] Explain why invalid LLM output can still have useful available-evidence provenance.
+
+## Bun/TypeScript/Flue Redesign: 2026-06-18
+
+The project is being ported to a Bun and TypeScript runtime with Flue as the skill boundary and Pino as the logging target.
+
+- [ ] Explain why this is a migration, not a behavior rewrite.
+- [ ] Explain why the TypeScript runtime should preserve the same bounded workflow contract before adding new agentic behavior.
+- [ ] Explain why Flue belongs at the skill boundary, while workflow state, validation, safety, and scoring remain deterministic application code.
+- [ ] Explain why the Flue runtime import is isolated from ordinary validation tests.
+- [ ] Explain why scorecards should evaluate outcome behavior, not exact prose from the LLM.
+- [ ] Explain why the workflow must append the `scored` state before computing the scorecard.
+
+### Why This Matters
+
+The state-ordering issue is a small but important example of behavior parity. A scorecard that checks terminal workflow state must see the terminal state before it runs; otherwise the implementation can do the right work but grade itself incorrectly. This is why the migration uses focused outcome tests around the real workflow functions instead of only testing local object construction.
 - [ ] Explain why this work happened before Grafana ingestion or larger playbook systems.
 
 ### Why This Matters
