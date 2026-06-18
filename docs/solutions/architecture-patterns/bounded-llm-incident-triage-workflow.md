@@ -75,7 +75,7 @@ Provider output should never be trusted directly. In this project, the adapter e
 
 Safety belongs outside the prompt. Rollback-like or runbook-action recommendations are staged as approval-required payloads and audit events. Missing critical context moves the run to human input instead of letting a fluent answer masquerade as a safe action.
 
-The same architecture should be runnable through the normal local and container paths. Here, `uv run triage ...` and the Docker image both exercise the same package entrypoint, so local demos, tests, and container demos do not drift into separate execution paths.
+The same architecture should be runnable through the normal local and container paths. Here, `npm run triage -- ...` and the Docker image both exercise the same TypeScript entrypoint, so local demos, tests, and container demos do not drift into separate execution paths.
 
 When adding observability integrations, preserve the same separation. Grafana webhook payloads should be normalized into raw alert facts, and Loki query results should become operational evidence. Neither source should carry expected incident classes, next actions, suspected causes, or approval hints into the model prompt.
 
@@ -106,51 +106,59 @@ That separation makes the proof of concept safer and more honest. A successful r
 
 The raw incident fixture is intentionally not allowed to contain answer-like fields:
 
-```python
-PROHIBITED_INCIDENT_FIELDS = {"suspected_causes", "recommended_actions", "requires_approval"}
+```ts
+export const prohibitedIncidentFields = new Set([
+  "suspected_causes",
+  "recommended_actions",
+  "requires_approval",
+]);
 ```
 
 The workflow validates the model result before applying safety policy:
 
-```python
-run.validation = self.llm_client.decide(run.evidence_package)
+```ts
+run.validation = await this.llmClient.decide(run.evidencePackage);
 
-if not run.validation.valid or not run.validation.decision:
-    run.transition(WorkflowState.RECOVERABLE_FAILURE)
-    run.transition(WorkflowState.SCORED)
-    run.scorecard = score_run(run)
-    return run
+if (!run.validation.valid || !run.validation.decision) {
+  this.transition(run, "recoverable_failure");
+  this.transition(run, "scored");
+  run.scorecard = scoreRun(run);
+  return run;
+}
 
-run.transition(WorkflowState.DECISION_VALIDATED)
-run.safety = evaluate_safety(run.validation.decision, run.evidence_package)
+this.transition(run, "decision_validated");
+run.safety = evaluateSafety(run.validation.decision, run.evidencePackage);
 ```
 
 Approval-sensitive recommendations are staged, not executed:
 
-```python
-if decision.next_action in APPROVAL_REQUIRED_ACTIONS:
-    staged_payload = build_staged_payload(decision, evidence_package)
-    return SafetyResult(
-        status=SafetyStatus.APPROVAL_REQUIRED.value,
-        approval_required=True,
-        staged_payload=staged_payload,
-        audit_event={
-            "event": "simulated_action_staged",
-            "incident_id": evidence_package.incident.incident_id,
-            "next_action": decision.next_action.value,
-            "executed": False,
-        },
-    )
+```ts
+if (approvalRequiredActions.has(decision.nextAction)) {
+  const stagedPayload = buildStagedPayload(decision, evidencePackage);
+  return {
+    status: "approval_required",
+    approvalRequired: true,
+    reason: "Action requires human approval; simulated payload staged and not executed.",
+    stagedPayload,
+    auditEvent: {
+      event: "simulated_action_staged",
+      incidentId: evidencePackage.incident.incidentId,
+      nextAction: decision.nextAction,
+      executed: false,
+    },
+  };
+}
 ```
 
 A good verification pass exercises both the local and container paths:
 
 ```bash
-uv run triage list
-uv run python -m unittest discover -s tests
+npm run list
+npm test
+npm run typecheck
 docker build -t incident-triage-agent:local .
 docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-llm --trace
-RUN_DOCKER_E2E=1 uv run python -m unittest tests/test_e2e_grafana_loki.py
+RUN_DOCKER_E2E=1 npm test -- tests/e2e-grafana-loki.test.ts
 ```
 
 That Docker E2E should cover the deterministic observability scenario matrix while still using a mock LLM.
@@ -158,8 +166,8 @@ That Docker E2E should cover the deterministic observability scenario matrix whi
 The live provider E2E should remain opt-in:
 
 ```bash
-RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
-LIVE_E2E_SCENARIOS=all RUN_LIVE_LLM_E2E=1 uv run python -m unittest tests/test_e2e_real_service_live_llm.py
+RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
+LIVE_E2E_SCENARIOS=all RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
 ```
 
 Use this only when provider credentials, spend, network dependency, and model variance are acceptable for the validation pass.

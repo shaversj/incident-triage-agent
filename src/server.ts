@@ -1,7 +1,9 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { type Scenario } from "./domain";
 import { PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
 import { GrafanaPayloadError, normalizeGrafanaPayload } from "./grafana";
 import type { LLMDecisionClient } from "./llm";
+import { noopLogger, type TriageLogger } from "./logger";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
 export interface WebhookRuntime {
@@ -10,6 +12,20 @@ export interface WebhookRuntime {
   llmClient: LLMDecisionClient;
   lokiClient?: LokiClientLike;
   lokiLimit: number;
+}
+
+export interface WebhookServerOptions {
+  host: string;
+  port: number;
+  runtime: WebhookRuntime;
+  logger?: TriageLogger;
+}
+
+export interface RunningWebhookServer {
+  server: Server;
+  ready: Promise<void>;
+  closed: Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface LokiClientLike {
@@ -91,6 +107,115 @@ export async function handleGrafanaWebhook(
   return [200, runToResponse(run)];
 }
 
+export function startWebhookServer(options: WebhookServerOptions): RunningWebhookServer {
+  const logger = options.logger ?? noopLogger;
+  const server = createServer(async (request, response) => {
+    try {
+      await routeRequest(request, response, options.runtime, logger);
+    } catch (error) {
+      logger.error({ component: "server", error: error instanceof Error ? error.message : String(error) }, "Unhandled request error");
+      writeJson(response, 500, { status: "error", error: "internal_server_error" });
+    }
+  });
+
+  const ready = new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(options.port, options.host, () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  const closed = new Promise<void>((resolve) => server.once("close", resolve));
+
+  const shutdown = () => {
+    void closeServer(server);
+  };
+  process.once("SIGINT", shutdown);
+  process.once("SIGTERM", shutdown);
+
+  return {
+    server,
+    ready,
+    closed,
+    close: async () => {
+      process.off("SIGINT", shutdown);
+      process.off("SIGTERM", shutdown);
+      await closeServer(server);
+    },
+  };
+}
+
+async function routeRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  runtime: WebhookRuntime,
+  logger: TriageLogger,
+): Promise<void> {
+  if (request.method === "GET" && request.url === "/health") {
+    writeJson(response, 200, { status: "ok" });
+    return;
+  }
+
+  if (request.method !== "POST" || request.url !== "/webhooks/grafana") {
+    writeJson(response, 404, { status: "error", error: "not_found" });
+    return;
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(await readRequestBody(request));
+  } catch {
+    writeJson(response, 400, { status: "error", error: "invalid_json" });
+    return;
+  }
+
+  const secret = request.headers["x-webhook-secret"];
+  const providedSecret = Array.isArray(secret) ? secret[0] : secret;
+  logger.info({ component: "server" }, "Grafana webhook received");
+  const [status, body] = await handleGrafanaWebhook(payload, providedSecret, runtime);
+  writeJson(response, status, body);
+}
+
+function readRequestBody(request: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    request.setEncoding("utf8");
+    request.on("data", (chunk: string) => {
+      body += chunk;
+      if (body.length > 1_000_000) {
+        reject(new Error("request body too large"));
+        request.destroy();
+      }
+    });
+    request.on("end", () => resolve(body));
+    request.on("error", reject);
+  });
+}
+
+function writeJson(response: ServerResponse, status: number, body: Record<string, unknown>): void {
+  const encoded = JSON.stringify(body);
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Content-Length": Buffer.byteLength(encoded),
+  });
+  response.end(encoded);
+}
+
+function closeServer(server: Server): Promise<void> {
+  if (!server.listening) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
 export function runToResponse(run: TriageRun): Record<string, unknown> {
   const response: Record<string, unknown> = {
     status: "ok",
@@ -142,7 +267,13 @@ export function runToResponse(run: TriageRun): Record<string, unknown> {
   }
 
   if (run.safety) {
-    response.safety = run.safety;
+    response.safety = {
+      status: run.safety.status,
+      approval_required: run.safety.approvalRequired,
+      reason: run.safety.reason,
+      staged_payload: run.safety.stagedPayload,
+      audit_event: run.safety.auditEvent,
+    };
   }
 
   if (run.scorecard) {

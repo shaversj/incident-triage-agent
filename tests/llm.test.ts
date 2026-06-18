@@ -4,10 +4,13 @@ import { loadTools } from "../src/evidence";
 import {
   FlueDecisionClient,
   StaticDecisionClient,
+  parseFlueRunOutput,
   parseDecisionText,
+  runIncidentTriageSkill,
   validateDecisionPayload,
 } from "../src/llm";
 import type { AppConfig } from "../src/config";
+import { noopLogger } from "../src/logger";
 
 test("valid decision payload parses into bounded decision", () => {
   const package_ = evidencePackage();
@@ -88,6 +91,96 @@ test("Flue decision client validates injected skill runner output", async () => 
 
   expect(result.valid).toBe(true);
   expect(result.decision?.evidenceIds).toEqual(["alert:0"]);
+});
+
+test("Flue decision client redacts provider secrets from errors", async () => {
+  const client = new FlueDecisionClient(appConfig(), async () => {
+    throw new Error("provider rejected secret-key");
+  });
+
+  const result = await client.decide(evidencePackage());
+
+  expect(result.valid).toBe(false);
+  expect(result.errors[0]).toContain("<redacted>");
+  expect(result.errors[0]).not.toContain("secret-key");
+});
+
+test("runIncidentTriageSkill parses successful flue run JSON output", async () => {
+  const result = await runIncidentTriageSkill(evidencePackage(), appConfig(), noopLogger, async () => ({
+    exitCode: 0,
+    stderr: "run id: test-run\n",
+    stdout: JSON.stringify({
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:0"],
+      caveats: [],
+      verification_plan: ["Watch latency."],
+    }),
+  }));
+
+  expect(result).toMatchObject({ incident_class: "dependency_outage" });
+});
+
+test("runIncidentTriageSkill reports non-secret flue run failures", async () => {
+  await expect(runIncidentTriageSkill(evidencePackage(), appConfig(), noopLogger, async () => ({
+    exitCode: 1,
+    stderr: "failed with secret-key",
+    stdout: "",
+  }))).rejects.toThrow("<redacted>");
+});
+
+test("runIncidentTriageSkill still accepts an injected executor as third argument", async () => {
+  const result = await runIncidentTriageSkill(evidencePackage(), appConfig(), async () => ({
+    exitCode: 0,
+    stderr: "",
+    stdout: JSON.stringify({
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:0"],
+      caveats: [],
+      verification_plan: ["Watch latency."],
+    }),
+  }));
+
+  expect(result).toMatchObject({ next_action: "escalate_owner" });
+});
+
+test("Flue decision client passes logger to injected skill runner", async () => {
+  const debugMessages: string[] = [];
+  const logger = {
+    debug: (_bindings: unknown, message?: string) => {
+      if (message) {
+        debugMessages.push(message);
+      }
+    },
+    info: () => undefined,
+    warn: () => undefined,
+    error: () => undefined,
+  };
+  const client = new FlueDecisionClient(appConfig(), async (_package_, _config, receivedLogger) => {
+    receivedLogger.debug({ component: "flue" }, "debug boundary visible");
+    return {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:0"],
+      caveats: [],
+      verification_plan: ["Watch latency."],
+    };
+  }, logger);
+
+  const result = await client.decide(evidencePackage());
+
+  expect(result.valid).toBe(true);
+  expect(debugMessages).toEqual(["debug boundary visible"]);
+});
+
+test("parseFlueRunOutput accepts JSON after build output", () => {
+  expect(parseFlueRunOutput("built project\n{\"incident_class\":\"dependency_outage\"}")).toEqual({
+    incident_class: "dependency_outage",
+  });
 });
 
 function evidencePackage() {

@@ -1,17 +1,18 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM node:22-bookworm-slim
 
 WORKDIR /app
 
-ENV PYTHONUNBUFFERED=1 \
-    UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+ENV NODE_ENV=development
 
-COPY pyproject.toml uv.lock README.md ./
+COPY package.json package-lock.json README.md ./
+
+RUN npm ci
+
 COPY src ./src
 COPY fixtures ./fixtures
 COPY services ./services
+COPY .agents ./.agents
+COPY tsconfig.json tsconfig.build.json ./
 
-RUN uv sync --frozen --no-dev
-
-ENTRYPOINT ["/app/.venv/bin/triage"]
+ENTRYPOINT ["npm", "run", "triage", "--"]
 CMD ["list"]
