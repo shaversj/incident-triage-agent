@@ -276,6 +276,20 @@ The project is being ported to a Bun and TypeScript runtime with Flue as the ski
 The state-ordering issue is a small but important example of behavior parity. A scorecard that checks terminal workflow state must see the terminal state before it runs; otherwise the implementation can do the right work but grade itself incorrectly. This is why the migration uses focused outcome tests around the real workflow functions instead of only testing local object construction.
 
 Flue 1.0 beta also exposed a runtime compatibility branch: importing the Flue runtime from the Bun CLI can hit Node-only dependencies such as `node:sqlite`. The architecture should keep this visible rather than hiding it. The next live-integration pass needs to decide whether Flue execution runs through a Node-compatible Flue runtime surface, whether the Bun app keeps Flue as the skill packaging boundary, or whether the project waits for Bun compatibility before making Flue the live execution path.
+
+## Grafana/Loki TypeScript Parity: 2026-06-18
+
+The TypeScript runtime now has the same first-class external payload path as the Python runtime: Grafana webhook payloads normalize into raw incidents, Loki log lines become operational evidence, and the webhook handler returns decision, provenance, safety, and scorecard JSON.
+
+- [ ] Explain why Grafana payload normalization must still reject answer-like fields.
+- [ ] Explain why resolved alerts should be ignored before evidence gathering or LLM calls.
+- [ ] Explain why Loki logs enter the system as evidence with stable `log:N` IDs.
+- [ ] Explain why webhook scenarios may omit fixture eval expectations while still being scored for grounding, safety, state, and evidence quality.
+- [ ] Explain why live Docker/Grafana/Loki/LLM testing is a separate step from handler-level parity tests.
+
+### Why This Matters
+
+The handler-level tests use real Grafana fixture payloads and Loki-shaped responses without requiring Docker or a networked LLM. That keeps the default suite fast while still exercising the important contracts: request validation, alert status handling, log evidence conversion, workflow execution, provenance output, and safe failure for invalid model output.
 - [ ] Explain why this work happened before Grafana ingestion or larger playbook systems.
 
 ### Why This Matters

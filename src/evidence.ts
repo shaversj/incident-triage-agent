@@ -234,6 +234,16 @@ export class MockOperationalTools {
   }
 }
 
+export class PrebuiltOperationalTools extends MockOperationalTools {
+  constructor(private readonly package_: EvidencePackage) {
+    super("");
+  }
+
+  override buildEvidencePackage(_scenario: Scenario): EvidencePackage {
+    return this.package_;
+  }
+}
+
 export function loadTools(fixturesDir: string): MockOperationalTools {
   if (!existsSync(fixturesDir)) {
     throw new FixtureError(`Fixture directory does not exist: ${fixturesDir}.`);

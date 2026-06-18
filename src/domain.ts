@@ -92,7 +92,7 @@ export interface EvalExpectation {
 export interface Scenario {
   name: string;
   incident: Incident;
-  expected: EvalExpectation;
+  expected?: EvalExpectation;
 }
 
 export function validateRawIncidentPayload(payload: Record<string, unknown>): void {
