@@ -18,9 +18,15 @@ test("valid webhook returns triage JSON with Loki evidence", async () => {
 
   expect(status).toBe(200);
   expect(response.status).toBe("ok");
+  expect(response.run_status).toBe("completed");
   expect((response.incident as any).service).toBe("checkout-api");
+  expect((response.investigation as any).summary).toContain("investigation step");
+  expect((response.investigation as any).steps).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "inspect_logs", status: "found" }),
+  ]));
   expect((response.decision as any).incident_class).toBe("dependency_outage");
   expect((response.decision as any).evidence_ids).toContain("log:0");
+  expect((response.explanation_validation as any).status).toBe("not_available");
   expect((response.safety as any).status).toBe("safe_recommendation");
   expect((response.provenance as any).available_tiers).toContain("current_signal");
   expect((response.provenance as any).available_tiers).toContain("operational_context");
@@ -36,6 +42,7 @@ test("invalid LLM response is recoverable without safety action", async () => {
   );
 
   expect(status).toBe(200);
+  expect(response.run_status).toBe("recoverable_failure");
   expect((response.validation as any).valid).toBe(false);
   expect(response).not.toHaveProperty("decision");
   expect(response).not.toHaveProperty("safety");

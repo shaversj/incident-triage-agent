@@ -1,5 +1,7 @@
 {
   "status": "ok",
+  "run_id": "triage-run:grafana-checkout-api",
+  "run_status": "completed",
   "incident": {
     "incident_id": "GRAFANA-checkout-latency-001",
     "title": "Checkout API latency spike",
@@ -17,24 +19,76 @@
     "verification_ready",
     "scored"
   ],
+  "investigation": {
+    "summary": "Collected 12 evidence item(s) across 8 investigation step(s): 6 found, 1 skipped.",
+    "steps": [
+      {
+        "id": "step:0",
+        "kind": "inspect_alerts",
+        "status": "found",
+        "purpose": "Inspect active alert names for the affected service.",
+        "evidence_ids": [
+          "alert:0",
+          "alert:1"
+        ]
+      },
+      {
+        "id": "step:3",
+        "kind": "inspect_logs",
+        "status": "found",
+        "purpose": "Inspect operational log signals for the incident window.",
+        "evidence_ids": [
+          "log:0"
+        ]
+      }
+    ]
+  },
   "validation": {
     "valid": true,
     "errors": []
   },
+  "explanation_validation": {
+    "status": "valid",
+    "warnings": []
+  },
+  "analysis": {
+    "hypotheses": [
+      {
+        "label": "dependency_outage",
+        "status": "supported",
+        "supporting_evidence_ids": [
+          "alert:1",
+          "log:0",
+          "runbook:dependency-outage"
+        ],
+        "contradicting_evidence_ids": []
+      }
+    ]
+  },
+  "finding_summary": "Payment timeout and checkout latency evidence point to an upstream dependency issue.",
+  "recommendation": {
+    "rationale": "Escalate the owner because payment timeout evidence is stronger than deploy timing.",
+    "evidence_ids": [
+      "alert:1",
+      "log:0",
+      "runbook:dependency-outage"
+    ]
+  },
   "decision": {
     "incident_class": "dependency_outage",
     "next_action": "escalate_owner",
-    "confidence": 0.87,
+    "confidence": 0.88,
     "evidence_ids": [
-      "alert:0",
+      "alert:1",
       "log:0",
       "runbook:dependency-outage"
     ],
     "caveats": [
-      "Synthetic integration path."
+      "Recent checkout deploy is lower-confidence context than payment timeout evidence."
     ],
     "verification_plan": [
-      "Watch payment timeout rate."
+      "Track payment-gateway timeout rate.",
+      "Confirm checkout latency returns below SLO."
     ]
   },
   "provenance": {
@@ -54,7 +108,7 @@
       "runbook"
     ],
     "cited_evidence_ids": [
-      "alert:0",
+      "alert:1",
       "log:0",
       "runbook:dependency-outage"
     ],
@@ -63,7 +117,7 @@
   },
   "safety": {
     "status": "safe_recommendation",
-    "approvalRequired": false,
+    "approval_required": false,
     "reason": "Recommendation is non-mutating and can be presented with caveats."
   },
   "scorecard": {

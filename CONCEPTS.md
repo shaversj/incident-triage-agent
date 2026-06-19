@@ -37,6 +37,15 @@ An opt-in E2E path that calls the real LLM provider while still using synthetic 
 ### Outcome-Based Test Suite
 A contract-focused test layer that verifies the operator-facing triage result: bounded decision, evidence citations, provenance support, safety behavior, and recoverable failure handling.
 
+### Agentic Run Envelope
+The outer triage result shape that makes a run look and read like an investigation while preserving the bounded decision as the authoritative operational contract.
+
+### Investigation Step
+A workflow-authored record of evidence-gathering work that actually happened, such as inspecting alerts, querying logs, checking deploys, loading runbooks, or collecting verification signals.
+
+### Explanation Layer
+The non-authoritative LLM-authored material around a bounded decision, such as evidence-grounded hypotheses, finding summary, and recommendation rationale.
+
 ### Bounded Decision
 An LLM judgment constrained to the project's allowed incident classes and next actions, with confidence, evidence citations, caveats, and verification steps.
 
@@ -48,4 +57,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. A Synthetic Incident Service can generate logs that Loki Log Lookup adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow asks for a Bounded Decision using that evidence, then passes the decision through the Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Integration E2E assertions, or Live Provider E2E assertions.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. A Synthetic Incident Service can generate logs that Loki Log Lookup adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Integration E2E assertions, or Live Provider E2E assertions.

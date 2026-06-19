@@ -219,6 +219,8 @@ function closeServer(server: Server): Promise<void> {
 export function runToResponse(run: TriageRun): Record<string, unknown> {
   const response: Record<string, unknown> = {
     status: "ok",
+    run_id: run.runId,
+    run_status: run.runStatus,
     incident: {
       incident_id: run.scenario.incident.incidentId,
       title: run.scenario.incident.title,
@@ -230,6 +232,48 @@ export function runToResponse(run: TriageRun): Record<string, unknown> {
     scenario: run.scenario.name,
     states: run.states,
   };
+
+  if (run.investigation) {
+    response.investigation = {
+      summary: run.investigation.summary,
+      steps: run.investigation.steps.map((step) => ({
+        id: step.id,
+        kind: step.kind,
+        status: step.status,
+        purpose: step.purpose,
+        evidence_ids: step.evidenceIds,
+      })),
+    };
+  }
+
+  if (run.explanation) {
+    if (run.explanation.hypotheses) {
+      response.analysis = {
+        hypotheses: run.explanation.hypotheses.map((hypothesis) => ({
+          label: hypothesis.label,
+          status: hypothesis.status,
+          supporting_evidence_ids: hypothesis.supportingEvidenceIds,
+          contradicting_evidence_ids: hypothesis.contradictingEvidenceIds,
+        })),
+      };
+    }
+    if (run.explanation.findingSummary) {
+      response.finding_summary = run.explanation.findingSummary;
+    }
+    if (run.explanation.recommendation) {
+      response.recommendation = {
+        rationale: run.explanation.recommendation.rationale,
+        evidence_ids: run.explanation.recommendation.evidenceIds,
+      };
+    }
+  }
+
+  if (run.explanationValidation) {
+    response.explanation_validation = {
+      status: run.explanationValidation.status,
+      warnings: run.explanationValidation.warnings,
+    };
+  }
 
   if (run.validation) {
     response.validation = {

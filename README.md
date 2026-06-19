@@ -2,17 +2,18 @@
 
 A TypeScript proof of concept for bounded LLM-assisted incident triage.
 
-The point is not to build an incident chatbot or production automation. The point is to prove an architecture: raw incident data becomes an evidence package, an `incident-triage` skill chooses a bounded incident class and next action through MiniMax, local validation checks the result, policy gates risky actions, and the run ends with operator output plus a scorecard.
+The point is not to build an incident chatbot or production automation. The point is to prove an architecture: raw incident data becomes an evidence package, the workflow records what it investigated, an `incident-triage` skill explains and chooses a bounded incident class and next action through MiniMax, local validation checks the result, policy gates risky actions, and the run ends with operator output plus a scorecard.
 
 ## Architecture
 
 ```text
-raw incident data -> evidence package -> incident-triage skill
-  -> structured result validation -> evidence citation validation
+raw incident data -> evidence package + investigation trace
+  -> incident-triage skill -> structured result validation
+  -> explanation validation -> evidence citation validation
   -> safety gate -> operator output -> scorecard
 ```
 
-The workflow owns control flow, state, validation, provenance, safety, and scoring. The LLM owns one bounded judgment. The `incident-triage` skill guides that judgment through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
+The workflow owns control flow, state, factual investigation steps, validation, provenance, safety, and scoring. The LLM owns evidence-grounded explanation and one bounded judgment. The `incident-triage` skill guides that judgment through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
 
 ## Setup
 
@@ -136,7 +137,7 @@ npm run demo-live -- --scenario capacity-saturation
 npm run demo-live -- --scenario bad-deploy-latency --json
 ```
 
-The probe starts the live Compose stack, generates logs through the synthetic service, posts the Grafana webhook, prints a sanitized LLM decision summary, and cleans up.
+The probe starts the live Compose stack, generates logs through the synthetic service, posts the Grafana webhook, prints a sanitized run-envelope summary, and cleans up.
 
 ## Scenarios
 
@@ -145,7 +146,18 @@ The probe starts the live Compose stack, generates logs through the synthetic se
 - `capacity-saturation`: runbook-guided approval path.
 - `noisy-alert`: non-mutating monitor path with missing runbook context.
 
-## Decision Contract
+## Run Envelope And Decision Contract
+
+Each completed triage run exposes an additive run envelope:
+
+- `run_id` and `run_status` identify the run and terminal lifecycle state.
+- `investigation` summarizes workflow-authored evidence-gathering steps.
+- `analysis`, `finding_summary`, and `recommendation` are LLM-authored explanation fields.
+- `explanation_validation` reports whether those explanation fields were valid, degraded, or unavailable.
+- `decision` remains the authoritative bounded operational result.
+- `safety`, `provenance`, and `scorecard` continue to derive from the validated decision.
+
+The explanation layer is useful for human inspection, but it does not drive workflow state or production authority.
 
 Allowed `incident_class` values:
 
@@ -165,7 +177,7 @@ Allowed `next_action` values:
 - `ask_human`
 - `gather_more_context`
 
-The provider response is not trusted directly. Local validation checks JSON shape, taxonomy values, confidence, and evidence IDs before the workflow applies safety policy.
+The provider response is not trusted directly. Local validation checks JSON shape, taxonomy values, confidence, and decision evidence IDs before the workflow applies safety policy. Explanation fields are validated separately; malformed explanation data can be dropped with warnings when the bounded decision is still valid.
 
 ## Evidence Provenance
 

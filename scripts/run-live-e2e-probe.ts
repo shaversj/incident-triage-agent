@@ -103,7 +103,14 @@ export function sanitizedSummary(response: Record<string, unknown>, serviceRespo
     checkout_response: serviceResponse,
     service_response: serviceResponse,
     incident: response.incident,
+    run_id: response.run_id,
+    run_status: response.run_status,
+    investigation: response.investigation,
     validation: response.validation,
+    explanation_validation: response.explanation_validation,
+    analysis: response.analysis,
+    finding_summary: response.finding_summary,
+    recommendation: response.recommendation,
     decision: response.decision,
     provenance: response.provenance,
     safety: response.safety,
@@ -232,9 +239,13 @@ function printSummary(summary: ReturnType<typeof sanitizedSummary>): void {
   const validation = objectValue(summary.validation);
   const safety = objectValue(summary.safety);
   const provenance = objectValue(summary.provenance);
+  const recommendation = objectValue(summary.recommendation);
 
   console.log("Live E2E probe complete");
+  console.log(`- run_status: ${summary.run_status ?? "none"}`);
   console.log(`- validation: ${validation.valid ? "valid" : "invalid"}`);
+  console.log(`- finding_summary: ${summary.finding_summary ?? "none"}`);
+  console.log(`- recommendation_rationale: ${recommendation.rationale ?? "none"}`);
   console.log(`- incident_class: ${decision.incident_class ?? "none"}`);
   console.log(`- next_action: ${decision.next_action ?? "none"}`);
   console.log(`- confidence: ${decision.confidence ?? "none"}`);

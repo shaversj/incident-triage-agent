@@ -67,6 +67,50 @@ test("evidence package is deterministic", () => {
   );
 });
 
+test("evidence package records workflow-authored investigation steps", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const package_ = loadTools("fixtures").buildEvidencePackage(scenario);
+
+  expect(package_.investigationSteps.map((step) => step.kind)).toEqual([
+    "inspect_alerts",
+    "inspect_symptoms",
+    "inspect_deploys",
+    "inspect_logs",
+    "inspect_service_owner",
+    "inspect_runbooks",
+    "inspect_prior_incidents",
+    "inspect_verification_signals",
+  ]);
+  expect(package_.investigationSteps.find((step) => step.kind === "inspect_logs")).toMatchObject({
+    status: "found",
+    evidenceIds: expect.arrayContaining(["log:0"]),
+  });
+  expect(package_.investigationSteps.every((step) => !step.purpose.includes("LLM"))).toBe(true);
+});
+
+test("investigation steps expose missing and skipped evidence lookups", () => {
+  const scenario = loadScenario("fixtures", "noisy-alert");
+  const incident = { ...scenario.incident, runbookRefs: [], priorIncidentRefs: [], verificationSignals: [] };
+  const package_ = loadTools("fixtures").buildEvidencePackageFromIncident("noisy-alert", incident, { logEvidence: [] });
+
+  expect(package_.investigationSteps.find((step) => step.kind === "inspect_logs")).toMatchObject({
+    status: "not_found",
+    evidenceIds: [],
+  });
+  expect(package_.investigationSteps.find((step) => step.kind === "inspect_runbooks")).toMatchObject({
+    status: "skipped",
+    evidenceIds: [],
+  });
+  expect(package_.investigationSteps.find((step) => step.kind === "inspect_prior_incidents")).toMatchObject({
+    status: "skipped",
+    evidenceIds: [],
+  });
+  expect(package_.investigationSteps.find((step) => step.kind === "inspect_verification_signals")).toMatchObject({
+    status: "not_found",
+    evidenceIds: [],
+  });
+});
+
 test("external evidence package combines incident and supplied log context", () => {
   const scenario = loadScenario("fixtures", "checkout-payment-timeout");
   const logs: Evidence[] = [{
@@ -132,5 +176,6 @@ function toPlainObject(package_: EvidencePackage): object {
     incident: package_.incident,
     evidence: package_.evidence,
     missingContext: package_.missingContext,
+    investigationSteps: package_.investigationSteps,
   };
 }

@@ -4,13 +4,14 @@
 
 This repo is a TypeScript proof of concept for a bounded LLM-assisted incident triage agent.
 
-The important architectural idea is that the workflow owns control flow and the LLM owns one bounded judgment. Raw incident facts are converted into an evidence package, the local `incident-triage` skill chooses an incident class and next action from a fixed taxonomy through MiniMax, local validation checks the result, policy gates risky actions, and the CLI/server emit provenance plus scorecard output.
+The important architectural idea is that the workflow owns control flow, factual investigation steps, and safety, while the LLM owns evidence-grounded explanation plus one bounded judgment. Raw incident facts are converted into an evidence package, the local `incident-triage` skill returns an explanation layer and nested bounded decision from a fixed taxonomy through MiniMax, local validation checks the result, policy gates risky actions, and the CLI/server emit provenance plus scorecard output.
 
 Core flow:
 
 ```text
-raw incident data -> evidence package -> incident-triage skill
-  -> structured result validation -> evidence citation validation
+raw incident data -> evidence package + investigation trace
+  -> incident-triage skill -> structured result validation
+  -> explanation validation -> evidence citation validation
   -> safety gate -> operator output -> scorecard
 ```
 
@@ -96,11 +97,14 @@ git diff --check
 - Keep Loki lookup bounded by service labels, time window, and result limit before prompt assembly.
 - Keep webhook secrets out of output and logs. Use `X-Webhook-Secret` only as an auth boundary, never as evidence.
 - Do not let LLM output drive workflow state until local validation passes.
+- Treat workflow-authored investigation steps as factual trace data. Do not let the LLM claim it called tools or gathered evidence.
+- Treat LLM-authored hypotheses, finding summaries, and recommendation rationales as non-authoritative explanation. They can be dropped or degraded without blocking a valid bounded decision.
+- Do not let `recommendation` introduce its own action field. The only action that can drive safety is `decision.next_action`.
 - Keep the incident class taxonomy bounded to `dependency_outage`, `bad_deploy`, `capacity_saturation`, `noisy_alert`, `insufficient_context`, and `unknown`.
 - Keep the next action taxonomy bounded to `escalate_owner`, `request_rollback_approval`, `apply_runbook_step_with_approval`, `continue_monitoring`, `ask_human`, and `gather_more_context`.
 - Approval-sensitive actions must be staged and audited, not executed.
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
-- Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, provenance support, safety behavior, and recoverable failure handling.
+- Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, safety behavior, and recoverable failure handling.
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.

@@ -17,8 +17,37 @@ export interface TriageDecision {
   verificationPlan: string[];
 }
 
+export type HypothesisStatus = "supported" | "contradicted" | "inconclusive";
+
+export interface EvidenceHypothesis {
+  label: string;
+  status: HypothesisStatus;
+  supportingEvidenceIds: string[];
+  contradictingEvidenceIds: string[];
+}
+
+export interface TriageRecommendation {
+  rationale: string;
+  evidenceIds: string[];
+}
+
+export interface TriageExplanation {
+  hypotheses?: EvidenceHypothesis[];
+  findingSummary?: string;
+  recommendation?: TriageRecommendation;
+}
+
+export type ExplanationValidationStatus = "valid" | "degraded" | "not_available";
+
+export interface ExplanationValidation {
+  status: ExplanationValidationStatus;
+  warnings: string[];
+}
+
 export interface ValidationResult {
   decision?: TriageDecision;
+  explanation?: TriageExplanation;
+  explanationValidation?: ExplanationValidation;
   valid: boolean;
   errors: string[];
   rawText: string;
@@ -42,6 +71,24 @@ export const incidentTriageDecisionSchema = v.object({
   evidence_ids: v.array(v.string()),
   caveats: v.array(v.string()),
   verification_plan: v.array(v.string()),
+});
+
+export const incidentTriageExpandedSchema = v.object({
+  analysis: v.optional(v.object({
+    hypotheses: v.array(v.object({
+      label: v.string(),
+      status: v.picklist(["supported", "contradicted", "inconclusive"]),
+      supporting_evidence_ids: v.array(v.string()),
+      contradicting_evidence_ids: v.array(v.string()),
+    })),
+  })),
+  finding_summary: v.optional(v.string()),
+  recommendation: v.optional(v.object({
+    rationale: v.string(),
+    evidence_ids: v.array(v.string()),
+    next_action: v.optional(v.unknown()),
+  })),
+  decision: incidentTriageDecisionSchema,
 });
 
 export class StaticDecisionClient implements LLMDecisionClient {
@@ -75,12 +122,12 @@ export class FlueDecisionClient implements LLMDecisionClient {
   async decide(evidencePackage: EvidencePackage): Promise<ValidationResult> {
     try {
       const payload = await this.runSkill(evidencePackage, this.config, this.logger);
-      const decision = validateDecisionPayload(payload, evidencePackage);
+      const result = validateTriagePayload(payload, evidencePackage);
       return {
-        decision,
         valid: true,
         errors: [],
         rawText: JSON.stringify(payload),
+        ...result,
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -206,8 +253,8 @@ export function parseDecisionText(text: string, evidencePackage?: EvidencePackag
   const cleaned = stripJsonFence(text);
   try {
     const payload = JSON.parse(cleaned) as unknown;
-    const decision = validateDecisionPayload(payload, evidencePackage);
-    return { decision, valid: true, errors: [], rawText: text };
+    const result = validateTriagePayload(payload, evidencePackage);
+    return { ...result, valid: true, errors: [], rawText: text };
   } catch (error) {
     return {
       valid: false,
@@ -215,6 +262,24 @@ export function parseDecisionText(text: string, evidencePackage?: EvidencePackag
       rawText: text,
     };
   }
+}
+
+export function validateTriagePayload(payload: unknown, evidencePackage?: EvidencePackage): Omit<ValidationResult, "valid" | "errors" | "rawText"> {
+  if (isRecord(payload) && "decision" in payload) {
+    const decision = validateDecisionPayload(payload.decision, evidencePackage);
+    return {
+      decision,
+      ...validateExplanationPayload(payload, evidencePackage),
+    };
+  }
+
+  return {
+    decision: validateDecisionPayload(payload, evidencePackage),
+    explanationValidation: {
+      status: "not_available",
+      warnings: ["Expanded explanation layer was not returned; accepted legacy decision-only payload."],
+    },
+  };
 }
 
 export function validateDecisionPayload(payload: unknown, evidencePackage?: EvidencePackage): TriageDecision {
@@ -242,6 +307,211 @@ export function validateDecisionPayload(payload: unknown, evidencePackage?: Evid
     caveats: parsed.caveats,
     verificationPlan: parsed.verification_plan,
   };
+}
+
+function validateExplanationPayload(
+  payload: Record<string, unknown>,
+  evidencePackage?: EvidencePackage,
+): { explanation?: TriageExplanation; explanationValidation: ExplanationValidation } {
+  const warnings: string[] = [];
+  const explanation: TriageExplanation = {};
+
+  const analysis = payload.analysis;
+  if (!isRecord(analysis)) {
+    warnings.push("Explanation analysis is missing or malformed.");
+  } else if (!Array.isArray(analysis.hypotheses)) {
+    warnings.push("Explanation hypotheses are missing or malformed.");
+  } else {
+    const hypotheses = analysis.hypotheses.flatMap((candidate, index) => {
+      const hypothesis = validateHypothesis(candidate, index, evidencePackage);
+      warnings.push(...hypothesis.warnings);
+      return hypothesis.value ? [hypothesis.value] : [];
+    });
+    if (hypotheses.length > 0) {
+      explanation.hypotheses = hypotheses;
+    }
+  }
+
+  if (typeof payload.finding_summary === "string" && payload.finding_summary.trim()) {
+    explanation.findingSummary = payload.finding_summary;
+  } else {
+    warnings.push("Explanation finding_summary is missing or malformed.");
+  }
+
+  const recommendation = validateRecommendation(payload.recommendation, evidencePackage);
+  warnings.push(...recommendation.warnings);
+  if (recommendation.value) {
+    explanation.recommendation = recommendation.value;
+  }
+
+  warnings.push(...claimQualityWarnings(explanation, evidencePackage));
+
+  const hasExplanation = Object.keys(explanation).length > 0;
+  const result: { explanation?: TriageExplanation; explanationValidation: ExplanationValidation } = {
+    explanationValidation: {
+      status: warnings.length > 0 ? "degraded" : "valid",
+      warnings,
+    },
+  };
+  if (hasExplanation) {
+    result.explanation = explanation;
+  }
+  return result;
+}
+
+function validateHypothesis(
+  candidate: unknown,
+  index: number,
+  evidencePackage?: EvidencePackage,
+): { value?: EvidenceHypothesis; warnings: string[] } {
+  const warnings: string[] = [];
+  if (!isRecord(candidate)) {
+    return { warnings: [`Hypothesis ${index} is malformed.`] };
+  }
+
+  const label = candidate.label;
+  const status = candidate.status;
+  const supporting = candidate.supporting_evidence_ids;
+  const contradicting = candidate.contradicting_evidence_ids;
+  if (typeof label !== "string" || !label.trim()) {
+    warnings.push(`Hypothesis ${index} label is missing or malformed.`);
+  }
+  if (!isHypothesisStatus(status)) {
+    warnings.push(`Hypothesis ${index} status is missing or unsupported.`);
+  }
+  if (!isStringArray(supporting)) {
+    warnings.push(`Hypothesis ${index} supporting_evidence_ids are missing or malformed.`);
+  }
+  if (!isStringArray(contradicting)) {
+    warnings.push(`Hypothesis ${index} contradicting_evidence_ids are missing or malformed.`);
+  }
+
+  if (warnings.length > 0) {
+    return { warnings };
+  }
+
+  const supportingEvidenceIds = supporting as string[];
+  const contradictingEvidenceIds = contradicting as string[];
+  const evidenceWarnings = unknownEvidenceWarnings(
+    [...supportingEvidenceIds, ...contradictingEvidenceIds],
+    evidencePackage,
+    `Hypothesis ${index}`,
+  );
+  if (evidenceWarnings.length > 0) {
+    return { warnings: evidenceWarnings };
+  }
+
+  return {
+    value: {
+      label: label as string,
+      status: status as HypothesisStatus,
+      supportingEvidenceIds,
+      contradictingEvidenceIds,
+    },
+    warnings: [],
+  };
+}
+
+function validateRecommendation(
+  candidate: unknown,
+  evidencePackage?: EvidencePackage,
+): { value?: TriageRecommendation; warnings: string[] } {
+  const warnings: string[] = [];
+  if (!isRecord(candidate)) {
+    return { warnings: ["Recommendation is missing or malformed."] };
+  }
+  if ("next_action" in candidate) {
+    warnings.push("Recommendation must not include next_action; use decision.next_action as the authoritative action.");
+  }
+  if (typeof candidate.rationale !== "string" || !candidate.rationale.trim()) {
+    warnings.push("Recommendation rationale is missing or malformed.");
+  }
+  if (!isStringArray(candidate.evidence_ids)) {
+    warnings.push("Recommendation evidence_ids are missing or malformed.");
+  }
+  if (warnings.length > 0) {
+    return { warnings };
+  }
+
+  const evidenceIds = candidate.evidence_ids as string[];
+  const evidenceWarnings = unknownEvidenceWarnings(evidenceIds, evidencePackage, "Recommendation");
+  if (evidenceWarnings.length > 0) {
+    return { warnings: evidenceWarnings };
+  }
+
+  return {
+    value: {
+      rationale: candidate.rationale as string,
+      evidenceIds,
+    },
+    warnings: [],
+  };
+}
+
+function unknownEvidenceWarnings(ids: string[], evidencePackage: EvidencePackage | undefined, label: string): string[] {
+  if (!evidencePackage) {
+    return [];
+  }
+  const knownIds = evidencePackage.ids();
+  const unknown = ids.filter((id) => !knownIds.has(id)).sort();
+  return unknown.length > 0 ? [`${label} cited unknown evidence IDs: ${unknown.join(", ")}.`] : [];
+}
+
+function claimQualityWarnings(explanation: TriageExplanation, evidencePackage?: EvidencePackage): string[] {
+  if (!evidencePackage) {
+    return [];
+  }
+  const text = [
+    explanation.findingSummary,
+    explanation.recommendation?.rationale,
+    ...(explanation.hypotheses ?? []).map((hypothesis) => hypothesis.label),
+  ].filter((value): value is string => typeof value === "string").join(" ");
+
+  const warnings: string[] = [];
+  if (claimsDeployWasMinutesBeforeIncident(text) && !hasDeployWithinMinutes(evidencePackage, 60)) {
+    warnings.push("Explanation claims deploy timing in minutes, but supplied deploy evidence is not within 60 minutes of incident start.");
+  }
+  if (claimsPaymentGatewayOwner(text) && !hasServiceOwnerEvidence(evidencePackage, "payment-gateway")) {
+    warnings.push("Explanation claims payment-gateway owner context, but supplied service ownership evidence does not identify payment-gateway ownership.");
+  }
+  return warnings;
+}
+
+function claimsDeployWasMinutesBeforeIncident(text: string): boolean {
+  return /\bdeploy\w*\b[\s\S]{0,80}\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+minutes?\s+before\b/i.test(text) ||
+    /\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+minutes?\s+before[\s\S]{0,80}\bdeploy\w*\b/i.test(text);
+}
+
+function hasDeployWithinMinutes(evidencePackage: EvidencePackage, minutes: number): boolean {
+  const incidentStart = Date.parse(evidencePackage.incident.startedAt);
+  if (!Number.isFinite(incidentStart)) {
+    return false;
+  }
+  return evidencePackage.incident.recentChanges.some((change) => {
+    const changedAt = Date.parse(change.time);
+    return Number.isFinite(changedAt) && Math.abs(incidentStart - changedAt) <= minutes * 60_000;
+  });
+}
+
+function claimsPaymentGatewayOwner(text: string): boolean {
+  return /\bpayment[-\s]?gateway\b[\s\S]{0,80}\bowner\b/i.test(text) ||
+    /\bowner\b[\s\S]{0,80}\bpayment[-\s]?gateway\b/i.test(text);
+}
+
+function hasServiceOwnerEvidence(evidencePackage: EvidencePackage, serviceName: string): boolean {
+  return evidencePackage.evidence.some((item) => item.evidenceId === `service:${serviceName}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isHypothesisStatus(value: unknown): value is HypothesisStatus {
+  return value === "supported" || value === "contradicted" || value === "inconclusive";
 }
 
 function stripJsonFence(text: string): string {

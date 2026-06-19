@@ -3,7 +3,7 @@ import { local } from "@flue/runtime/node";
 import type { AppConfig } from "../config";
 import { incidentClasses, nextActions } from "../domain";
 import type { EvidencePackage } from "../evidence";
-import { incidentTriageDecisionSchema } from "../llm";
+import { incidentTriageExpandedSchema } from "../llm";
 
 interface IncidentTriagePayload {
   evidencePackage: EvidencePackage;
@@ -20,7 +20,7 @@ export async function run({ init, payload }: FlueContext<IncidentTriagePayload>)
       allowedIncidentClasses: incidentClasses,
       allowedNextActions: nextActions,
     },
-    result: incidentTriageDecisionSchema,
+    result: incidentTriageExpandedSchema,
   });
   return response.data;
 }

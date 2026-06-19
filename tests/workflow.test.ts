@@ -16,6 +16,10 @@ test("valid dependency scenario reaches verification ready and scored", async ()
 
   expect(run.states).toContain("verification_ready");
   expect(run.states).toContain("scored");
+  expect(run.runStatus).toBe("completed");
+  expect(run.runId).toBe("triage-run:checkout-payment-timeout");
+  expect(run.investigation?.summary).toContain("investigation step");
+  expect(run.investigation?.steps.some((step) => step.kind === "inspect_logs" && step.status === "found")).toBe(true);
 });
 
 test("invalid LLM output reaches recoverable failure and scorecard", async () => {
@@ -29,7 +33,40 @@ test("invalid LLM output reaches recoverable failure and scorecard", async () =>
 
   expect(run.states).toContain("recoverable_failure");
   expect(run.states).toContain("scored");
+  expect(run.runStatus).toBe("recoverable_failure");
   expect(run.scorecard).toBeDefined();
+});
+
+test("valid decision with degraded explanation still reaches safety and scoring", async () => {
+  const run = await runWithResponse("checkout-payment-timeout", {
+    analysis: {
+      hypotheses: [{
+        label: "payment timeout pattern",
+        status: "supported",
+        supporting_evidence_ids: ["missing:0"],
+        contradicting_evidence_ids: [],
+      }],
+    },
+    finding_summary: "Payment timeout evidence points upstream.",
+    recommendation: {
+      rationale: "Escalate because payment timeout evidence points to a dependency.",
+      evidence_ids: ["alert:1"],
+    },
+    decision: {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.84,
+      evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
+      caveats: [],
+      verification_plan: ["Monitor timeout rate."],
+    },
+  });
+
+  expect(run.states).toContain("verification_ready");
+  expect(run.safety?.status).toBe("safe_recommendation");
+  expect(run.runStatus).toBe("completed");
+  expect(run.explanationValidation?.status).toBe("degraded");
+  expect(run.explanationValidation?.warnings.join(" ")).toContain("unknown evidence IDs");
 });
 
 test("missing critical context moves to human input", async () => {

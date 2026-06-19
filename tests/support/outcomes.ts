@@ -21,6 +21,10 @@ export function assertValidRunOutcome(
   expect(run.validation?.decision, "expected valid run to include a decision").toBeDefined();
   expect(run.states, "expected decision_validated state").toContain("decision_validated" satisfies WorkflowState);
   expect(run.states, "expected scored state").toContain("scored" satisfies WorkflowState);
+  expect(run.runStatus, "expected completed run status").toBe("completed");
+  expect(run.investigation?.summary, "expected investigation summary").toEqual(expect.any(String));
+  expect(run.investigation?.steps.length, "expected investigation steps").toBeGreaterThan(0);
+  expect(run.explanationValidation, "expected explanation validation state").toBeDefined();
 
   const decision = run.validation?.decision;
   if (!decision) {
@@ -43,6 +47,7 @@ export function assertValidRunOutcome(
   }
   assertContainsAll(provenance.citedTiers.map(value), (options.citedTiers ?? []).map(value), "cited_tiers");
   assertContainsAll(provenance.citedSources, options.citedSources ?? [], "cited_sources");
+  assertExplanationCitations(run);
 
   if (options.safetyStatus !== undefined || options.approvalRequired !== undefined) {
     expect(run.safety, "expected run to include safety result").toBeDefined();
@@ -75,6 +80,10 @@ export function assertValidResponseOutcome(
   expect(response.status, `expected ok response, got ${JSON.stringify(response)}`).toBe("ok");
   expect(response.validation, "expected response validation object").toEqual(expect.any(Object));
   expect(response.validation.valid, `expected valid response, got errors=${JSON.stringify(response.validation.errors)}`).toBe(true);
+  expect(response.run_status, "expected completed run status").toBe("completed");
+  expect(response.investigation?.summary, "expected response investigation summary").toEqual(expect.any(String));
+  expect(response.investigation?.steps?.length, "expected response investigation steps").toBeGreaterThan(0);
+  expect(response.explanation_validation, "expected response explanation validation object").toEqual(expect.any(Object));
   expect(response.decision, "expected valid response to include decision").toEqual(expect.any(Object));
 
   if (options.incidentClass !== undefined) {
@@ -90,6 +99,7 @@ export function assertValidResponseOutcome(
   assertContainsAll(response.provenance.available_tiers ?? [], (options.availableTiers ?? []).map(value), "available_tiers");
   assertContainsAll(response.provenance.cited_tiers ?? [], (options.citedTiers ?? []).map(value), "cited_tiers");
   assertContainsAll(response.provenance.cited_sources ?? [], options.citedSources ?? [], "cited_sources");
+  assertResponseExplanationCitations(response);
 
   if (options.requireSafety || options.safetyStatus !== undefined || options.approvalRequired !== undefined) {
     expect(response.safety, "expected response safety object").toEqual(expect.any(Object));
@@ -108,6 +118,8 @@ export function assertValidResponseOutcome(
 export function assertRecoverableRun(run: TriageRun, errorContains?: string): void {
   expect(run.states, "expected recoverable_failure state").toContain("recoverable_failure" satisfies WorkflowState);
   expect(run.states, "expected scored state").toContain("scored" satisfies WorkflowState);
+  expect(run.runStatus, "expected recoverable failure run status").toBe("recoverable_failure");
+  expect(run.investigation?.steps.length, "expected recoverable run to include investigation steps").toBeGreaterThan(0);
   expect(run.validation, "expected validation errors on recoverable run").toBeDefined();
   expect(run.validation?.valid, "expected recoverable run validation to be invalid").toBe(false);
   expect(run.validation?.decision, "expected recoverable run to omit trusted decision").toBeUndefined();
@@ -120,6 +132,8 @@ export function assertRecoverableRun(run: TriageRun, errorContains?: string): vo
 
 export function assertRecoverableResponse(response: Record<string, any>, errorContains?: string): void {
   expect(response.status, `expected ok response, got ${JSON.stringify(response)}`).toBe("ok");
+  expect(response.run_status, "expected recoverable failure run status").toBe("recoverable_failure");
+  expect(response.investigation?.steps?.length, "expected recoverable response to include investigation steps").toBeGreaterThan(0);
   expect(response.states, "expected recoverable_failure state").toContain("recoverable_failure");
   expect(response.validation, "expected response validation object").toEqual(expect.any(Object));
   expect(response.validation.valid, "expected response validation to be invalid").toBe(false);
@@ -176,6 +190,34 @@ function assertScorecardChecks(scores: Record<string, boolean> | undefined, chec
   for (const check of checks) {
     expect(scores, `expected scorecard check ${check}`).toHaveProperty(check);
     expect(scores?.[check], `expected scorecard check ${check} to pass`).toBe(true);
+  }
+}
+
+function assertExplanationCitations(run: TriageRun): void {
+  if (!run.evidencePackage || !run.explanation) {
+    return;
+  }
+  const known = run.evidencePackage.ids();
+  for (const hypothesis of run.explanation.hypotheses ?? []) {
+    for (const evidenceId of [...hypothesis.supportingEvidenceIds, ...hypothesis.contradictingEvidenceIds]) {
+      expect(known.has(evidenceId), `expected hypothesis evidence ID to be known: ${evidenceId}`).toBe(true);
+    }
+  }
+  for (const evidenceId of run.explanation.recommendation?.evidenceIds ?? []) {
+    expect(known.has(evidenceId), `expected recommendation evidence ID to be known: ${evidenceId}`).toBe(true);
+  }
+}
+
+function assertResponseExplanationCitations(response: Record<string, any>): void {
+  const known = new Set((response.evidence ?? []).map((item: Record<string, unknown>) => item.evidence_id));
+  const hypotheses = response.analysis?.hypotheses ?? [];
+  for (const hypothesis of hypotheses) {
+    for (const evidenceId of [...(hypothesis.supporting_evidence_ids ?? []), ...(hypothesis.contradicting_evidence_ids ?? [])]) {
+      expect(known.has(evidenceId), `expected response hypothesis evidence ID to be known: ${evidenceId}`).toBe(true);
+    }
+  }
+  for (const evidenceId of response.recommendation?.evidence_ids ?? []) {
+    expect(known.has(evidenceId), `expected response recommendation evidence ID to be known: ${evidenceId}`).toBe(true);
   }
 }
 

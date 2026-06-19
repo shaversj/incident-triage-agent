@@ -10,6 +10,31 @@ export interface Evidence {
   detail: string;
 }
 
+export const investigationStepKinds = [
+  "inspect_alerts",
+  "inspect_symptoms",
+  "inspect_deploys",
+  "inspect_logs",
+  "inspect_service_owner",
+  "inspect_runbooks",
+  "inspect_prior_incidents",
+  "inspect_verification_signals",
+] as const;
+
+export type InvestigationStepKind = (typeof investigationStepKinds)[number];
+
+export const investigationStepStatuses = ["found", "not_found", "skipped", "error"] as const;
+
+export type InvestigationStepStatus = (typeof investigationStepStatuses)[number];
+
+export interface InvestigationStep {
+  id: string;
+  kind: InvestigationStepKind;
+  status: InvestigationStepStatus;
+  purpose: string;
+  evidenceIds: string[];
+}
+
 export interface ProvenanceSummary {
   availableTiers: SourceTier[];
   citedTiers: SourceTier[];
@@ -26,6 +51,7 @@ export class EvidencePackage {
     readonly incident: Incident,
     readonly evidence: Evidence[],
     readonly missingContext: string[] = [],
+    readonly investigationSteps: InvestigationStep[] = [],
   ) {}
 
   ids(): Set<string> {
@@ -70,16 +96,26 @@ export class MockOperationalTools {
   ): EvidencePackage {
     const evidence: Evidence[] = [];
     const missing = [...(options.extraMissingContext ?? [])];
+    const steps: InvestigationStep[] = [];
 
-    evidence.push(...this.alertEvidence(incident));
-    evidence.push(...this.symptomEvidence(incident));
-    evidence.push(...this.deployEvidence(incident));
+    const alerts = this.alertEvidence(incident);
+    evidence.push(...alerts);
+    steps.push(investigationStep(steps.length, "inspect_alerts", "Inspect active alert names for the affected service.", alerts));
 
-    const logs = options.logEvidence?.length ? options.logEvidence : this.logEvidence(incident);
+    const symptoms = this.symptomEvidence(incident);
+    evidence.push(...symptoms);
+    steps.push(investigationStep(steps.length, "inspect_symptoms", "Inspect reported symptoms and customer impact signals.", symptoms));
+
+    const deploys = this.deployEvidence(incident);
+    evidence.push(...deploys);
+    steps.push(investigationStep(steps.length, "inspect_deploys", "Check deploy and recent-change evidence near the incident window.", deploys));
+
+    const logs = options.logEvidence !== undefined ? options.logEvidence : this.logEvidence(incident);
     evidence.push(...logs);
     if (logs.length === 0) {
       missing.push("logs");
     }
+    steps.push(investigationStep(steps.length, "inspect_logs", "Inspect operational log signals for the incident window.", logs));
 
     const service = this.serviceEvidence(incident);
     if (service) {
@@ -87,6 +123,7 @@ export class MockOperationalTools {
     } else {
       missing.push(`service:${incident.service}`);
     }
+    steps.push(investigationStep(steps.length, "inspect_service_owner", `Look up owner and escalation metadata for ${incident.service}.`, service ? [service] : []));
 
     const runbooks = this.runbookEvidence(incident);
     if (runbooks.length > 0) {
@@ -94,6 +131,13 @@ export class MockOperationalTools {
     } else {
       missing.push("runbook");
     }
+    steps.push(investigationStep(
+      steps.length,
+      "inspect_runbooks",
+      "Load runbook guidance referenced by the incident.",
+      runbooks,
+      incident.runbookRefs.length === 0 ? "skipped" : undefined,
+    ));
 
     const prior = this.priorIncidentEvidence(incident);
     if (prior.length > 0) {
@@ -101,14 +145,22 @@ export class MockOperationalTools {
     } else if (incident.priorIncidentRefs.length > 0) {
       missing.push("prior_incident");
     }
+    steps.push(investigationStep(
+      steps.length,
+      "inspect_prior_incidents",
+      "Load prior incident context referenced by the incident.",
+      prior,
+      incident.priorIncidentRefs.length === 0 ? "skipped" : undefined,
+    ));
 
     const verification = this.verificationEvidence(incident);
     evidence.push(...verification);
     if (incident.verificationSignals.length === 0) {
       missing.push("verification");
     }
+    steps.push(investigationStep(steps.length, "inspect_verification_signals", "Inspect verification and recovery signals.", verification));
 
-    return new EvidencePackage(scenarioName, incident, evidence, orderedStrings(missing));
+    return new EvidencePackage(scenarioName, incident, evidence, orderedStrings(missing), steps);
   }
 
   alertEvidence(incident: Incident): Evidence[] {
@@ -258,6 +310,22 @@ function deployToEvidence(service: string, time: string, change: string, index: 
     sourceTier: "operational_context",
     summary: `${service} change at ${time}`,
     detail: change,
+  };
+}
+
+function investigationStep(
+  index: number,
+  kind: InvestigationStepKind,
+  purpose: string,
+  evidence: Evidence[],
+  emptyStatus: InvestigationStepStatus = "not_found",
+): InvestigationStep {
+  return {
+    id: `step:${index}`,
+    kind,
+    status: evidence.length > 0 ? "found" : emptyStatus,
+    purpose,
+    evidenceIds: evidence.map((item) => item.evidenceId),
   };
 }
 

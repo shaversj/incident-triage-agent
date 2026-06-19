@@ -188,14 +188,31 @@ async function liveDecisionClient(logger: TriageLogger): Promise<FlueDecisionCli
 }
 
 export function renderRun(run: TriageRun, trace: boolean): void {
+  console.log(`Run: ${run.runId}`);
+  console.log(`Status: ${run.runStatus}`);
   console.log(`Incident: ${run.scenario.incident.incidentId} - ${run.scenario.incident.title}`);
   console.log(`Scenario: ${run.scenario.name}`);
   console.log(`Service: ${run.scenario.incident.service}`);
+
+  if (run.investigation) {
+    console.log("\nInvestigation:");
+    console.log(`- summary: ${run.investigation.summary}`);
+  }
 
   if (trace) {
     console.log("\nState trace:");
     for (const state of run.states) {
       console.log(`- ${state}`);
+    }
+
+    if (run.investigation) {
+      console.log("\nInvestigation steps:");
+      for (const step of run.investigation.steps) {
+        console.log(`- ${step.id} [${step.kind}/${step.status}] ${step.purpose}`);
+        if (step.evidenceIds.length > 0) {
+          console.log(`  - evidence_ids: ${formatValue(step.evidenceIds)}`);
+        }
+      }
     }
 
     if (run.evidencePackage) {
@@ -205,6 +222,23 @@ export function renderRun(run: TriageRun, trace: boolean): void {
       }
       if (run.evidencePackage.missingContext.length > 0) {
         console.log(`- missing: ${run.evidencePackage.missingContext.join(", ")}`);
+      }
+    }
+  }
+
+  if (run.explanation?.findingSummary || run.explanation?.recommendation || run.explanationValidation) {
+    console.log("\nFinding:");
+    if (run.explanation?.findingSummary) {
+      console.log(`- summary: ${trace ? run.explanation.findingSummary : summarizeText(run.explanation.findingSummary)}`);
+    }
+    if (run.explanation?.recommendation) {
+      console.log(`- recommendation_rationale: ${trace ? run.explanation.recommendation.rationale : summarizeText(run.explanation.recommendation.rationale)}`);
+      console.log(`- recommendation_evidence_ids: ${formatValue(run.explanation.recommendation.evidenceIds)}`);
+    }
+    if (run.explanationValidation && run.explanationValidation.status !== "valid") {
+      console.log(`- explanation_validation: ${run.explanationValidation.status}`);
+      for (const warning of run.explanationValidation.warnings) {
+        console.log(`- explanation_warning: ${warning}`);
       }
     }
   }
@@ -295,6 +329,11 @@ function formatValue(value: unknown): string {
 
 function formatBoolean(value: boolean): string {
   return value ? "true" : "false";
+}
+
+function summarizeText(value: string): string {
+  const firstSentence = value.match(/^[^.!?]+[.!?]/)?.[0];
+  return firstSentence ?? value;
 }
 
 if (import.meta.main) {

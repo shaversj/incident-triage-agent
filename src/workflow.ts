@@ -1,15 +1,27 @@
 import type { Scenario, WorkflowState } from "./domain";
-import type { EvidencePackage, MockOperationalTools } from "./evidence";
-import type { LLMDecisionClient, ValidationResult } from "./llm";
+import type { EvidencePackage, InvestigationStep, MockOperationalTools } from "./evidence";
+import type { ExplanationValidation, LLMDecisionClient, TriageExplanation, ValidationResult } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { evaluateSafety, type SafetyResult } from "./policy";
 import { scoreRun, type Scorecard } from "./scoring";
 
+export type RunStatus = "running" | "completed" | "recoverable_failure";
+
+export interface InvestigationTrace {
+  summary: string;
+  steps: InvestigationStep[];
+}
+
 export interface TriageRun {
+  runId: string;
+  runStatus: RunStatus;
   scenario: Scenario;
   states: WorkflowState[];
+  investigation?: InvestigationTrace;
   evidencePackage?: EvidencePackage;
   validation?: ValidationResult;
+  explanation?: TriageExplanation;
+  explanationValidation?: ExplanationValidation;
   safety?: SafetyResult;
   scorecard?: Scorecard;
 }
@@ -23,10 +35,11 @@ export class TriageWorkflow {
 
   async run(scenario: Scenario): Promise<TriageRun> {
     this.logger.info({ component: "workflow", scenario: scenario.name }, "Starting workflow");
-    const run: TriageRun = { scenario, states: [] };
+    const run: TriageRun = { runId: `triage-run:${scenario.name}`, runStatus: "running", scenario, states: [] };
 
     this.transition(run, "received");
     run.evidencePackage = this.tools.buildEvidencePackage(scenario);
+    run.investigation = buildInvestigationTrace(run.evidencePackage);
     this.logger.info({
       component: "tools",
       scenario: scenario.name,
@@ -37,12 +50,19 @@ export class TriageWorkflow {
 
     this.transition(run, "llm_decision_requested");
     run.validation = await this.llmClient.decide(run.evidencePackage);
+    if (run.validation.explanation) {
+      run.explanation = run.validation.explanation;
+    }
+    if (run.validation.explanationValidation) {
+      run.explanationValidation = run.validation.explanationValidation;
+    }
 
     if (!run.validation.valid || !run.validation.decision) {
       this.logger.warn({ component: "llm", errors: run.validation.errors }, "LLM decision validation failed");
       this.transition(run, "recoverable_failure");
       this.transition(run, "scored");
       run.scorecard = scoreRun(run);
+      run.runStatus = "recoverable_failure";
       this.logger.info({ component: "scoring", passed: passedCount(run.scorecard), total: totalCount(run.scorecard) }, "Scorecard complete");
       return run;
     }
@@ -72,6 +92,7 @@ export class TriageWorkflow {
 
     this.transition(run, "scored");
     run.scorecard = scoreRun(run);
+    run.runStatus = "completed";
     this.logger.info({ component: "scoring", passed: passedCount(run.scorecard), total: totalCount(run.scorecard) }, "Scorecard complete");
     this.logger.info({ component: "workflow", scenario: scenario.name }, "Workflow complete");
     return run;
@@ -89,4 +110,21 @@ function passedCount(scorecard: Scorecard): number {
 
 function totalCount(scorecard: Scorecard): number {
   return Object.values(scorecard.scores).length;
+}
+
+function buildInvestigationTrace(evidencePackage: EvidencePackage): InvestigationTrace {
+  const found = evidencePackage.investigationSteps.filter((step) => step.status === "found").length;
+  const notFound = evidencePackage.investigationSteps.filter((step) => step.status === "not_found").length;
+  const skipped = evidencePackage.investigationSteps.filter((step) => step.status === "skipped").length;
+  const errored = evidencePackage.investigationSteps.filter((step) => step.status === "error").length;
+  const statusParts = [
+    `${found} found`,
+    notFound > 0 ? `${notFound} not found` : undefined,
+    skipped > 0 ? `${skipped} skipped` : undefined,
+    errored > 0 ? `${errored} error` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return {
+    summary: `Collected ${evidencePackage.evidence.length} evidence item(s) across ${evidencePackage.investigationSteps.length} investigation step(s): ${statusParts.join(", ")}.`,
+    steps: evidencePackage.investigationSteps,
+  };
 }

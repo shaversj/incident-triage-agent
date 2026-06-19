@@ -542,3 +542,21 @@ The incident-triage skill now explicitly tells the LLM to investigate like an on
 ### Why This Matters
 
 This is the smallest useful step toward more agentic incident investigation. The prompt now has a recognizable human triage path, but the architecture is still deterministic where it needs to be: code gathers evidence, validates citations, applies safety, and reports provenance. That keeps the PoC educational and trustworthy while making the LLM's contribution more realistic.
+
+## Agentic Run Envelope Planning: 2026-06-19
+
+The next planned feature adds an agentic run envelope around the bounded triage decision. The important idea is that the result should read like an investigation without giving the LLM new operational authority.
+
+- [ ] Explain the problem: the current result is safe and bounded, but it does not yet show a structured account of what the workflow investigated or why the model's recommendation fits the evidence.
+- [ ] Explain why the envelope is additive: the existing decision, safety, provenance, and scorecard contracts remain the operational core.
+- [ ] Explain why investigation steps are workflow-authored rather than LLM-authored: they must reflect evidence-gathering work that actually happened.
+- [ ] Explain why hypotheses, finding summary, and recommendation rationale are useful even though they are non-authoritative.
+- [ ] Explain why `recommendation.rationale` explains `decision.next_action` but does not introduce a second action field.
+- [ ] Explain why invalid explanation data can be degraded while invalid bounded decisions must still fail closed.
+- [ ] Explain why webhook `status` should remain request-oriented while `run_status` describes the triage lifecycle.
+- [ ] Explain why this is not yet an autonomous tool loop: no model-selected tools, write tools, production actions, alert closure, tickets, rollback, or scaling.
+- [ ] Explain why tests should assert citation validity, envelope presence, safety behavior, and degraded explanation behavior without depending on exact model prose.
+
+### Why This Matters
+
+The run envelope improves trust by making the workflow easier to inspect. A human can see what evidence was gathered, what explanation the model offered, which decision actually drove safety, and where the system would stop if either the decision or the explanation failed validation. That is the useful middle ground: more agentic in presentation, still deterministic where production safety depends on it.

@@ -8,6 +8,7 @@ import {
   parseDecisionText,
   runIncidentTriageSkill,
   validateDecisionPayload,
+  validateTriagePayload,
 } from "../src/llm";
 import type { AppConfig } from "../src/config";
 import { noopLogger } from "../src/logger";
@@ -27,6 +28,122 @@ test("valid decision payload parses into bounded decision", () => {
   expect(result.valid).toBe(true);
   expect(result.decision?.incidentClass).toBe("dependency_outage");
   expect(result.decision?.nextAction).toBe("escalate_owner");
+});
+
+test("expanded triage payload validates explanation and bounded decision", () => {
+  const result = validateTriagePayload({
+    analysis: {
+      hypotheses: [{
+        label: "payment timeout pattern",
+        status: "supported",
+        supporting_evidence_ids: ["alert:1", "log:0"],
+        contradicting_evidence_ids: ["deploy:0"],
+      }],
+    },
+    finding_summary: "Payment timeout evidence points upstream.",
+    recommendation: {
+      rationale: "Escalate the owner because timeout evidence points to the payment dependency.",
+      evidence_ids: ["alert:1", "log:0"],
+    },
+    decision: {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
+      caveats: ["Recent deploy is weaker than timeout evidence."],
+      verification_plan: ["Watch payment timeout rate."],
+    },
+  }, evidencePackage());
+
+  expect(result.decision?.incidentClass).toBe("dependency_outage");
+  expect(result.explanationValidation?.status).toBe("valid");
+  expect(result.explanation?.hypotheses?.[0]?.supportingEvidenceIds).toEqual(["alert:1", "log:0"]);
+  expect(result.explanation?.findingSummary).toContain("Payment timeout");
+  expect(result.explanation?.recommendation?.evidenceIds).toEqual(["alert:1", "log:0"]);
+});
+
+test("valid decision with malformed explanation is accepted with warnings", () => {
+  const result = validateTriagePayload({
+    analysis: {
+      hypotheses: [{
+        label: "payment timeout pattern",
+        status: "supported",
+        supporting_evidence_ids: ["unknown:0"],
+        contradicting_evidence_ids: [],
+      }],
+    },
+    finding_summary: "",
+    recommendation: {
+      next_action: "escalate_owner",
+      rationale: "Escalate based on timeout evidence.",
+      evidence_ids: ["alert:1"],
+    },
+    decision: {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
+      caveats: [],
+      verification_plan: ["Watch payment timeout rate."],
+    },
+  }, evidencePackage());
+
+  expect(result.decision?.incidentClass).toBe("dependency_outage");
+  expect(result.explanationValidation?.status).toBe("degraded");
+  expect(result.explanationValidation?.warnings.join(" ")).toContain("unknown evidence IDs");
+  expect(result.explanationValidation?.warnings.join(" ")).toContain("must not include next_action");
+  expect(result.explanation?.hypotheses).toBeUndefined();
+});
+
+test("explanation warns on unsupported deploy timing and dependency owner claims", () => {
+  const package_ = evidencePackage();
+  const staleDeployPackage = loadTools("fixtures").buildEvidencePackageFromIncident(
+    package_.scenarioName,
+    { ...package_.incident, startedAt: "2026-06-16T14:07:00Z" },
+  );
+  const result = validateTriagePayload({
+    analysis: {
+      hypotheses: [{
+        label: "payment gateway owner should investigate",
+        status: "supported",
+        supporting_evidence_ids: ["alert:1", "log:0"],
+        contradicting_evidence_ids: ["deploy:0"],
+      }],
+    },
+    finding_summary: "The checkout-api deploy happened nineteen minutes before the incident, but payment gateway evidence is stronger.",
+    recommendation: {
+      rationale: "Escalate to the payment gateway owner.",
+      evidence_ids: ["alert:1", "log:0"],
+    },
+    decision: {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
+      caveats: [],
+      verification_plan: ["Watch payment timeout rate."],
+    },
+  }, staleDeployPackage);
+
+  expect(result.decision?.incidentClass).toBe("dependency_outage");
+  expect(result.explanationValidation?.status).toBe("degraded");
+  expect(result.explanationValidation?.warnings.join(" ")).toContain("deploy timing");
+  expect(result.explanationValidation?.warnings.join(" ")).toContain("payment-gateway ownership");
+});
+
+test("legacy decision-only payload is accepted with unavailable explanation state", () => {
+  const result = validateTriagePayload({
+    incident_class: "dependency_outage",
+    next_action: "escalate_owner",
+    confidence: 0.88,
+    evidence_ids: ["alert:1", "log:0", "runbook:dependency-outage"],
+    caveats: ["Recent deploy is weaker than timeout evidence."],
+    verification_plan: ["Watch payment timeout rate."],
+  }, evidencePackage());
+
+  expect(result.decision?.incidentClass).toBe("dependency_outage");
+  expect(result.explanation).toBeUndefined();
+  expect(result.explanationValidation?.status).toBe("not_available");
 });
 
 test("malformed JSON is rejected as recoverable validation failure", () => {
