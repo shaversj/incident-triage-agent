@@ -216,6 +216,31 @@ RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
 LIVE_E2E_SCENARIOS=all RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
 ```
 
+## Evals
+
+Flue evals are separate from the default test suite. Use them to compare prompt, skill, and model behavior over representative incident cases.
+
+Run deterministic evals:
+
+```bash
+npm run evals
+```
+
+Write a JSON report and inspect it locally:
+
+```bash
+npm run evals:json
+npm run evals:ui
+```
+
+Run live MiniMax evals explicitly:
+
+```bash
+RUN_LIVE_FLUE_EVALS=1 npm run evals
+```
+
+Hard requirements such as schema validity, evidence citations, provenance support, and safety behavior are deterministic assertions. Judge-style evals are reserved for softer explanation qualities like recommendation usefulness and verification-plan actionability.
+
 ## Why Actions Are Simulated
 
 Incident response actions can affect customers. This PoC stages approval-sensitive actions and prints audit payloads, but it does not call deployment, ticketing, chat, or production observability systems. That keeps the architecture inspectable without creating production blast radius.

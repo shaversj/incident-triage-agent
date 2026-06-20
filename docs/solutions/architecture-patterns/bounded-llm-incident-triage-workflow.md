@@ -174,6 +174,16 @@ Use this only when provider credentials, spend, network dependency, and model va
 
 Outcome-based tests sit between unit tests and E2E tests. They should assert that a run or webhook response has a bounded decision, cited evidence, source-tier provenance, safe or approval-gated behavior, and recoverable failure handling. They should not assert exact model caveat wording or reimplement scorecard calculations.
 
+Flue evals sit beside the test suite as a drift surface for prompts, skills, and model behavior:
+
+```bash
+npm run evals
+RUN_LIVE_FLUE_EVALS=1 npm run evals
+npm run evals:json
+```
+
+Use deterministic eval assertions for schema validity, evidence citations, provenance, safety, and bounded actions. Use judge-style evals only for softer explanation qualities such as finding-summary clarity, recommendation usefulness, caveat specificity, and verification-plan actionability. Expected outcomes still belong in eval cases or tests, never inside raw incident fixtures or Grafana payloads.
+
 ## Related
 
 - [README.md](../../../README.md)

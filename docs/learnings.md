@@ -560,3 +560,30 @@ The next planned feature adds an agentic run envelope around the bounded triage 
 ### Why This Matters
 
 The run envelope improves trust by making the workflow easier to inspect. A human can see what evidence was gathered, what explanation the model offered, which decision actually drove safety, and where the system would stop if either the decision or the explanation failed validation. That is the useful middle ground: more agentic in presentation, still deterministic where production safety depends on it.
+
+## Flue Eval Planning: 2026-06-20
+
+The next eval layer should compare prompt and model behavior over repeatable incident cases without weakening deterministic tests.
+
+- [ ] Explain why Flue evals are for behavior drift across prompt, model, and tool changes, while unit and outcome tests remain the correctness contract.
+- [ ] Explain why hard requirements such as schema validity, evidence IDs, provenance, and safety gates should use deterministic assertions rather than an LLM judge.
+- [ ] Explain why judge-based evals are better suited for softer qualities such as finding-summary clarity, recommendation usefulness, caveat specificity, and verification-plan actionability.
+- [ ] Explain why live MiniMax evals must stay opt-in and broad-contract based because model wording can vary.
+- [ ] Explain why eval expectations belong in eval cases, not inside raw incident fixtures or Grafana payloads.
+
+### Why This Matters
+
+Tests answer whether the code preserved the system contract. Evals answer whether the current model and skill behavior remains acceptable across representative incidents. Keeping those layers separate protects the project from two common failures: brittle tests that reject harmless wording changes, and judge-scored evals that accidentally become trusted for safety-critical decisions.
+
+## Flue Eval Implementation: 2026-06-20
+
+The implementation added a `vitest-evals` harness around the existing incident-triage workflow and split evals into deterministic contract checks, opt-in live drift checks, and recommendation-quality scoring.
+
+- [ ] Explain why the eval harness returns the same operator-facing response envelope as the webhook path instead of inventing a second eval-only result format.
+- [ ] Explain why deterministic evals can assert exact classes and actions for mock scenarios, while live evals assert broader bounded contracts.
+- [ ] Explain why generated eval reports are ignored by git but can be opened locally for inspection.
+- [ ] Explain why the first recommendation-quality judge is deterministic: it makes the rubric transparent and avoids adding another model dependency.
+
+### Why This Matters
+
+The eval suite gives skill and prompt work a feedback loop without making normal development slower or less deterministic. A future prompt edit can run representative incidents and inspect report artifacts, while the production-safety contract still lives in validation, provenance, safety policy, scorecards, and outcome tests.

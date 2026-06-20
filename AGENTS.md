@@ -83,6 +83,7 @@ Useful verification before handing off changes:
 
 ```bash
 npm test
+npm run evals
 npm run typecheck
 git diff --check
 ```
@@ -110,6 +111,10 @@ git diff --check
 - Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.
 - Live MiniMax E2E must remain separate from the mock Docker E2E and require `RUN_LIVE_LLM_E2E=1`.
 - Additional live MiniMax E2E scenarios must remain explicitly selected with `LIVE_E2E_SCENARIOS`; the default live path should stay narrow.
+- Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
+- Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.
+- Eval expectations must live in eval cases, not in raw incident fixtures or Grafana payloads.
+- Judge-based evals may score explanation quality, but schema validity, citation validity, provenance, and safety gates must remain deterministic assertions.
 - Synthetic services may generate incident-shaped evidence, but they must not execute remediation or connect to production systems.
 - Use `npm test`, `npm run typecheck`, and `npm run triage -- ...` for local verification.
 - Use Docker for the local Grafana/Loki/demo runtime.
@@ -143,6 +148,7 @@ git diff --check
 - [fixtures/services/services.json](fixtures/services/services.json): mock service ownership metadata.
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads.
+- [evals/](evals/): Flue eval suites for deterministic contracts, opt-in live drift checks, and explanation-quality scoring.
 - [tests/support/outcomes.ts](tests/support/outcomes.ts): shared outcome assertions for workflow, webhook, Docker E2E, and live-provider tests.
 - [docker-compose.yml](docker-compose.yml): local Grafana, Loki, synthetic service, and webhook-agent stack.
 - [docker-compose.live.yml](docker-compose.live.yml): opt-in live MiniMax override.
