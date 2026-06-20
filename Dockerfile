@@ -10,7 +10,6 @@ RUN npm ci
 
 COPY src ./src
 COPY fixtures ./fixtures
-COPY services ./services
 COPY .agents ./.agents
 COPY tsconfig.json tsconfig.build.json ./
 

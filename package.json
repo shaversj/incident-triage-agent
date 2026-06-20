@@ -8,14 +8,14 @@
     "triage": "tsx src/cli.ts",
     "list": "tsx src/cli.ts list",
     "serve": "tsx src/cli.ts serve",
-    "synthetic-service": "tsx services/synthetic-checkout-service.ts",
+    "demo": "tsx scripts/run-recorded-triage-demo.ts",
     "test": "vitest run",
     "evals": "vitest run --config evals/vitest.evals.config.ts",
     "evals:json": "mkdir -p eval-results && vitest run --config evals/vitest.evals.config.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/vitest-results.json",
     "evals:ui": "vitest-evals serve eval-results",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
-    "demo-live": "tsx scripts/run-live-e2e-probe.ts"
+    "demo-live": "tsx scripts/run-recorded-triage-demo.ts --live"
   },
   "dependencies": {
     "@flue/runtime": "1.0.0-beta.1",

@@ -40,6 +40,13 @@ describe("incident-triage skill contract", () => {
     }
   });
 
+  test("requires recommendation rationale in expanded output", () => {
+    expect(skill).toContain("Do not omit `recommendation`");
+    expect(skill).toContain("If you return `finding_summary`, you must also return `recommendation.rationale`");
+    expect(skill).toContain("verify `recommendation.rationale` is a non-empty explanation");
+    expect(skill).toContain("verify `recommendation.evidence_ids` cites the evidence");
+  });
+
   test("requires evidence citations to come from the supplied package", () => {
     expect(skill).toContain("Cite only evidence IDs present in the supplied evidence package");
     expect(skill).toContain("verify every evidence ID appears exactly in the supplied evidence package");

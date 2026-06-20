@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
 import { LokiClient } from "../src/loki";
+import { assertNoAnswerFields, loadRecordedLogs } from "../src/recorded-observability";
 
 test("Loki client queries range and converts logs to evidence", async () => {
   let requestedUrl = "";
@@ -37,4 +38,21 @@ test("Loki client reports downstream errors", async () => {
   );
 
   await expect(client.queryRange({ service: "checkout-api" }, 1, 2)).rejects.toThrow("503");
+});
+
+test("recorded log fixtures load as Loki-shaped entries", () => {
+  const entries = loadRecordedLogs("checkout-payment-timeout");
+
+  expect(entries).toHaveLength(3);
+  expect(entries[0]).toMatchObject({
+    labels: { service: "checkout-api" },
+  });
+  expect(entries[0]?.line).toContain("payment timeout");
+  expect(LokiClient.toEvidence(entries)[0]?.evidenceId).toBe("log:0");
+});
+
+test("recorded log fixtures reject answer-like fields", () => {
+  expect(() => assertNoAnswerFields({
+    entries: [{ line: "payment timeout", incident_class: "dependency_outage" }],
+  })).toThrow("prohibited answer field");
 });

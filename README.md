@@ -84,60 +84,36 @@ Run the real MiniMax path in Docker:
 docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
-Run the local Grafana/Loki integration stack with the synthetic incident service and mock LLM:
+## Recorded Observability Demo
+
+Run a recorded Grafana webhook payload plus recorded Loki-shaped logs through the real webhook handler and workflow with deterministic mock LLM output:
 
 ```bash
-docker compose up -d --build
+npm run demo
+npm run demo -- --scenario capacity-saturation
+npm run demo -- --scenario bad-deploy-latency --json
 ```
 
-Generate local service logs:
-
-```bash
-curl -s http://localhost:8081/checkout \
-  -H 'Content-Type: application/json' \
-  --data '{"checkout_id":"local-demo-001"}'
-
-curl -s http://localhost:8081/capacity \
-  -H 'Content-Type: application/json' \
-  --data '{"incident_id":"local-capacity-001"}'
-
-curl -s http://localhost:8081/bad-deploy \
-  -H 'Content-Type: application/json' \
-  --data '{"incident_id":"local-bad-deploy-001"}'
-```
-
-Send a sample Grafana webhook payload:
-
-```bash
-curl -s http://localhost:8080/webhooks/grafana \
-  -H 'Content-Type: application/json' \
-  -H 'X-Webhook-Secret: local-webhook-secret' \
-  --data @fixtures/grafana/checkout-payment-timeout-webhook.json
-```
-
-Stop the stack:
-
-```bash
-docker compose down -v
-```
-
-Run the same local stack with live MiniMax:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
-```
-
-The live override removes `--mock-llm` from the agent and passes MiniMax settings through runtime environment interpolation.
-
-Run the one-command live demo probe:
+Run the same recorded input path with live MiniMax:
 
 ```bash
 npm run demo-live
 npm run demo-live -- --scenario capacity-saturation
-npm run demo-live -- --scenario bad-deploy-latency --json
 ```
 
-The probe starts the live Compose stack, generates logs through the synthetic service, posts the Grafana webhook, prints a sanitized run-envelope summary, and cleans up.
+The recorded demo does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads `fixtures/grafana/` payloads and `fixtures/logs/` records, then exercises the real webhook normalization, evidence construction, workflow, validation, safety, provenance, and scorecard path.
+The default human output starts with an input summary so reviewers can see which recorded alerts, service, severity, start time, and log count produced the decision.
+
+You can still run the webhook server directly when you want to post a payload yourself:
+
+```bash
+npm run serve -- --mock-llm
+
+curl -s http://localhost:8080/webhooks/grafana \
+  -H 'Content-Type: application/json' \
+  -H 'X-Webhook-Secret: replace-with-a-local-webhook-secret' \
+  --data @fixtures/grafana/checkout-payment-timeout-webhook.json
+```
 
 ## Scenarios
 
@@ -199,21 +175,21 @@ npm test
 npm run typecheck
 ```
 
-Default tests avoid real MiniMax calls, Docker, and networked Loki. They exercise real parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki, webhook, synthetic service, and outcome code paths with fixture payloads and fake external transports.
+Default tests avoid real MiniMax calls, Docker, and networked Loki. They exercise real parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki-shaped log replay, webhook, and outcome code paths with fixture payloads and mock external transports.
 
 Outcome tests live in `tests/triage-outcomes.test.ts` and `tests/webhook-outcomes.test.ts`, with shared assertions in `tests/support/outcomes.ts`.
 
-The Docker-backed Grafana/Loki E2E test is opt-in:
+The recorded observability integration test replays Grafana webhook payloads and Loki-shaped logs through real handler and workflow code:
 
 ```bash
-RUN_DOCKER_E2E=1 npm test -- tests/e2e-grafana-loki.test.ts
+npm test -- tests/observability-integration.test.ts
 ```
 
-The live MiniMax E2E is separate and opt-in:
+The live MiniMax path is covered by opt-in Flue evals and the recorded demo:
 
 ```bash
-RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
-LIVE_E2E_SCENARIOS=all RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
+RUN_LIVE_FLUE_EVALS=1 npm run evals
+npm run demo-live
 ```
 
 ## Evals

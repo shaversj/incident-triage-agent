@@ -587,3 +587,62 @@ The implementation added a `vitest-evals` harness around the existing incident-t
 ### Why This Matters
 
 The eval suite gives skill and prompt work a feedback loop without making normal development slower or less deterministic. A future prompt edit can run representative incidents and inspect report artifacts, while the production-safety contract still lives in validation, provenance, safety policy, scorecards, and outcome tests.
+
+## Recorded Observability Input Planning: 2026-06-20
+
+The next refactor should replace the primary Grafana/Loki/Docker Compose demo surface with recorded Grafana webhook payloads and Loki-shaped log fixtures.
+
+- [ ] Explain why the full Grafana/Loki stack proves container plumbing more than it proves the incident-triage architecture.
+- [ ] Explain why recorded observability inputs can still be realistic when they preserve Grafana payload shape, Loki log shape, timestamps, labels, and raw line content.
+- [ ] Explain why recorded log fixtures must not contain expected incident classes, next actions, rollback hints, or eval expectations.
+- [ ] Explain why the integration test should still call the real webhook handler, workflow, validation, safety gate, provenance builder, and scorecard.
+- [ ] Explain why mocking the LLM provider and Loki transport is acceptable when parser, workflow, policy, and rendering paths stay real.
+- [ ] Explain why the live MiniMax proof can replay recorded inputs instead of starting Docker Compose.
+- [ ] Explain what confidence is lost by removing the default Compose path: the project no longer proves local Grafana/Loki connectivity unless a separate smoke test is added.
+
+### Why This Matters
+
+The project should be easy to explain as an agent architecture proof. Recorded observability inputs keep the important boundary visible: raw alert and log facts enter the system, deterministic code builds evidence and validates the result, and the LLM contributes one bounded decision. Removing the heavy local stack lowers operational noise without changing the safety model.
+
+## Recorded Observability Input Implementation: 2026-06-20
+
+The implementation removed the Grafana/Loki/Docker Compose demo stack from the primary path and replaced it with recorded Grafana webhook payloads plus recorded Loki-shaped log fixtures.
+
+- [ ] Explain why `RecordedLokiClient` implements the same `LokiClientLike` boundary as the networked client.
+- [ ] Explain why the recorded logs are plain observability facts: timestamp, labels, and log line.
+- [ ] Explain why `tests/observability-integration.test.ts` is stronger than a mocked unit test: it still calls the real webhook handler, workflow, validation, safety, provenance, and scorecard code.
+- [ ] Explain why deleting the synthetic service reduces architectural noise rather than weakening the agent proof.
+- [ ] Explain why Docker remains useful as packaging smoke, but no longer defines the integration demo.
+- [ ] Explain why `npm run demo` defaults to deterministic mock LLM output and `npm run demo-live` is the explicit provider-variance path.
+- [ ] Explain why the example response is sanitized and operator-facing instead of containing raw log details or secrets.
+
+### Why This Matters
+
+The refactor makes the project easier to run and easier to explain. A reviewer can now see the agent architecture directly: recorded alert and log messages enter the real system, the workflow builds evidence, the LLM boundary produces a bounded decision, and deterministic code validates and gates the result. That is the proof this project is trying to show.
+
+## Recommendation Rationale Prompt Tightening: 2026-06-20
+
+The live model produced a valid bounded decision but omitted the optional `recommendation.rationale` explanation field. The prompt now makes the expanded output expectation explicit without changing safety-critical validation.
+
+- [ ] Explain why missing `recommendation.rationale` should not invalidate a bounded decision when schema, evidence IDs, safety, and provenance are valid.
+- [ ] Explain why prompt tightening is the right first fix: the model should be told clearly that expanded output includes `recommendation`.
+- [ ] Explain why local validation still degrades malformed explanation fields instead of letting them drive workflow state.
+- [ ] Explain why `recommendation.rationale` must explain `decision.next_action` rather than introduce a second action.
+- [ ] Explain why the skill contract test protects this behavior without asserting brittle provider wording.
+
+### Why This Matters
+
+The demo is easier to understand when the model explains why the next action follows from the evidence. The architecture stays safe because that explanation is still non-authoritative: the workflow trusts only the validated bounded decision for safety and scoring.
+
+## Demo Input Summary: 2026-06-20
+
+The recorded demo now prints a compact input summary by default before showing the LLM decision and safety output.
+
+- [ ] Explain why a demo should show the raw input boundary before the recommendation.
+- [ ] Explain why the demo summarizes Grafana and log inputs instead of dumping full webhook JSON.
+- [ ] Explain why JSON output also includes the input summary: machine-readable demos should carry the same context as human-readable demos.
+- [ ] Explain why the input summary is not evidence evaluation; it is orientation for the operator or reviewer.
+
+### Why This Matters
+
+The demo now tells the story in the right order: recorded observability facts came in, the workflow investigated them, the LLM made one bounded recommendation, and deterministic code validated and gated the result.

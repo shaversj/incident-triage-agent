@@ -34,18 +34,11 @@ raw fixture -> mock tools -> evidence package -> LLM decision
   -> local validation -> safety gate -> verification plan -> scorecard
 ```
 
-The observability integration variant keeps the same center:
+The recorded observability integration variant keeps the same center:
 
 ```text
-Grafana webhook -> raw incident normalization -> Loki log lookup
+recorded Grafana webhook -> raw incident normalization -> recorded Loki-shaped logs
   -> evidence package -> LLM decision -> validation -> safety gate
-```
-
-The stronger local E2E variant adds a synthetic service before Loki:
-
-```text
-synthetic incident request -> service-generated Loki logs -> Grafana webhook
-  -> Loki log lookup -> evidence package -> LLM decision -> validation -> safety gate
 ```
 
 The observability scenario matrix should exercise more than one alert shape without weakening the raw-data boundary:
@@ -62,7 +55,7 @@ The workflow should own:
 - State transitions and terminal states.
 - Safety policy for approval-sensitive actions.
 - Deterministic scorecards.
-- Outcome tests that verify the operator-facing contract across fixture, webhook, Docker E2E, and live-provider paths.
+- Outcome tests that verify the operator-facing contract across fixture, webhook, recorded observability, and live-provider paths.
 
 The LLM should own one bounded judgment:
 
@@ -75,9 +68,9 @@ Provider output should never be trusted directly. In this project, the adapter e
 
 Safety belongs outside the prompt. Rollback-like or runbook-action recommendations are staged as approval-required payloads and audit events. Missing critical context moves the run to human input instead of letting a fluent answer masquerade as a safe action.
 
-The same architecture should be runnable through the normal local and container paths. Here, `npm run triage -- ...` and the Docker image both exercise the same TypeScript entrypoint, so local demos, tests, and container demos do not drift into separate execution paths.
+The same architecture should be runnable through the normal local and container paths. Here, `npm run triage -- ...`, `npm run demo`, and the Docker image all exercise the same TypeScript boundaries, so local demos, tests, and container demos do not drift into separate execution paths.
 
-When adding observability integrations, preserve the same separation. Grafana webhook payloads should be normalized into raw alert facts, and Loki query results should become operational evidence. Neither source should carry expected incident classes, next actions, suspected causes, or approval hints into the model prompt.
+When adding observability integrations, preserve the same separation. Grafana webhook payloads should be normalized into raw alert facts, and Loki query results or recorded Loki-shaped logs should become operational evidence. Neither source should carry expected incident classes, next actions, suspected causes, or approval hints into the model prompt.
 
 If a webhook scenario needs deterministic routing because multiple alert shapes use the same service, use neutral test metadata such as a scenario label for mock selection only. Do not treat that label as evidence for the incident class.
 
@@ -155,19 +148,23 @@ A good verification pass exercises both the local and container paths:
 ```bash
 npm run list
 npm test
+npm run demo
 npm run typecheck
 docker build -t incident-triage-agent:local .
 docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-llm --trace
-RUN_DOCKER_E2E=1 npm test -- tests/e2e-grafana-loki.test.ts
 ```
 
-That Docker E2E should cover the deterministic observability scenario matrix while still using a mock LLM.
-
-The live provider E2E should remain opt-in:
+The recorded observability integration test should cover the deterministic scenario matrix while still using a mock LLM:
 
 ```bash
-RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
-LIVE_E2E_SCENARIOS=all RUN_LIVE_LLM_E2E=1 npm test -- tests/e2e-live-service-llm.test.ts
+npm test -- tests/observability-integration.test.ts
+```
+
+The live provider path should remain opt-in:
+
+```bash
+RUN_LIVE_FLUE_EVALS=1 npm run evals
+npm run demo-live
 ```
 
 Use this only when provider credentials, spend, network dependency, and model variance are acceptable for the validation pass.

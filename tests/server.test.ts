@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { StaticDecisionClient } from "../src/llm";
-import { LokiClient, type LokiLogEntry } from "../src/loki";
+import { RecordedLokiClient } from "../src/recorded-observability";
 import { handleGrafanaWebhook, type WebhookRuntime } from "../src/server";
 
 test("webhook rejects invalid secret", async () => {
@@ -12,7 +12,7 @@ test("webhook rejects invalid secret", async () => {
 });
 
 test("valid webhook returns triage JSON with Loki evidence", async () => {
-  const loki = new FakeLokiClient();
+  const loki = RecordedLokiClient.fromFixture("checkout-payment-timeout");
 
   const [status, response] = await handleGrafanaWebhook(payload(), "test-secret", runtime(loki));
 
@@ -38,7 +38,10 @@ test("invalid LLM response is recoverable without safety action", async () => {
   const [status, response] = await handleGrafanaWebhook(
     payload(),
     "test-secret",
-    runtime(new FakeLokiClient(), new StaticDecisionClient({ "grafana-checkout-api": "{not json" })),
+    runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      new StaticDecisionClient({ "grafana-checkout-api": "{not json" }),
+    ),
   );
 
   expect(status).toBe(200);
@@ -62,25 +65,7 @@ test("resolved webhook is ignored", async () => {
   expect(response.reason).toBe("resolved_alert");
 });
 
-class FakeLokiClient {
-  lastQuery?: Record<string, unknown>;
-
-  async queryRange(
-    labels: Record<string, string>,
-    startNs: number,
-    endNs: number,
-    options: { limit?: number; direction?: "forward" | "backward" },
-  ): Promise<LokiLogEntry[]> {
-    this.lastQuery = { labels, startNs, endNs, limit: options.limit, direction: options.direction };
-    return [{ timestampNs: "1781622420000000000", line: "payment timeout after 3000ms", labels }];
-  }
-
-  toEvidence(entries: LokiLogEntry[]) {
-    return LokiClient.toEvidence(entries);
-  }
-}
-
-function runtime(lokiClient?: FakeLokiClient, llmClient = defaultLlm()): WebhookRuntime {
+function runtime(lokiClient?: RecordedLokiClient, llmClient = defaultLlm()): WebhookRuntime {
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",

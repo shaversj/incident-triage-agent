@@ -47,10 +47,11 @@ Think like an experienced on-call SRE investigating one active incident before c
 10. `recommendation` must explain `decision.next_action` and must not include its own `next_action` field.
 11. Do not invent relative timestamp math. If comparing deploy timing to incident timing, use the supplied timestamps or say the timing is noted; only state minutes, hours, or days when directly supported by the evidence.
 12. Do not invent downstream ownership. Service ownership evidence identifies the affected service owner unless the supplied evidence explicitly names the dependency owner.
+13. If you return `finding_summary`, you must also return `recommendation.rationale` and `recommendation.evidence_ids`.
 
 ## Output
 
-Return structured data with:
+Return one structured object with all top-level fields below. Do not omit `recommendation` when returning the expanded output shape.
 
 - `analysis`
   - `hypotheses`
@@ -72,4 +73,6 @@ Return structured data with:
 
 Before returning, verify every evidence ID appears exactly in the supplied evidence package.
 Before returning, verify `recommendation` does not contain `next_action`; the only action field is `decision.next_action`.
+Before returning, verify `recommendation.rationale` is a non-empty explanation of why `decision.next_action` is the right bounded next action.
+Before returning, verify `recommendation.evidence_ids` cites the evidence that supports `recommendation.rationale`.
 Before returning, verify any timing or ownership claim is directly supported by supplied evidence; otherwise move it to `caveats` as missing context.

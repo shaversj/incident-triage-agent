@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { StaticDecisionClient } from "../src/llm";
-import { LokiClient, type LokiLogEntry } from "../src/loki";
+import { RecordedLokiClient } from "../src/recorded-observability";
 import { handleGrafanaWebhook, type WebhookRuntime } from "../src/server";
 import {
   assertIgnoredResponse,
@@ -53,7 +53,7 @@ test("missing Loki logs outcome preserves missing context", async () => {
           verification_plan: ["Keep watching timeout rate."],
         }),
       }),
-      new EmptyLokiClient(),
+      RecordedLokiClient.fromFixture("empty"),
     ),
   );
 
@@ -96,7 +96,7 @@ test("capacity webhook outcome requires approval with current and guidance evide
           verification_plan: ["Check CPU utilization.", "Check queue depth."],
         }),
       }),
-      new FakeLokiClient("search worker cpu=94 queue_depth=438", "search-api"),
+      RecordedLokiClient.fromFixture("capacity-saturation"),
     ),
   );
 
@@ -129,7 +129,7 @@ test("bad deploy webhook outcome cites raw deploy evidence", async () => {
           verification_plan: ["Check checkout p95 latency.", "Check checkout error budget burn."],
         }),
       }),
-      new FakeLokiClient("checkout-api p95 latency elevated after v2.19.0 traffic ramp", "checkout-api"),
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
     ),
   );
 
@@ -147,7 +147,7 @@ test("bad deploy webhook outcome cites raw deploy evidence", async () => {
   });
 });
 
-function runtime(llmClient = defaultLlm(), lokiClient: FakeLokiClient | EmptyLokiClient = new FakeLokiClient()): WebhookRuntime {
+function runtime(llmClient = defaultLlm(), lokiClient: RecordedLokiClient = RecordedLokiClient.fromFixture("checkout-payment-timeout")): WebhookRuntime {
   return {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",
@@ -168,31 +168,6 @@ function defaultLlm() {
       verification_plan: ["Watch payment timeout rate."],
     }),
   });
-}
-
-class FakeLokiClient {
-  constructor(
-    private readonly line = "payment timeout after 3000ms",
-    private readonly service = "checkout-api",
-  ) {}
-
-  async queryRange(): Promise<LokiLogEntry[]> {
-    return [{ timestampNs: "1781622420000000000", line: this.line, labels: { service: this.service } }];
-  }
-
-  toEvidence(entries: LokiLogEntry[]) {
-    return LokiClient.toEvidence(entries);
-  }
-}
-
-class EmptyLokiClient {
-  async queryRange(): Promise<LokiLogEntry[]> {
-    return [];
-  }
-
-  toEvidence(entries: LokiLogEntry[]) {
-    return LokiClient.toEvidence(entries);
-  }
 }
 
 function payload(name = "checkout-payment-timeout-webhook.json"): any {

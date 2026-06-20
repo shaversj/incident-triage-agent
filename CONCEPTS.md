@@ -25,14 +25,14 @@ A local observability integration surface that accepts Grafana alert payloads as
 ### Loki Log Lookup
 The bounded log-enrichment step that queries Loki for service-specific logs around an alert window and converts results into operational evidence.
 
-### Integration E2E
-A Docker-backed test path that exercises external-system-shaped inputs while still using synthetic alerts, logs, and services.
+### Recorded Observability Input
+Synthetic-but-realistic Grafana webhook payloads and Loki-shaped log entries stored as fixtures so the agent can be tested without running an observability stack.
 
-### Synthetic Incident Service
-A local fake service that handles real test requests and generates incident-shaped logs for the triage workflow.
+### Recorded Observability Integration
+An integration path that exercises external-system-shaped inputs through real agent code while still using synthetic recorded alerts and logs.
 
-### Live Provider E2E
-An opt-in E2E path that calls the real LLM provider while still using synthetic local incident data and no remediation authority.
+### Live Provider Replay
+An opt-in path that calls the real LLM provider while replaying synthetic local incident data and granting no remediation authority.
 
 ### Outcome-Based Test Suite
 A contract-focused test layer that verifies the operator-facing triage result: bounded decision, evidence citations, provenance support, safety behavior, and recoverable failure handling.
@@ -57,4 +57,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. A Synthetic Incident Service can generate logs that Loki Log Lookup adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Integration E2E assertions, or Live Provider E2E assertions.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, or Live Provider Replay assertions.

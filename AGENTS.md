@@ -27,12 +27,11 @@ Primary TypeScript code lives in `src/`:
 - `loki.ts`: bounded Loki query client and log evidence conversion.
 - `llm.ts`: Flue-backed MiniMax decision adapter and decision validation.
 - `policy.ts`: safety gate and simulated approval handling.
+- `recorded-observability.ts`: recorded Loki-shaped log replay for local demos and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
 - `server.ts`: local Grafana webhook server and JSON response rendering.
 - `workflow.ts`: triage state machine.
 - `workflows/incident-triage.ts`: discovered Flue workflow boundary for the local `incident-triage` skill.
-
-Local synthetic service code lives in `services/synthetic-checkout-service.ts`. It emits request-derived incident logs to Loki and has no production authority.
 
 ## Quick Start
 
@@ -60,23 +59,12 @@ Run the webhook server locally with mock LLM output:
 npm run serve -- --mock-llm
 ```
 
-Run the local Grafana/Loki stack:
+Run the recorded observability demo:
 
 ```bash
-docker compose up -d --build
-```
-
-Run the live MiniMax Compose override only when you explicitly want provider variance and cost:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.live.yml up -d --build
-```
-
-Run the one-command live demo probe:
-
-```bash
+npm run demo
+npm run demo -- --scenario capacity-saturation
 npm run demo-live
-npm run demo-live -- --scenario capacity-saturation
 ```
 
 Useful verification before handing off changes:
@@ -108,16 +96,15 @@ git diff --check
 - Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, safety behavior, and recoverable failure handling.
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
-- Docker-backed Grafana/Loki E2E tests must remain opt-in; the default suite should not start containers.
-- Live MiniMax E2E must remain separate from the mock Docker E2E and require `RUN_LIVE_LLM_E2E=1`.
-- Additional live MiniMax E2E scenarios must remain explicitly selected with `LIVE_E2E_SCENARIOS`; the default live path should stay narrow.
+- Recorded observability tests should replay Grafana webhook payloads and Loki-shaped logs through real handler and workflow code.
+- The default suite must not start Docker, Grafana, Loki, or a synthetic service.
 - Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
 - Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.
 - Eval expectations must live in eval cases, not in raw incident fixtures or Grafana payloads.
 - Judge-based evals may score explanation quality, but schema validity, citation validity, provenance, and safety gates must remain deterministic assertions.
-- Synthetic services may generate incident-shaped evidence, but they must not execute remediation or connect to production systems.
+- Recorded log fixtures may contain timestamps, labels, and raw log lines, but must not contain expected classes, next actions, rollback hints, or eval expectations.
 - Use `npm test`, `npm run typecheck`, and `npm run triage -- ...` for local verification.
-- Use Docker for the local Grafana/Loki/demo runtime.
+- Use Docker only for local image packaging unless a future plan reintroduces a connector smoke test.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, safety gating, and scorecard results.
 - Keep diagnostic logs on stderr so stdout remains usable for the triage report.
@@ -125,14 +112,14 @@ git diff --check
 
 ## Testing Convention
 
-- Write tests that call actual functions, HTTP handlers, scripts, or local service endpoints and verify returned behavior.
+- Write tests that call actual functions, HTTP handlers, scripts, or recorded-input replay paths and verify returned behavior.
 - Use realistic payload fixtures from `fixtures/` for incident, Grafana, runbook, deploy, service, and prior-incident data.
 - Prefer focused integration or outcome tests over many narrow object-shape tests.
 - Verify parsing, validation, error handling, request/response contracts, evidence citations, provenance, safety behavior, and recoverable failure modes.
 - When mocking, mock only unstable external boundaries such as the LLM provider, Loki transport, Docker availability, or live credentials; keep the parser, workflow, policy, scoring, and response-rendering paths real.
 - Do not add tests that only instantiate local objects and assert the values they were constructed with.
 - Avoid brittle hardcoded string checks unless the string is a public contract, a stable evidence ID, a safety/security guarantee, or a required operator-facing message.
-- Docker and live-provider tests must remain opt-in, but when enabled they should fail or skip explicitly instead of silently passing without exercising a scenario.
+- Live-provider tests must remain opt-in, but when enabled they should fail or skip explicitly instead of silently passing without exercising a scenario.
 - More tests are not automatically better. Bias toward fewer tests that prove meaningful behavior across real code paths.
 
 ## Topic Docs
@@ -148,10 +135,9 @@ git diff --check
 - [fixtures/services/services.json](fixtures/services/services.json): mock service ownership metadata.
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads.
+- [fixtures/logs/](fixtures/logs/): recorded Loki-shaped log fixtures for local demos and integration tests.
 - [evals/](evals/): Flue eval suites for deterministic contracts, opt-in live drift checks, and explanation-quality scoring.
-- [tests/support/outcomes.ts](tests/support/outcomes.ts): shared outcome assertions for workflow, webhook, Docker E2E, and live-provider tests.
-- [docker-compose.yml](docker-compose.yml): local Grafana, Loki, synthetic service, and webhook-agent stack.
-- [docker-compose.live.yml](docker-compose.live.yml): opt-in live MiniMax override.
-- [services/synthetic-checkout-service.ts](services/synthetic-checkout-service.ts): local service that generates Loki logs from test requests.
-- [scripts/run-live-e2e-probe.ts](scripts/run-live-e2e-probe.ts): one-command live demo probe.
-- [docs/examples/live-e2e-response.json](docs/examples/live-e2e-response.json): sanitized example of a successful live-provider response.
+- [tests/support/outcomes.ts](tests/support/outcomes.ts): shared outcome assertions for workflow, webhook, recorded integration, and live-provider tests.
+- [tests/observability-integration.test.ts](tests/observability-integration.test.ts): recorded Grafana/Loki-shaped integration matrix.
+- [scripts/run-recorded-triage-demo.ts](scripts/run-recorded-triage-demo.ts): one-command recorded observability demo.
+- [docs/examples/recorded-demo-response.json](docs/examples/recorded-demo-response.json): sanitized example of recorded observability demo output.
