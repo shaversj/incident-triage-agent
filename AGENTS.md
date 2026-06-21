@@ -27,7 +27,7 @@ Primary TypeScript code lives in `src/`:
 - `loki.ts`: bounded Loki query client and log evidence conversion.
 - `llm.ts`: Flue-backed MiniMax decision adapter and decision validation.
 - `policy.ts`: safety gate and simulated approval handling.
-- `recorded-observability.ts`: recorded Loki-shaped log replay for local demos and integration tests.
+- `recorded-observability.ts`: recorded Loki-shaped log replay for recorded triage runs and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
 - `server.ts`: local Grafana webhook server and JSON response rendering.
 - `workflow.ts`: triage state machine.
@@ -59,12 +59,12 @@ Run the webhook server locally with mock LLM output:
 npm run serve -- --mock-llm
 ```
 
-Run the recorded observability demo:
+Run the recorded observability triage path:
 
 ```bash
-npm run demo
-npm run demo -- --scenario capacity-saturation
-npm run demo-live
+npm run triage:recorded
+npm run triage:recorded -- --scenario capacity-saturation
+npm run triage:live
 ```
 
 Useful verification before handing off changes:
@@ -101,6 +101,9 @@ git diff --check
 - Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
 - Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.
 - Eval expectations must live in eval cases, not in raw incident fixtures or Grafana payloads.
+- Recorded triage quality gates must remain deterministic pass/fail checks with stable names such as `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, and `recorded_triage_readability`.
+- A missing `recommendation.rationale` is an explanation-quality/readability failure, not a safety-policy failure.
+- Failed eval artifacts should preserve enough response and gate context to decide whether the model failed or the grader is too strict.
 - Judge-based evals may score explanation quality, but schema validity, citation validity, provenance, and safety gates must remain deterministic assertions.
 - Recorded log fixtures may contain timestamps, labels, and raw log lines, but must not contain expected classes, next actions, rollback hints, or eval expectations.
 - Use `npm test`, `npm run typecheck`, and `npm run triage -- ...` for local verification.
@@ -135,9 +138,9 @@ git diff --check
 - [fixtures/services/services.json](fixtures/services/services.json): mock service ownership metadata.
 - [fixtures/prior_incidents/prior-incidents.json](fixtures/prior_incidents/prior-incidents.json): mock prior incident context.
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads.
-- [fixtures/logs/](fixtures/logs/): recorded Loki-shaped log fixtures for local demos and integration tests.
+- [fixtures/logs/](fixtures/logs/): recorded Loki-shaped log fixtures for recorded triage runs and integration tests.
 - [evals/](evals/): Flue eval suites for deterministic contracts, opt-in live drift checks, and explanation-quality scoring.
 - [tests/support/outcomes.ts](tests/support/outcomes.ts): shared outcome assertions for workflow, webhook, recorded integration, and live-provider tests.
 - [tests/observability-integration.test.ts](tests/observability-integration.test.ts): recorded Grafana/Loki-shaped integration matrix.
-- [scripts/run-recorded-triage-demo.ts](scripts/run-recorded-triage-demo.ts): one-command recorded observability demo.
-- [docs/examples/recorded-demo-response.json](docs/examples/recorded-demo-response.json): sanitized example of recorded observability demo output.
+- [scripts/run-recorded-triage.ts](scripts/run-recorded-triage.ts): one-command recorded observability triage run.
+- [docs/examples/recorded-triage-response.json](docs/examples/recorded-triage-response.json): sanitized example of recorded observability triage output.

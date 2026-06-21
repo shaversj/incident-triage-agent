@@ -83,7 +83,7 @@ Artifacts created:
 - [ ] Explain why a successful run is not enough; failed and ambiguous runs must be legible too.
 - [ ] Explain how this PoC could later expand toward real observability tools.
 - [ ] Explain what changes if team-specific classifications are added later.
-- [ ] Explain why this project matters beyond the demo: it tests a reusable pattern for governed LLM-assisted operations.
+- [ ] Explain why this project matters beyond a one-off demonstration: it tests a reusable pattern for governed LLM-assisted operations.
 
 ## Core Mental Model
 
@@ -103,7 +103,7 @@ The proof of concept must therefore answer a sharper question than "can an LLM s
 
 ## Why The Chosen Solution Fits
 
-The chosen architecture keeps the demo small without making it fake.
+The chosen architecture keeps the proof small without making it fake.
 
 - Raw fixtures prove the system can infer from evidence instead of echoing pre-written suspected causes.
 - Mock tools preserve the shape of real operational integrations without needing production access.
@@ -212,7 +212,7 @@ The project now uses npm, Node.js, TypeScript, and Docker as the active runtime 
 
 ### Why This Matters
 
-Tooling should reinforce the architecture instead of creating a second way for it to behave. Using the same TypeScript CLI locally and inside Docker means local runs, tests, and container demos exercise the same package entrypoint. Excluding `.env` from the image build context keeps credentials out of the artifact while still allowing real provider calls with `docker run --env-file .env`.
+Tooling should reinforce the architecture instead of creating a second way for it to behave. Using the same TypeScript CLI locally and inside Docker means local runs, tests, and container checks exercise the same package entrypoint. Excluding `.env` from the image build context keeps credentials out of the artifact while still allowing real provider calls with `docker run --env-file .env`.
 
 ## Compound Learning: 2026-06-14
 
@@ -233,7 +233,7 @@ The CLI now uses Pino for detailed step-by-step diagnostics.
 
 ### Why This Matters
 
-Incident triage tools need observability for their own reasoning path. The trace explains the run to a human reader, while logs help debug the system boundary by boundary: CLI setup, fixture loading, evidence gathering, LLM request or mock response, validation, policy gating, scoring, and rendering. Keeping those logs on stderr preserves stdout as a stable report surface for demos, scripts, and tests.
+Incident triage tools need observability for their own reasoning path. The trace explains the run to a human reader, while logs help debug the system boundary by boundary: CLI setup, fixture loading, evidence gathering, LLM request or mock response, validation, policy gating, scoring, and rendering. Keeping those logs on stderr preserves stdout as a stable report surface for recorded runs, scripts, and tests.
 
 ## Prompt Contract Learnings: 2026-06-15
 
@@ -328,7 +328,7 @@ The implementation added a local webhook path, Grafana payload normalization, Lo
 
 ### Why This Matters
 
-The project now proves two surfaces with one architecture: fixture CLI runs for deterministic architecture demos and webhook ingestion for observability-shaped inputs. The important design win is reuse. The webhook path does not get a special, looser decision flow; it still builds evidence, calls the bounded LLM adapter, validates the result, applies safety policy, and reports provenance.
+The project now proves two surfaces with one architecture: fixture CLI runs for deterministic architecture runs and webhook ingestion for observability-shaped inputs. The important design win is reuse. The webhook path does not get a special, looser decision flow; it still builds evidence, calls the bounded LLM adapter, validates the result, applies safety policy, and reports provenance.
 
 ## Real Service And Live LLM E2E Planning: 2026-06-16
 
@@ -360,18 +360,18 @@ The implementation added a small synthetic checkout service and split E2E valida
 
 This gives the project a better architecture proof without making daily development fragile. The real-service/mock-LLM path proves the local observability loop deterministically. The live-service/live-LLM path proves the provider boundary when deliberately enabled. Those are different kinds of confidence, and keeping them separate is what makes the test suite useful instead of noisy.
 
-## Live Demo Probe And Example Response: 2026-06-16
+## Live Triage Probe And Example Response: 2026-06-16
 
-The project now has a one-command live demo probe plus a sanitized saved response example.
+The project now has a one-command live triage probe plus a sanitized saved response example.
 
-- [ ] Explain why a demo probe is different from a test: it optimizes for human inspection of the architecture path, not only assertions.
+- [ ] Explain why a triage probe is different from a test: it optimizes for human inspection of the architecture path, not only assertions.
 - [ ] Explain why the probe prints a sanitized summary instead of raw provider or prompt data.
 - [ ] Explain how the saved example helps reviewers understand evidence citations, provenance, safety, and scorecard output without spending live provider credits.
 - [ ] Explain why the probe must always clean up the Compose stack, including failure cases.
 
 ### Why This Matters
 
-The E2E tests prove the behavior. The demo probe makes the behavior easy to show. That distinction matters for portfolio-quality engineering: a good project should be verifiable by tests and legible to a human who wants to understand the system quickly.
+The E2E tests prove the behavior. The triage probe makes the behavior easy to show. That distinction matters for portfolio-quality engineering: a good project should be verifiable by tests and legible to a human who wants to understand the system quickly.
 
 ## Modernization Planning: 2026-06-16
 
@@ -431,7 +431,7 @@ The implementation expanded the local observability path from one checkout webho
 
 ### Why This Matters
 
-This turns the integration proof from a happy-path checkout demo into a bounded scenario matrix. The design still teaches the right habit: sources provide facts, the prompt asks for one bounded decision, validation checks the response, safety gates approval-sensitive actions, and outcome tests prove the operator-facing contract.
+This turns the integration proof from a happy-path checkout run into a bounded scenario matrix. The design still teaches the right habit: sources provide facts, the prompt asks for one bounded decision, validation checks the response, safety gates approval-sensitive actions, and outcome tests prove the operator-facing contract.
 
 ## Node, TypeScript, And Flue Redesign Planning: 2026-06-18
 
@@ -450,22 +450,22 @@ The useful part of Flue is not that it makes the system more magical. It gives t
 
 ## TypeScript Live Runtime Planning: 2026-06-18
 
-The next plan promotes TypeScript from parity scaffold to the live/demo runtime. The important lesson is sequencing: prove TypeScript live MiniMax, HTTP server, Docker, demo probe, and E2E parity before deleting Python paths.
+The next plan promotes TypeScript from parity scaffold to the live/recorded runtime. The important lesson is sequencing: prove TypeScript live MiniMax, HTTP server, Docker, triage probe, and E2E parity before deleting Python paths.
 
-- [ ] Explain why runtime migration is not complete until the strongest demo path uses the new runtime.
+- [ ] Explain why runtime migration is not complete until the strongest recorded path uses the new runtime.
 - [ ] Explain why the live MiniMax path should go through the same decision adapter and Flue skill boundary as tests.
 - [ ] Explain why the HTTP server should wrap the already-tested webhook handler instead of reimplementing triage logic.
-- [ ] Explain why Docker E2E, live E2E, and demo probe orchestration should share helpers where possible.
+- [ ] Explain why Docker E2E, live E2E, and triage probe orchestration should share helpers where possible.
 - [ ] Explain why docs should replace Python commands only when equivalent TypeScript commands exist.
 - [ ] Explain why Python deletion belongs after parity tests, not at the beginning of the migration.
 
 ### Why This Matters
 
-A proof of concept is most convincing when the architecture a reader studies is the same architecture the demo runs. Keeping Python as the live surface after TypeScript owns the workflow creates two truths. Promoting TypeScript end to end removes that split while preserving the safety lesson: the LLM reasons, but code controls the system.
+A proof of concept is most convincing when the architecture a reader studies is the same architecture the recorded path runs. Keeping Python as the live surface after TypeScript owns the workflow creates two truths. Promoting TypeScript end to end removes that split while preserving the safety lesson: the LLM reasons, but code controls the system.
 
 ## TypeScript Live Runtime Implementation: 2026-06-18
 
-The implementation promoted TypeScript to the active live/demo runtime, with MiniMax execution through Flue, a real HTTP webhook server, a TypeScript synthetic service, Docker Compose parity, a live demo probe, and TypeScript outcome/E2E tests.
+The implementation promoted TypeScript to the active live/recorded runtime, with MiniMax execution through Flue, a real HTTP webhook server, a TypeScript synthetic service, Docker Compose parity, a live triage probe, and TypeScript outcome/E2E tests.
 
 - [ ] Explain why the Flue call belongs behind the `LLMDecisionClient` boundary instead of inside workflow state transitions.
 - [ ] Explain why the Flue workflow lives directly in `src/workflows/incident-triage.ts`: `src/` is the recommended Flue source root for new projects, and the workflow file itself should be the discovered entrypoint.
@@ -480,7 +480,7 @@ The implementation promoted TypeScript to the active live/demo runtime, with Min
 
 ### Why This Matters
 
-The project now has one active story: TypeScript code owns orchestration and safety, Flue owns the skill invocation boundary, MiniMax supplies one bounded judgment, and Docker proves the same path under a realistic local observability loop. That makes the PoC easier to inspect because there is no second implementation quietly carrying the demo.
+The project now has one active story: TypeScript code owns orchestration and safety, Flue owns the skill invocation boundary, MiniMax supplies one bounded judgment, and Docker proves the same path under a realistic local observability loop. That makes the PoC easier to inspect because there is no second implementation quietly carrying the primary run path.
 
 ## Flue Debug Logging: 2026-06-18
 
@@ -495,7 +495,7 @@ The Flue child process now streams stdout and stderr into the normal Pino logger
 
 ### Why This Matters
 
-Debug logging should help a human understand the architecture without changing the architecture. In this project, `info` logs show the stable incident-triage lifecycle, and `debug` logs expose the lower-level Flue execution path when needed. That separation keeps demos readable while still making integration issues diagnosable.
+Debug logging should help a human understand the architecture without changing the architecture. In this project, `info` logs show the stable incident-triage lifecycle, and `debug` logs expose the lower-level Flue execution path when needed. That separation keeps runs readable while still making integration issues diagnosable.
 
 ## TypeScript Modernization Planning: 2026-06-18
 
@@ -590,7 +590,7 @@ The eval suite gives skill and prompt work a feedback loop without making normal
 
 ## Recorded Observability Input Planning: 2026-06-20
 
-The next refactor should replace the primary Grafana/Loki/Docker Compose demo surface with recorded Grafana webhook payloads and Loki-shaped log fixtures.
+The next refactor should replace the primary Grafana/Loki/Docker Compose run surface with recorded Grafana webhook payloads and Loki-shaped log fixtures.
 
 - [ ] Explain why the full Grafana/Loki stack proves container plumbing more than it proves the incident-triage architecture.
 - [ ] Explain why recorded observability inputs can still be realistic when they preserve Grafana payload shape, Loki log shape, timestamps, labels, and raw line content.
@@ -606,14 +606,14 @@ The project should be easy to explain as an agent architecture proof. Recorded o
 
 ## Recorded Observability Input Implementation: 2026-06-20
 
-The implementation removed the Grafana/Loki/Docker Compose demo stack from the primary path and replaced it with recorded Grafana webhook payloads plus recorded Loki-shaped log fixtures.
+The implementation removed the Grafana/Loki/Docker Compose run stack from the primary path and replaced it with recorded Grafana webhook payloads plus recorded Loki-shaped log fixtures.
 
 - [ ] Explain why `RecordedLokiClient` implements the same `LokiClientLike` boundary as the networked client.
 - [ ] Explain why the recorded logs are plain observability facts: timestamp, labels, and log line.
 - [ ] Explain why `tests/observability-integration.test.ts` is stronger than a mocked unit test: it still calls the real webhook handler, workflow, validation, safety, provenance, and scorecard code.
 - [ ] Explain why deleting the synthetic service reduces architectural noise rather than weakening the agent proof.
-- [ ] Explain why Docker remains useful as packaging smoke, but no longer defines the integration demo.
-- [ ] Explain why `npm run demo` defaults to deterministic mock LLM output and `npm run demo-live` is the explicit provider-variance path.
+- [ ] Explain why Docker remains useful as packaging smoke, but no longer defines the recorded integration path.
+- [ ] Explain why `npm run triage:recorded` defaults to deterministic mock LLM output and `npm run triage:live` is the explicit provider-variance path.
 - [ ] Explain why the example response is sanitized and operator-facing instead of containing raw log details or secrets.
 
 ### Why This Matters
@@ -632,17 +632,73 @@ The live model produced a valid bounded decision but omitted the optional `recom
 
 ### Why This Matters
 
-The demo is easier to understand when the model explains why the next action follows from the evidence. The architecture stays safe because that explanation is still non-authoritative: the workflow trusts only the validated bounded decision for safety and scoring.
+The recorded triage output is easier to understand when the model explains why the next action follows from the evidence. The architecture stays safe because that explanation is still non-authoritative: the workflow trusts only the validated bounded decision for safety and scoring.
 
-## Demo Input Summary: 2026-06-20
+## Recorded Triage Input Summary: 2026-06-20
 
-The recorded demo now prints a compact input summary by default before showing the LLM decision and safety output.
+The recorded triage command now prints a compact input summary by default before showing the LLM decision and safety output.
 
-- [ ] Explain why a demo should show the raw input boundary before the recommendation.
-- [ ] Explain why the demo summarizes Grafana and log inputs instead of dumping full webhook JSON.
-- [ ] Explain why JSON output also includes the input summary: machine-readable demos should carry the same context as human-readable demos.
+- [ ] Explain why a recorded triage run should show the raw input boundary before the recommendation.
+- [ ] Explain why the recorded triage output summarizes Grafana and log inputs instead of dumping full webhook JSON.
+- [ ] Explain why JSON output also includes the input summary: machine-readable triage runs should carry the same context as human-readable runs.
 - [ ] Explain why the input summary is not evidence evaluation; it is orientation for the operator or reviewer.
 
 ### Why This Matters
 
-The demo now tells the story in the right order: recorded observability facts came in, the workflow investigated them, the LLM made one bounded recommendation, and deterministic code validated and gated the result.
+The recorded triage command now tells the story in the right order: recorded observability facts came in, the workflow investigated them, the LLM made one bounded recommendation, and deterministic code validated and gated the result.
+
+## Recorded Triage Output Grouping: 2026-06-20
+
+The recorded triage output now separates `INPUT`, `RUN`, `FINDING`, `DECISION`, `SAFETY`, `CAVEATS`, and `VERIFICATION PLAN` sections.
+
+- [ ] Explain why grouped output is more useful than one flat list for a recorded triage run.
+- [ ] Explain why input facts belong in `INPUT`, while model judgment belongs in `FINDING` and `DECISION`.
+- [ ] Explain why explanation warnings should be visible in `RUN`: they are validation facts about the model output, not incident facts.
+- [ ] Explain why missing `recommendation.rationale` should print as `not provided by model` instead of `none`.
+
+### Why This Matters
+
+Sectioned output makes the architecture visible at a glance. A reviewer can distinguish raw recorded observability input, workflow validation, model-authored explanation, bounded decision, and deterministic safety gating without reading the code first.
+
+## Recorded Triage Naming: 2026-06-20
+
+The active command, script, test, and example names now use `recorded triage` instead of the previous presentation-oriented label.
+
+- [ ] Explain why the previous label undersold the project: the path exercises real webhook normalization, evidence construction, workflow validation, safety gating, and rendering.
+- [ ] Explain why `recorded triage` is more accurate: only the observability inputs are recorded; the workflow path is real.
+- [ ] Explain why mock and live modes should be named by provider behavior, not by whether the run is presentation-only.
+
+### Why This Matters
+
+Precise names help readers understand the architecture before they read code. `recorded triage` communicates that this is a realistic integration replay, not a toy path separate from the actual incident-triage system.
+
+## Recorded Triage Quality Gate Planning: 2026-06-20
+
+The next eval improvement should add deterministic pass/fail gates for recorded triage output quality.
+
+- [ ] Explain why missing `recommendation.rationale` is not a safety failure but is still a recorded-triage readability failure.
+- [ ] Explain why named gates such as `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, and `recorded_triage_readability` are easier to trust than a single abstract quality score.
+- [ ] Explain why judge-style evals are still useful for softer qualities, but should not be the primary signal for hard contracts.
+- [ ] Explain why the quality eval should run through `incidentTriageHarness` instead of constructing local response objects.
+- [ ] Explain why a known-good reference output proves the quality gates are passable.
+- [ ] Explain why balanced negative cases catch one-sided eval design.
+- [ ] Explain why failed eval artifacts should be reviewed before assuming the model is wrong.
+- [ ] Explain why recorded triage quality gates are regression evals, while recommendation-quality judges are capability diagnostics.
+
+### Why This Matters
+
+The project needs two kinds of confidence. Safety confidence comes from deterministic validation, citation checks, provenance, and policy gates. Presentation confidence comes from knowing the representative recorded triage output includes the explanation fields a human needs to understand the recommendation.
+
+## Recorded Triage Quality Gate Implementation: 2026-06-20
+
+The implementation added deterministic recorded triage quality gates under the Flue eval suite.
+
+- [ ] Explain how `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, and `recorded_triage_readability` split one broad quality idea into reviewable pass/fail checks.
+- [ ] Explain why the known-good recorded response proves the grader can pass before using it to catch regressions.
+- [ ] Explain why targeted negative cases mutate a real response envelope instead of inventing a response from scratch.
+- [ ] Explain why failed quality gates include response context: reviewers need to distinguish model failures from grader bugs.
+- [ ] Explain why `recommendation-quality.eval.ts` remains useful as a soft capability diagnostic but does not replace deterministic gates.
+
+### Why This Matters
+
+The eval suite now catches the exact class of issue that produced `recommendation_rationale: none`: a response can be valid and safe but still not readable enough as a representative recorded triage run. That distinction keeps safety logic strict while making output quality visible.

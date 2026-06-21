@@ -68,7 +68,7 @@ Provider output should never be trusted directly. In this project, the adapter e
 
 Safety belongs outside the prompt. Rollback-like or runbook-action recommendations are staged as approval-required payloads and audit events. Missing critical context moves the run to human input instead of letting a fluent answer masquerade as a safe action.
 
-The same architecture should be runnable through the normal local and container paths. Here, `npm run triage -- ...`, `npm run demo`, and the Docker image all exercise the same TypeScript boundaries, so local demos, tests, and container demos do not drift into separate execution paths.
+The same architecture should be runnable through the normal local and container paths. Here, `npm run triage -- ...`, `npm run triage:recorded`, and the Docker image all exercise the same TypeScript boundaries, so recorded triage runs, tests, and container checks do not drift into separate execution paths.
 
 When adding observability integrations, preserve the same separation. Grafana webhook payloads should be normalized into raw alert facts, and Loki query results or recorded Loki-shaped logs should become operational evidence. Neither source should carry expected incident classes, next actions, suspected causes, or approval hints into the model prompt.
 
@@ -92,7 +92,7 @@ That separation makes the proof of concept safer and more honest. A successful r
 - When building an agentic SRE or operations assistant where actions may affect production reliability.
 - When model decisions need to be routed, scored, audited, or gated.
 - When mock data should preserve the shape of future real integrations without creating production blast radius.
-- When a demo needs to prove architecture quality, not just produce polished prose.
+- When a recorded integration run needs to prove architecture quality, not just produce polished prose.
 - When missing context should be visible as a workflow state rather than hidden inside an answer.
 
 ## Examples
@@ -148,7 +148,7 @@ A good verification pass exercises both the local and container paths:
 ```bash
 npm run list
 npm test
-npm run demo
+npm run triage:recorded
 npm run typecheck
 docker build -t incident-triage-agent:local .
 docker run --rm incident-triage-agent:local run checkout-payment-timeout --mock-llm --trace
@@ -164,7 +164,7 @@ The live provider path should remain opt-in:
 
 ```bash
 RUN_LIVE_FLUE_EVALS=1 npm run evals
-npm run demo-live
+npm run triage:live
 ```
 
 Use this only when provider credentials, spend, network dependency, and model variance are acceptable for the validation pass.
@@ -179,7 +179,7 @@ RUN_LIVE_FLUE_EVALS=1 npm run evals
 npm run evals:json
 ```
 
-Use deterministic eval assertions for schema validity, evidence citations, provenance, safety, and bounded actions. Use judge-style evals only for softer explanation qualities such as finding-summary clarity, recommendation usefulness, caveat specificity, and verification-plan actionability. Expected outcomes still belong in eval cases or tests, never inside raw incident fixtures or Grafana payloads.
+Use deterministic eval assertions for schema validity, evidence citations, provenance, safety, bounded actions, and recorded-triage readability. These regression gates should report simple pass/fail names such as `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, and `recorded_triage_readability`. Use judge-style evals only for softer explanation qualities such as finding-summary clarity, recommendation usefulness, caveat specificity, and verification-plan actionability. Expected outcomes still belong in eval cases or tests, never inside raw incident fixtures or Grafana payloads.
 
 ## Related
 

@@ -84,24 +84,24 @@ Run the real MiniMax path in Docker:
 docker run --rm --env-file .env incident-triage-agent:local run checkout-payment-timeout --trace
 ```
 
-## Recorded Observability Demo
+## Recorded Observability Triage
 
 Run a recorded Grafana webhook payload plus recorded Loki-shaped logs through the real webhook handler and workflow with deterministic mock LLM output:
 
 ```bash
-npm run demo
-npm run demo -- --scenario capacity-saturation
-npm run demo -- --scenario bad-deploy-latency --json
+npm run triage:recorded
+npm run triage:recorded -- --scenario capacity-saturation
+npm run triage:recorded -- --scenario bad-deploy-latency --json
 ```
 
 Run the same recorded input path with live MiniMax:
 
 ```bash
-npm run demo-live
-npm run demo-live -- --scenario capacity-saturation
+npm run triage:live
+npm run triage:live -- --scenario capacity-saturation
 ```
 
-The recorded demo does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads `fixtures/grafana/` payloads and `fixtures/logs/` records, then exercises the real webhook normalization, evidence construction, workflow, validation, safety, provenance, and scorecard path.
+The recorded triage run does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads `fixtures/grafana/` payloads and `fixtures/logs/` records, then exercises the real webhook normalization, evidence construction, workflow, validation, safety, provenance, and scorecard path.
 The default human output starts with an input summary so reviewers can see which recorded alerts, service, severity, start time, and log count produced the decision.
 
 You can still run the webhook server directly when you want to post a payload yourself:
@@ -185,11 +185,11 @@ The recorded observability integration test replays Grafana webhook payloads and
 npm test -- tests/observability-integration.test.ts
 ```
 
-The live MiniMax path is covered by opt-in Flue evals and the recorded demo:
+The live MiniMax path is covered by opt-in Flue evals and the recorded triage command:
 
 ```bash
 RUN_LIVE_FLUE_EVALS=1 npm run evals
-npm run demo-live
+npm run triage:live
 ```
 
 ## Evals
@@ -216,6 +216,8 @@ RUN_LIVE_FLUE_EVALS=1 npm run evals
 ```
 
 Hard requirements such as schema validity, evidence citations, provenance support, and safety behavior are deterministic assertions. Judge-style evals are reserved for softer explanation qualities like recommendation usefulness and verification-plan actionability.
+
+Recorded triage quality gates are deterministic regression checks. They report named pass/fail gates such as `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, and `recorded_triage_readability`. A response that omits `recommendation.rationale` can still be safe, but it fails recorded-triage readability because the representative output is not clear enough for review.
 
 ## Why Actions Are Simulated
 

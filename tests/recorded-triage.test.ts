@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { sanitizedSummary } from "../scripts/run-recorded-triage-demo";
+import { spawnSync } from "node:child_process";
+import { sanitizedSummary } from "../scripts/run-recorded-triage";
 
 test("sanitizedSummary keeps only safe operator fields", () => {
   const response = {
@@ -49,4 +50,21 @@ test("sanitizedSummary keeps only safe operator fields", () => {
   expect((summary.decision as Record<string, unknown>).incident_class).toBe("dependency_outage");
   expect(summary).not.toHaveProperty("evidence");
   expect(summary).not.toHaveProperty("states");
+});
+
+test("recorded triage output groups input separately from run decision and safety", () => {
+  const result = spawnSync("npm", ["run", "triage:recorded"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+
+  expect(result.status).toBe(0);
+  expect(result.stdout).toContain("\nINPUT\n");
+  expect(result.stdout).toContain("- source: recorded Grafana webhook + recorded Loki-shaped logs");
+  expect(result.stdout).toContain("\nRUN\n");
+  expect(result.stdout).toContain("- explanation_validation: valid");
+  expect(result.stdout).toContain("\nFINDING\n");
+  expect(result.stdout).toContain("\nDECISION\n");
+  expect(result.stdout).toContain("\nSAFETY\n");
+  expect(result.stdout.indexOf("\nINPUT\n")).toBeLessThan(result.stdout.indexOf("\nRUN\n"));
 });

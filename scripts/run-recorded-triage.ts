@@ -9,7 +9,7 @@ import { loadRecordedLogs, RecordedLokiClient } from "../src/recorded-observabil
 import { handleGrafanaWebhook } from "../src/server";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const demoSecret = "recorded-demo-secret";
+const recordedTriageSecret = "recorded-triage-secret";
 
 interface RecordedScenario {
   webhookFixture: string;
@@ -61,10 +61,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       });
     const [status, response] = await handleGrafanaWebhook(
       webhookPayload,
-      demoSecret,
+      recordedTriageSecret,
       {
         fixturesDir: join(projectRoot, "fixtures"),
-        webhookSecret: demoSecret,
+        webhookSecret: recordedTriageSecret,
         llmClient,
         lokiClient: new RecordedLokiClient(recordedLogs),
         lokiLimit: 20,
@@ -85,7 +85,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     return status >= 200 && status < 300 ? 0 : 1;
   } catch (error) {
-    process.stderr.write(`Recorded triage demo failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`Recorded triage run failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
 }
@@ -186,36 +186,49 @@ function summarizeInput(webhookPayload: unknown, logRecords: number): InputSumma
 function printSummary(summary: ReturnType<typeof sanitizedSummary>): void {
   const decision = objectValue(summary.decision);
   const validation = objectValue(summary.validation);
+  const explanationValidation = objectValue(summary.explanation_validation);
   const safety = objectValue(summary.safety);
   const provenance = objectValue(summary.provenance);
   const recommendation = objectValue(summary.recommendation);
   const input = objectValue(summary.input);
 
-  process.stdout.write("Recorded triage demo complete\n");
+  process.stdout.write("Recorded triage run complete\n");
   process.stdout.write(`- scenario: ${summary.scenario}\n`);
   process.stdout.write(`- mode: ${summary.mode}\n`);
-  process.stdout.write("Input:\n");
+  process.stdout.write("\nINPUT\n");
   process.stdout.write(`- source: ${input.source ?? "unknown"}\n`);
   process.stdout.write(`- alerts: ${formatList(input.alerts)}\n`);
   process.stdout.write(`- service: ${input.service ?? "unknown"}\n`);
   process.stdout.write(`- severity: ${input.severity ?? "unknown"}\n`);
   process.stdout.write(`- started_at: ${input.started_at ?? "unknown"}\n`);
   process.stdout.write(`- log_records: ${String(input.log_records ?? 0)}\n`);
+
+  process.stdout.write("\nRUN\n");
   process.stdout.write(`- run_status: ${summary.run_status ?? "none"}\n`);
   process.stdout.write(`- validation: ${validation.valid ? "valid" : "invalid"}\n`);
+  process.stdout.write(`- explanation_validation: ${explanationValidation.status ?? "none"}\n`);
+  for (const warning of arrayValue(explanationValidation.warnings)) {
+    process.stdout.write(`- explanation_warning: ${String(warning)}\n`);
+  }
+
+  process.stdout.write("\nFINDING\n");
   process.stdout.write(`- finding_summary: ${summary.finding_summary ?? "none"}\n`);
-  process.stdout.write(`- recommendation_rationale: ${recommendation.rationale ?? "none"}\n`);
+  process.stdout.write(`- recommendation_rationale: ${recommendation.rationale ?? "not provided by model"}\n`);
+
+  process.stdout.write("\nDECISION\n");
   process.stdout.write(`- incident_class: ${decision.incident_class ?? "none"}\n`);
   process.stdout.write(`- next_action: ${decision.next_action ?? "none"}\n`);
   process.stdout.write(`- confidence: ${decision.confidence ?? "none"}\n`);
   process.stdout.write(`- evidence_ids: ${formatList(decision.evidence_ids)}\n`);
   process.stdout.write(`- cited_tiers: ${formatList(provenance.cited_tiers)}\n`);
+
+  process.stdout.write("\nSAFETY\n");
   process.stdout.write(`- safety: ${safety.status ?? "none"}\n`);
   process.stdout.write(`- approval_required: ${String(safety.approval_required ?? false)}\n`);
 
   const caveats = arrayValue(decision.caveats);
   if (caveats.length > 0) {
-    process.stdout.write("Caveats:\n");
+    process.stdout.write("\nCAVEATS\n");
     for (const caveat of caveats) {
       process.stdout.write(`- ${String(caveat)}\n`);
     }
@@ -223,7 +236,7 @@ function printSummary(summary: ReturnType<typeof sanitizedSummary>): void {
 
   const verificationPlan = arrayValue(decision.verification_plan);
   if (verificationPlan.length > 0) {
-    process.stdout.write("Verification plan:\n");
+    process.stdout.write("\nVERIFICATION PLAN\n");
     for (const step of verificationPlan) {
       process.stdout.write(`- ${String(step)}\n`);
     }
