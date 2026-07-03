@@ -1,0 +1,84 @@
+Run: triage-run:checkout-payment-timeout
+Status: completed
+Incident: INC-2026-014 - Checkout API latency spike
+Scenario: checkout-payment-timeout
+Service: checkout-api
+
+Investigation:
+- summary: Collected 14 evidence item(s) across 8 investigation step(s): 8 found.
+
+State trace:
+- received
+- context_gathered
+- llm_decision_requested
+- decision_validated
+- verification_ready
+- scored
+
+Investigation steps:
+- step:0 [inspect_alerts/found] Inspect active alert names for the affected service.
+  - evidence_ids: alert:0, alert:1
+- step:1 [inspect_symptoms/found] Inspect reported symptoms and customer impact signals.
+  - evidence_ids: symptom:0, symptom:1, symptom:2
+- step:2 [inspect_deploys/found] Check deploy and recent-change evidence near the incident window.
+  - evidence_ids: deploy:0
+- step:3 [inspect_logs/found] Inspect operational log signals for the incident window.
+  - evidence_ids: log:0, log:1, log:2
+- step:4 [inspect_service_owner/found] Look up owner and escalation metadata for checkout-api.
+  - evidence_ids: service:checkout-api
+- step:5 [inspect_runbooks/found] Load runbook guidance referenced by the incident.
+  - evidence_ids: runbook:dependency-outage
+- step:6 [inspect_prior_incidents/found] Load prior incident context referenced by the incident.
+  - evidence_ids: prior:INC-2025-102
+- step:7 [inspect_verification_signals/found] Inspect verification and recovery signals.
+  - evidence_ids: verification:0, verification:1
+
+Evidence:
+- alert:0 [alert/current_signal] checkout-api HighLatency
+- alert:1 [alert/current_signal] payment-gateway ElevatedErrors
+- symptom:0 [symptom/current_signal] p95 latency above 2500ms
+- symptom:1 [symptom/current_signal] checkout error rate above 4%
+- symptom:2 [symptom/current_signal] customer reports of failed payments
+- deploy:0 [deploy/operational_context] checkout-api change at 2026-06-14T13:48:00Z
+- log:0 [log/operational_context] payment gateway timeout exceeded after 3000ms
+- log:1 [log/operational_context] checkout retry queue depth increasing
+- log:2 [log/operational_context] checkout request timed out while waiting for payment authorization
+- service:checkout-api [service/operational_context] checkout-api owned by Checkout Platform
+- runbook:dependency-outage [runbook/guidance] Dependency Outage Runbook
+- prior:INC-2025-102 [prior_incident/historical_context] Checkout latency rose when the payment gateway timed out.
+- verification:0 [verification/current_signal] payment-gateway timeout rate elevated
+- verification:1 [verification/current_signal] checkout-api latency remains above SLO
+
+Finding:
+- summary: Payment timeout and checkout latency evidence point to an upstream dependency issue.
+- recommendation_rationale: Escalate the owner because payment timeout evidence is stronger than deploy timing.
+- recommendation_evidence_ids: alert:1, log:0, runbook:dependency-outage
+
+LLM decision:
+- incident_class: dependency_outage
+- next_action: escalate_owner
+- confidence: 0.88
+- evidence_ids: alert:1, log:0, runbook:dependency-outage
+- caveats: Recent checkout deploy is lower-confidence context than payment timeout evidence.
+- verification_plan:
+  - Track payment-gateway timeout rate.
+  - Confirm checkout latency returns below SLO.
+
+Provenance:
+- available_tiers: current_signal, operational_context, guidance, historical_context
+- cited_tiers: current_signal, operational_context, guidance
+- cited_sources: alert, log, runbook
+- support: current_or_operational
+
+Safety gate:
+- status: safe_recommendation
+- approval_required: false
+- reason: Recommendation is non-mutating and can be presented with caveats.
+
+Scorecard:
+- state_correctness: pass
+- evidence_grounding: pass
+- safety_behavior: pass
+- evidence_quality: pass
+- classification_quality: pass
+- next_action_quality: pass

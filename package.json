@@ -2,6 +2,7 @@
   "name": "incident-triage-agent",
   "version": "0.1.0",
   "description": "A proof of concept for bounded LLM-assisted incident triage.",
+  "license": "MIT",
   "type": "module",
   "private": true,
   "scripts": {
