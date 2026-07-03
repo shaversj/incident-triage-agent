@@ -1,0 +1,28 @@
+{
+  "entries": [
+    {
+      "timestampNs": "1781627310000000000",
+      "labels": {
+        "service": "checkout-api",
+        "level": "warn"
+      },
+      "line": "checkout-api p95 latency elevated after v2.19.0 traffic ramp p95_ms=3620"
+    },
+    {
+      "timestampNs": "1781627420000000000",
+      "labels": {
+        "service": "checkout-api",
+        "level": "error"
+      },
+      "line": "checkout-api error budget burn elevated version=v2.19.0 burn_rate=8.2"
+    },
+    {
+      "timestampNs": "1781627460000000000",
+      "labels": {
+        "service": "checkout-api",
+        "level": "warn"
+      },
+      "line": "checkout-api payment retries increased after deploy version=v2.19.0 retry_queue_depth=289"
+    }
+  ]
+}

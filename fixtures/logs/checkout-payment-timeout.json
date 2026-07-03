@@ -1,0 +1,28 @@
+{
+  "entries": [
+    {
+      "timestampNs": "1781618850000000000",
+      "labels": {
+        "service": "checkout-api",
+        "level": "warn"
+      },
+      "line": "checkout-api payment timeout after 3000ms provider=payment-gateway retry_count=3"
+    },
+    {
+      "timestampNs": "1781618890000000000",
+      "labels": {
+        "service": "checkout-api",
+        "level": "error"
+      },
+      "line": "checkout-api checkout error rate elevated payment_failure=true timeout_rate=6.1%"
+    },
+    {
+      "timestampNs": "1781618920000000000",
+      "labels": {
+        "service": "checkout-api",
+        "level": "info"
+      },
+      "line": "checkout-api retry queue draining slowly pending_payment_retries=184"
+    }
+  ]
+}

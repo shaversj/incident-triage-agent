@@ -1,0 +1,28 @@
+{
+  "entries": [
+    {
+      "timestampNs": "1781633010000000000",
+      "labels": {
+        "service": "search-api",
+        "level": "warn"
+      },
+      "line": "search-api worker pool saturated cpu=94 queue_depth=438 active_workers=64"
+    },
+    {
+      "timestampNs": "1781633060000000000",
+      "labels": {
+        "service": "search-api",
+        "level": "warn"
+      },
+      "line": "search-api request latency elevated p95_ms=740 queue_wait_ms=410"
+    },
+    {
+      "timestampNs": "1781633100000000000",
+      "labels": {
+        "service": "search-api",
+        "level": "info"
+      },
+      "line": "search-api autoscale signal pending capacity_headroom=3%"
+    }
+  ]
+}
