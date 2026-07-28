@@ -129,6 +129,17 @@ npm run triage:recorded -- --scenario bad-deploy-latency --json
 
 The recorded path does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads fixtures from `fixtures/grafana/` and `fixtures/logs/`, then exercises webhook normalization, evidence construction, workflow validation, mitigation governance, safety policy, provenance, and scorecard output.
 
+## Human Approval Simulation
+
+Approval-required mitigation responses include a pending `approval_request` with the catalog ID, runbook ID, approve/reject commands, and `executed: false`.
+
+```bash
+npm run triage -- run bad-deploy-latency --mock-llm --trace
+npm run triage:approval -- approve rollback-approval --incident-id INC-2026-015 --service checkout-api --json
+```
+
+The approval command records a simulated human decision only. It does not execute rollback, scaling, throttling, ticketing, chat, or production API calls.
+
 ## Live Provider Path
 
 Create `.env` from `.env.example`:

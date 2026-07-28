@@ -329,6 +329,7 @@ function renderMitigationControl(mitigation: MitigationControlResult | undefined
   console.log(`- reason: ${mitigation.reason}`);
   if (mitigation.catalogMatch) {
     console.log(`- catalog_id: ${mitigation.catalogMatch.catalogId}`);
+    console.log(`- runbook_id: ${mitigation.catalogMatch.runbookId}`);
     console.log(`- action_intent: ${mitigation.catalogMatch.actionIntent}`);
   } else {
     console.log("- catalog_match: none");
@@ -348,8 +349,17 @@ function renderMitigationControl(mitigation: MitigationControlResult | undefined
   if (mitigation.stagedAction) {
     console.log("- staged_action:");
     console.log(`  - catalog_id: ${mitigation.stagedAction.catalogId}`);
+    console.log(`  - runbook_id: ${mitigation.stagedAction.runbookId}`);
     console.log(`  - next_action: ${mitigation.stagedAction.nextAction}`);
     console.log(`  - executed: ${formatBoolean(mitigation.stagedAction.executed)}`);
+  }
+  if (mitigation.approvalRequest) {
+    console.log("- approval_request:");
+    console.log(`  - approval_id: ${mitigation.approvalRequest.approvalId}`);
+    console.log(`  - status: ${mitigation.approvalRequest.status}`);
+    console.log(`  - approve_command: ${mitigation.approvalRequest.approveCommand}`);
+    console.log(`  - reject_command: ${mitigation.approvalRequest.rejectCommand}`);
+    console.log(`  - executed: ${formatBoolean(mitigation.approvalRequest.executed)}`);
   }
   if (mitigation.auditEvent) {
     console.log("- audit_event:");

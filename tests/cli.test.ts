@@ -36,6 +36,29 @@ test("CLI trace includes workflow states and evidence", async () => {
   expect(result.stdout).toContain("verification_failed");
   expect(result.stdout).toContain("deploy:0");
   expect(result.stdout).toContain("[deploy/operational_context]");
+  expect(result.stdout).toContain("approval_request");
+  expect(result.stdout).toContain("npm run triage:approval -- approve rollback-approval");
+});
+
+test("approval CLI records simulated human approval without execution", async () => {
+  const result = await runApprovalCli([
+    "approve",
+    "rollback-approval",
+    "--incident-id",
+    "INC-2026-015",
+    "--service",
+    "checkout-api",
+    "--json",
+  ]);
+  const record = JSON.parse(result.stdout);
+
+  expect(result.exitCode).toBe(0);
+  expect(record).toMatchObject({
+    approval_id: "approval:INC-2026-015:rollback-approval",
+    status: "human_approved",
+    runbook_id: "bad-deploy",
+    executed: false,
+  });
 });
 
 test("CLI run requires credentials without mock LLM", async () => {
@@ -63,6 +86,19 @@ async function runCli(args: string[], options: { cwd?: string; withoutMiniMaxEnv
   const proc = spawn("npx", ["tsx", `${process.cwd()}/src/cli.ts`, ...args], {
     cwd: options.cwd ?? process.cwd(),
     env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    text(proc.stdout),
+    text(proc.stderr),
+    new Promise<number | null>((resolve) => proc.on("exit", resolve)),
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+async function runApprovalCli(args: string[]) {
+  const proc = spawn("npx", ["tsx", `${process.cwd()}/src/approval-cli.ts`, ...args], {
+    cwd: process.cwd(),
+    env: { ...process.env, FORCE_COLOR: "0" },
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     text(proc.stdout),
