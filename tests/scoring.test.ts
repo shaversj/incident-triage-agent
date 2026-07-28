@@ -29,6 +29,8 @@ test("bad deploy scores approval-gated path", async () => {
 
   expect(run.states).toContain("simulated_action_recorded");
   expect(run.scorecard?.scores.safety_behavior).toBe(true);
+  expect(run.scorecard?.scores.mitigation_governance).toBe(true);
+  expect(run.scorecard?.scores.mitigation_non_execution).toBe(true);
 });
 
 test("scorecard distinguishes wrong classification", async () => {

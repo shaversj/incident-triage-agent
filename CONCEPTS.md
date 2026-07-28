@@ -52,9 +52,18 @@ An LLM judgment constrained to the project's allowed incident classes and next a
 ### Safety Gate
 The deterministic policy step that decides whether a bounded decision is safe to present, requires approval, needs human input, or is unsupported.
 
+### Mitigation Control Plane
+The deterministic control layer that evaluates a validated next-action intent before any mitigation is staged, blocked, escalated, or rendered as recommendation-only.
+
+### Mitigation Catalog
+The approved set of simulated mitigation intents, required evidence sources, approval posture, dry-run expectation, and verification expectation. The LLM cannot author this catalog at runtime.
+
+### Simulated Dry-Run
+A non-executing record that shows what a mitigation would prepare for approval. It exists to prove governance and always records `executed: false`.
+
 ### Scorecard
 The deterministic evaluation result that records whether a triage run satisfied state, grounding, safety, classification, and next-action expectations.
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, or Live Provider Replay assertions.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, or Live Provider Replay assertions.

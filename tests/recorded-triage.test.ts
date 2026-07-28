@@ -20,6 +20,7 @@ test("sanitizedSummary keeps only safe operator fields", () => {
     },
     provenance: { cited_tiers: ["current_signal", "operational_context"] },
     safety: { status: "safe_recommendation", approval_required: false },
+    mitigation_control: { status: "recommendation_only" },
     scorecard: { scores: { state_correctness: true } },
     evidence: [{ detail: "raw evidence detail" }],
     states: ["received"],
@@ -50,6 +51,7 @@ test("sanitizedSummary keeps only safe operator fields", () => {
   expect((summary.decision as Record<string, unknown>).incident_class).toBe("dependency_outage");
   expect(summary).not.toHaveProperty("evidence");
   expect(summary).not.toHaveProperty("states");
+  expect(summary.mitigation_control).toEqual({ status: "recommendation_only" });
 });
 
 test("recorded triage output groups input separately from run decision and safety", () => {
@@ -66,5 +68,6 @@ test("recorded triage output groups input separately from run decision and safet
   expect(result.stdout).toContain("\nFINDING\n");
   expect(result.stdout).toContain("\nDECISION\n");
   expect(result.stdout).toContain("\nSAFETY\n");
+  expect(result.stdout).toContain("\nMITIGATION CONTROL PLANE\n");
   expect(result.stdout.indexOf("\nINPUT\n")).toBeLessThan(result.stdout.indexOf("\nRUN\n"));
 });

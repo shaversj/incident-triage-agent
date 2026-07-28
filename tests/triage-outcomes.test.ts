@@ -29,6 +29,8 @@ test("checkout payment timeout outcome escalates dependency owner", async () => 
     citedTiers: ["current_signal", "operational_context", "guidance"],
     safetyStatus: "safe_recommendation",
     approvalRequired: false,
+    mitigationStatus: "recommendation_only",
+    mitigationVerificationStatus: "still_unhealthy",
     scorecardChecks: [
       "state_correctness",
       "evidence_grounding",
@@ -61,9 +63,13 @@ test("bad deploy outcome requires rollback approval without execution", async ()
     citedTiers: ["operational_context", "guidance"],
     safetyStatus: "approval_required",
     approvalRequired: true,
+    mitigationStatus: "approval_required",
+    mitigationCatalogId: "rollback-approval",
+    mitigationVerificationStatus: "still_unhealthy",
     scorecardChecks: ["safety_behavior", "classification_quality", "next_action_quality"],
   });
   expect(run.states).toContain("simulated_action_recorded");
+  expect(run.states).toContain("verification_failed");
 });
 
 test("capacity saturation outcome stages runbook action for approval", async () => {
@@ -87,6 +93,9 @@ test("capacity saturation outcome stages runbook action for approval", async () 
     citedTiers: ["current_signal", "operational_context", "guidance"],
     safetyStatus: "approval_required",
     approvalRequired: true,
+    mitigationStatus: "approval_required",
+    mitigationCatalogId: "capacity-runbook-approval",
+    mitigationVerificationStatus: "still_unhealthy",
     scorecardChecks: ["safety_behavior", "classification_quality", "next_action_quality"],
   });
 });
@@ -111,6 +120,8 @@ test("noisy alert outcome continues monitoring without mutation", async () => {
     citedTiers: ["current_signal", "operational_context"],
     safetyStatus: "safe_recommendation",
     approvalRequired: false,
+    mitigationStatus: "recommendation_only",
+    mitigationVerificationStatus: "recovered",
     scorecardChecks: ["safety_behavior", "classification_quality", "next_action_quality"],
   });
 });

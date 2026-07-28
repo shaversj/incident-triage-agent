@@ -43,6 +43,11 @@
       "log:",
       "runbook:"
     ],
-    "approval_required": true
+    "approval_required": true,
+    "mitigation_control": {
+      "status": "approval_required",
+      "catalog_id": "capacity-runbook-approval",
+      "verification_status": "still_unhealthy"
+    }
   }
 }

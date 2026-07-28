@@ -7,6 +7,7 @@ import { mockDecisionForScenario, mockDecisionResponses } from "./mock-decisions
 import { LokiClient } from "./loki";
 import { startWebhookServer } from "./server";
 import type { SafetyResult } from "./policy";
+import type { MitigationControlResult } from "./mitigation-control";
 import type { TriageRun } from "./workflow";
 import { TriageWorkflow } from "./workflow";
 
@@ -268,6 +269,7 @@ export function renderRun(run: TriageRun, trace: boolean): void {
 
   renderProvenance(run);
   renderSafety(run.safety);
+  renderMitigationControl(run.mitigationControl);
 
   if (run.scorecard) {
     console.log("\nScorecard:");
@@ -314,6 +316,50 @@ function renderSafety(safety: SafetyResult | undefined): void {
     for (const [key, value] of Object.entries(safety.auditEvent)) {
       console.log(`  - ${key}: ${formatValue(value)}`);
     }
+  }
+}
+
+function renderMitigationControl(mitigation: MitigationControlResult | undefined): void {
+  if (!mitigation) {
+    return;
+  }
+  console.log("\nMitigation Control Plane:");
+  console.log(`- status: ${mitigation.status}`);
+  console.log(`- approval_required: ${formatBoolean(mitigation.approvalRequired)}`);
+  console.log(`- reason: ${mitigation.reason}`);
+  if (mitigation.catalogMatch) {
+    console.log(`- catalog_id: ${mitigation.catalogMatch.catalogId}`);
+    console.log(`- action_intent: ${mitigation.catalogMatch.actionIntent}`);
+  } else {
+    console.log("- catalog_match: none");
+  }
+  if (mitigation.evidenceChecks.length > 0) {
+    console.log("- evidence_checks:");
+    for (const check of mitigation.evidenceChecks) {
+      console.log(`  - ${check.source}: ${check.passed ? "pass" : "fail"}`);
+    }
+  }
+  if (mitigation.dryRun) {
+    console.log("- dry_run:");
+    console.log(`  - status: ${mitigation.dryRun.status}`);
+    console.log(`  - executed: ${formatBoolean(mitigation.dryRun.executed)}`);
+    console.log(`  - summary: ${mitigation.dryRun.summary}`);
+  }
+  if (mitigation.stagedAction) {
+    console.log("- staged_action:");
+    console.log(`  - catalog_id: ${mitigation.stagedAction.catalogId}`);
+    console.log(`  - next_action: ${mitigation.stagedAction.nextAction}`);
+    console.log(`  - executed: ${formatBoolean(mitigation.stagedAction.executed)}`);
+  }
+  if (mitigation.auditEvent) {
+    console.log("- audit_event:");
+    console.log(`  - event: ${mitigation.auditEvent.event}`);
+    console.log(`  - executed: ${formatBoolean(mitigation.auditEvent.executed)}`);
+  }
+  if (mitigation.verification) {
+    console.log("- verification:");
+    console.log(`  - status: ${mitigation.verification.status}`);
+    console.log(`  - reason: ${mitigation.verification.reason}`);
   }
 }
 

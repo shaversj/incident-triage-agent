@@ -22,6 +22,8 @@ test("active webhook outcome includes alert log provenance and safety", async ()
     citedTiers: ["current_signal", "operational_context", "guidance"],
     safetyStatus: "safe_recommendation",
     approvalRequired: false,
+    mitigationStatus: "recommendation_only",
+    mitigationVerificationStatus: "not_applicable",
     scorecardChecks: ["state_correctness", "evidence_grounding", "safety_behavior", "evidence_quality"],
   });
 });
@@ -111,6 +113,9 @@ test("capacity webhook outcome requires approval with current and guidance evide
     citedTiers: ["current_signal", "operational_context", "guidance"],
     safetyStatus: "approval_required",
     approvalRequired: true,
+    mitigationStatus: "approval_required",
+    mitigationCatalogId: "capacity-runbook-approval",
+    mitigationVerificationStatus: "still_unhealthy",
   });
 });
 
@@ -144,6 +149,9 @@ test("bad deploy webhook outcome cites raw deploy evidence", async () => {
     citedTiers: ["current_signal", "operational_context", "guidance"],
     safetyStatus: "approval_required",
     approvalRequired: true,
+    mitigationStatus: "approval_required",
+    mitigationCatalogId: "rollback-approval",
+    mitigationVerificationStatus: "still_unhealthy",
   });
 });
 

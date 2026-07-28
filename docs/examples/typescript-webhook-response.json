@@ -1,4 +1,5 @@
 {
+  "status_code": 200,
   "status": "ok",
   "run_id": "triage-run:grafana-checkout-api",
   "run_status": "completed",
@@ -20,7 +21,7 @@
     "scored"
   ],
   "investigation": {
-    "summary": "Collected 12 evidence item(s) across 8 investigation step(s): 6 found, 1 skipped.",
+    "summary": "Collected 23 evidence item(s) across 8 investigation step(s): 7 found, 1 skipped.",
     "steps": [
       {
         "id": "step:0",
@@ -33,64 +34,249 @@
         ]
       },
       {
+        "id": "step:1",
+        "kind": "inspect_symptoms",
+        "status": "found",
+        "purpose": "Inspect reported symptoms and customer impact signals.",
+        "evidence_ids": [
+          "symptom:0",
+          "symptom:1",
+          "symptom:2",
+          "symptom:3",
+          "symptom:4",
+          "symptom:5"
+        ]
+      },
+      {
+        "id": "step:2",
+        "kind": "inspect_deploys",
+        "status": "found",
+        "purpose": "Check deploy and recent-change evidence near the incident window.",
+        "evidence_ids": [
+          "deploy:0"
+        ]
+      },
+      {
         "id": "step:3",
         "kind": "inspect_logs",
         "status": "found",
         "purpose": "Inspect operational log signals for the incident window.",
         "evidence_ids": [
-          "log:0"
+          "log:0",
+          "log:1",
+          "log:2"
+        ]
+      },
+      {
+        "id": "step:4",
+        "kind": "inspect_service_owner",
+        "status": "found",
+        "purpose": "Look up owner and escalation metadata for checkout-api.",
+        "evidence_ids": [
+          "service:checkout-api"
+        ]
+      },
+      {
+        "id": "step:5",
+        "kind": "inspect_runbooks",
+        "status": "found",
+        "purpose": "Load runbook guidance referenced by the incident.",
+        "evidence_ids": [
+          "runbook:dependency-outage"
+        ]
+      },
+      {
+        "id": "step:6",
+        "kind": "inspect_prior_incidents",
+        "status": "skipped",
+        "purpose": "Load prior incident context referenced by the incident.",
+        "evidence_ids": []
+      },
+      {
+        "id": "step:7",
+        "kind": "inspect_verification_signals",
+        "status": "found",
+        "purpose": "Inspect verification and recovery signals.",
+        "evidence_ids": [
+          "verification:0",
+          "verification:1",
+          "verification:2",
+          "verification:3",
+          "verification:4",
+          "verification:5",
+          "verification:6",
+          "verification:7",
+          "verification:8"
         ]
       }
+    ]
+  },
+  "explanation_validation": {
+    "status": "not_available",
+    "warnings": [
+      "Expanded explanation layer was not returned; accepted legacy decision-only payload."
     ]
   },
   "validation": {
     "valid": true,
     "errors": []
   },
-  "explanation_validation": {
-    "status": "valid",
-    "warnings": []
-  },
-  "analysis": {
-    "hypotheses": [
-      {
-        "label": "dependency_outage",
-        "status": "supported",
-        "supporting_evidence_ids": [
-          "alert:1",
-          "log:0",
-          "runbook:dependency-outage"
-        ],
-        "contradicting_evidence_ids": []
-      }
-    ]
-  },
-  "finding_summary": "Payment timeout and checkout latency evidence point to an upstream dependency issue.",
-  "recommendation": {
-    "rationale": "Escalate the owner because payment timeout evidence is stronger than deploy timing.",
-    "evidence_ids": [
-      "alert:1",
-      "log:0",
-      "runbook:dependency-outage"
-    ]
-  },
   "decision": {
     "incident_class": "dependency_outage",
     "next_action": "escalate_owner",
-    "confidence": 0.88,
+    "confidence": 0.87,
     "evidence_ids": [
-      "alert:1",
+      "alert:0",
       "log:0",
       "runbook:dependency-outage"
     ],
     "caveats": [
-      "Recent checkout deploy is lower-confidence context than payment timeout evidence."
+      "Synthetic integration path."
     ],
     "verification_plan": [
-      "Track payment-gateway timeout rate.",
-      "Confirm checkout latency returns below SLO."
+      "Watch payment timeout rate."
     ]
   },
+  "evidence": [
+    {
+      "evidence_id": "alert:0",
+      "source": "alert",
+      "source_tier": "current_signal",
+      "summary": "checkout-api HighLatency"
+    },
+    {
+      "evidence_id": "alert:1",
+      "source": "alert",
+      "source_tier": "current_signal",
+      "summary": "payment-gateway ElevatedErrors"
+    },
+    {
+      "evidence_id": "symptom:0",
+      "source": "symptom",
+      "source_tier": "current_signal",
+      "summary": "Checkout API p95 latency above 2500ms"
+    },
+    {
+      "evidence_id": "symptom:1",
+      "source": "symptom",
+      "source_tier": "current_signal",
+      "summary": "Customer checkout latency has exceeded the page threshold."
+    },
+    {
+      "evidence_id": "symptom:2",
+      "source": "symptom",
+      "source_tier": "current_signal",
+      "summary": "grafana_values: error_rate=0.047, p95_ms=2840"
+    },
+    {
+      "evidence_id": "symptom:3",
+      "source": "symptom",
+      "source_tier": "current_signal",
+      "summary": "Payment gateway timeout rate elevated"
+    },
+    {
+      "evidence_id": "symptom:4",
+      "source": "symptom",
+      "source_tier": "current_signal",
+      "summary": "Gateway timeout rate is above baseline for checkout requests."
+    },
+    {
+      "evidence_id": "symptom:5",
+      "source": "symptom",
+      "source_tier": "current_signal",
+      "summary": "grafana_values: timeout_rate=0.061"
+    },
+    {
+      "evidence_id": "deploy:0",
+      "source": "deploy",
+      "source_tier": "operational_context",
+      "summary": "checkout-api change at 2026-06-16T16:10:00Z"
+    },
+    {
+      "evidence_id": "log:0",
+      "source": "log",
+      "source_tier": "operational_context",
+      "summary": "checkout-api payment timeout after 3000ms provider=payment-gateway retry_count=3"
+    },
+    {
+      "evidence_id": "log:1",
+      "source": "log",
+      "source_tier": "operational_context",
+      "summary": "checkout-api checkout error rate elevated payment_failure=true timeout_rate=6.1%"
+    },
+    {
+      "evidence_id": "log:2",
+      "source": "log",
+      "source_tier": "operational_context",
+      "summary": "checkout-api retry queue draining slowly pending_payment_retries=184"
+    },
+    {
+      "evidence_id": "service:checkout-api",
+      "source": "service",
+      "source_tier": "operational_context",
+      "summary": "checkout-api owned by Checkout Platform"
+    },
+    {
+      "evidence_id": "runbook:dependency-outage",
+      "source": "runbook",
+      "source_tier": "guidance",
+      "summary": "Dependency Outage Runbook"
+    },
+    {
+      "evidence_id": "verification:0",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:fingerprint:checkout-latency-001"
+    },
+    {
+      "evidence_id": "verification:1",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:generatorURL:http://grafana.local/alerting/checkout-latency"
+    },
+    {
+      "evidence_id": "verification:2",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:dashboardURL:http://grafana.local/d/checkout"
+    },
+    {
+      "evidence_id": "verification:3",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:panelURL:http://grafana.local/d/checkout?viewPanel=12"
+    },
+    {
+      "evidence_id": "verification:4",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:silenceURL:http://grafana.local/alerting/silence/new"
+    },
+    {
+      "evidence_id": "verification:5",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:fingerprint:payment-errors-001"
+    },
+    {
+      "evidence_id": "verification:6",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:generatorURL:http://grafana.local/alerting/payment-errors"
+    },
+    {
+      "evidence_id": "verification:7",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:dashboardURL:http://grafana.local/d/payment"
+    },
+    {
+      "evidence_id": "verification:8",
+      "source": "verification",
+      "source_tier": "current_signal",
+      "summary": "grafana:panelURL:http://grafana.local/d/payment?viewPanel=9"
+    }
+  ],
   "provenance": {
     "available_tiers": [
       "current_signal",
@@ -108,7 +294,7 @@
       "runbook"
     ],
     "cited_evidence_ids": [
-      "alert:1",
+      "alert:0",
       "log:0",
       "runbook:dependency-outage"
     ],
@@ -118,7 +304,28 @@
   "safety": {
     "status": "safe_recommendation",
     "approval_required": false,
-    "reason": "Recommendation is non-mutating and can be presented with caveats."
+    "reason": "Decision is non-mutating; mitigation control records recommendation-only governance."
+  },
+  "mitigation_control": {
+    "status": "recommendation_only",
+    "approval_required": false,
+    "reason": "Decision is non-mutating; mitigation control records recommendation-only governance.",
+    "evidence_checks": [],
+    "verification": {
+      "status": "not_applicable",
+      "signals": [
+        "grafana:fingerprint:checkout-latency-001",
+        "grafana:generatorURL:http://grafana.local/alerting/checkout-latency",
+        "grafana:dashboardURL:http://grafana.local/d/checkout",
+        "grafana:panelURL:http://grafana.local/d/checkout?viewPanel=12",
+        "grafana:silenceURL:http://grafana.local/alerting/silence/new",
+        "grafana:fingerprint:payment-errors-001",
+        "grafana:generatorURL:http://grafana.local/alerting/payment-errors",
+        "grafana:dashboardURL:http://grafana.local/d/payment",
+        "grafana:panelURL:http://grafana.local/d/payment?viewPanel=9"
+      ],
+      "reason": "No verification expectation applies to this branch."
+    }
   },
   "scorecard": {
     "scenario_name": "grafana-checkout-api",
@@ -126,6 +333,8 @@
       "state_correctness": true,
       "evidence_grounding": true,
       "safety_behavior": true,
+      "mitigation_governance": true,
+      "mitigation_non_execution": true,
       "evidence_quality": true
     },
     "notes": []

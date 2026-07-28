@@ -1,10 +1,12 @@
 import { incidentClasses, nextActions } from "../src/domain";
+import { mitigationControlStatuses, mitigationVerificationStatuses } from "../src/mitigation-control";
 
 export const recordedTriageQualityGateNames = [
   "schema_contract",
   "evidence_grounding",
   "provenance_support",
   "safety_contract",
+  "mitigation_contract",
   "recorded_triage_readability",
 ] as const;
 
@@ -27,6 +29,7 @@ export function evaluateRecordedTriageQuality(response: Record<string, unknown>)
     evidence_grounding: gate("evidence_grounding", evidenceGroundingReasons(response)),
     provenance_support: gate("provenance_support", provenanceSupportReasons(response)),
     safety_contract: gate("safety_contract", safetyContractReasons(response)),
+    mitigation_contract: gate("mitigation_contract", mitigationContractReasons(response)),
     recorded_triage_readability: gate("recorded_triage_readability", readabilityReasons(response)),
   };
 
@@ -203,6 +206,67 @@ function safetyContractReasons(response: Record<string, unknown>): string[] {
   return reasons;
 }
 
+function mitigationContractReasons(response: Record<string, unknown>): string[] {
+  const reasons: string[] = [];
+  const mitigation = objectValue(response.mitigation_control);
+  if (!mitigation) {
+    return ["mitigation_control object is required"];
+  }
+
+  const status = stringValue(mitigation.status);
+  if (!status) {
+    reasons.push("mitigation_control.status is required");
+  } else if (!mitigationControlStatuses.includes(status as never)) {
+    reasons.push("mitigation_control.status must be in the bounded taxonomy");
+  }
+  if (typeof mitigation.approval_required !== "boolean") {
+    reasons.push("mitigation_control.approval_required must be boolean");
+  }
+  if (!stringValue(mitigation.reason)) {
+    reasons.push("mitigation_control.reason is required");
+  }
+  if (!Array.isArray(mitigation.evidence_checks)) {
+    reasons.push("mitigation_control.evidence_checks must be an array");
+  }
+
+  const stagedAction = objectValue(mitigation.staged_action);
+  const auditEvent = objectValue(mitigation.audit_event);
+  const dryRun = objectValue(mitigation.dry_run);
+  if (stagedAction?.executed === true) {
+    reasons.push("mitigation_control.staged_action.executed must not be true");
+  }
+  if (auditEvent?.executed === true) {
+    reasons.push("mitigation_control.audit_event.executed must not be true");
+  }
+  if (dryRun?.executed === true) {
+    reasons.push("mitigation_control.dry_run.executed must not be true");
+  }
+
+  if (mitigation.approval_required === true) {
+    if (!objectValue(mitigation.catalog_match)) {
+      reasons.push("approval-required mitigation requires catalog_match");
+    }
+    if (!dryRun) {
+      reasons.push("approval-required mitigation requires dry_run");
+    }
+    if (!stagedAction) {
+      reasons.push("approval-required mitigation requires staged_action");
+    }
+    if (!auditEvent) {
+      reasons.push("approval-required mitigation requires audit_event");
+    }
+  }
+
+  const verification = objectValue(mitigation.verification);
+  if (!verification || !stringValue(verification.status)) {
+    reasons.push("mitigation_control.verification.status is required");
+  } else if (!mitigationVerificationStatuses.includes(verification.status as never)) {
+    reasons.push("mitigation_control.verification.status must be in the bounded taxonomy");
+  }
+
+  return reasons;
+}
+
 function readabilityReasons(response: Record<string, unknown>): string[] {
   const reasons: string[] = [];
   const decision = objectValue(response.decision);
@@ -239,6 +303,7 @@ function responseContext(response: Record<string, unknown>): Record<string, unkn
   const recommendation = objectValue(response.recommendation);
   const provenance = objectValue(response.provenance);
   const safety = objectValue(response.safety);
+  const mitigation = objectValue(response.mitigation_control);
 
   return {
     scenario: response.scenario,
@@ -264,6 +329,12 @@ function responseContext(response: Record<string, unknown>): Record<string, unkn
     safety: safety ? {
       status: safety.status,
       approval_required: safety.approval_required,
+    } : undefined,
+    mitigation_control: mitigation ? {
+      status: mitigation.status,
+      approval_required: mitigation.approval_required,
+      catalog_match: mitigation.catalog_match,
+      verification: mitigation.verification,
     } : undefined,
   };
 }

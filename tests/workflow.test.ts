@@ -16,6 +16,7 @@ test("valid dependency scenario reaches verification ready and scored", async ()
 
   expect(run.states).toContain("verification_ready");
   expect(run.states).toContain("scored");
+  expect(run.mitigationControl?.status).toBe("recommendation_only");
   expect(run.runStatus).toBe("completed");
   expect(run.runId).toBe("triage-run:checkout-payment-timeout");
   expect(run.investigation?.summary).toContain("investigation step");
@@ -80,6 +81,23 @@ test("missing critical context moves to human input", async () => {
   });
 
   expect(run.states).toContain("human_input_needed");
+  expect(run.mitigationControl?.status).toBe("blocked");
+});
+
+test("approval mitigation with unhealthy verification records failed verification state", async () => {
+  const run = await runWithResponse("bad-deploy-latency", {
+    incident_class: "bad_deploy",
+    next_action: "request_rollback_approval",
+    confidence: 0.9,
+    evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
+    caveats: [],
+    verification_plan: ["Check checkout latency."],
+  });
+
+  expect(run.mitigationControl?.status).toBe("approval_required");
+  expect(run.mitigationControl?.verification?.status).toBe("still_unhealthy");
+  expect(run.states).toContain("simulated_action_recorded");
+  expect(run.states).toContain("verification_failed");
 });
 
 async function runWithResponse(scenarioName: string, response: object) {

@@ -33,6 +33,7 @@ export const workflowStates = [
   "approval_pending",
   "verification_ready",
   "simulated_action_recorded",
+  "verification_failed",
   "scored",
 ] as const;
 
@@ -87,6 +88,13 @@ export interface EvalExpectation {
   allowedNextActions: NextAction[];
   requiredEvidencePrefixes: string[];
   approvalRequired: boolean;
+  mitigationControl?: MitigationExpectation;
+}
+
+export interface MitigationExpectation {
+  status: "recommendation_only" | "approval_required" | "blocked";
+  catalogId?: string;
+  verificationStatus?: "not_applicable" | "recovered" | "still_unhealthy";
 }
 
 export interface Scenario {
@@ -162,12 +170,43 @@ function parseIncident(payload: Record<string, unknown>): Incident {
 }
 
 function parseExpected(payload: Record<string, unknown>): EvalExpectation {
-  return {
+  const expected: EvalExpectation = {
     incidentClass: parseIncidentClass(payload.incident_class),
     allowedNextActions: readArray(payload.allowed_next_actions, "allowed_next_actions").map(parseNextAction),
     requiredEvidencePrefixes: readStringArray(payload.required_evidence_prefixes, "required_evidence_prefixes"),
     approvalRequired: Boolean(payload.approval_required ?? false),
   };
+  if (payload.mitigation_control !== undefined) {
+    expected.mitigationControl = parseMitigationExpectation(readObject(payload.mitigation_control, "mitigation_control"));
+  }
+  return expected;
+}
+
+function parseMitigationExpectation(payload: Record<string, unknown>): MitigationExpectation {
+  const expectation: MitigationExpectation = {
+    status: parseMitigationStatus(payload.status),
+  };
+  if (payload.catalog_id !== undefined) {
+    expectation.catalogId = readString(payload.catalog_id, "mitigation_control.catalog_id");
+  }
+  if (payload.verification_status !== undefined) {
+    expectation.verificationStatus = parseVerificationStatus(payload.verification_status);
+  }
+  return expectation;
+}
+
+function parseMitigationStatus(value: unknown): MitigationExpectation["status"] {
+  if (value === "recommendation_only" || value === "approval_required" || value === "blocked") {
+    return value;
+  }
+  throw new FixtureError("Mitigation control status is missing or unsupported.");
+}
+
+function parseVerificationStatus(value: unknown): NonNullable<MitigationExpectation["verificationStatus"]> {
+  if (value === "not_applicable" || value === "recovered" || value === "still_unhealthy") {
+    return value;
+  }
+  throw new FixtureError("Mitigation control verification status is unsupported.");
 }
 
 function readRecentChanges(value: unknown): RecentChange[] {

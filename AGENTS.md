@@ -4,7 +4,7 @@
 
 This repo is a TypeScript proof of concept for a bounded LLM-assisted incident triage agent.
 
-The important architectural idea is that the workflow owns control flow, factual investigation steps, and safety, while the LLM owns evidence-grounded explanation plus one bounded judgment. Raw incident facts are converted into an evidence package, the local `incident-triage` skill returns an explanation layer and nested bounded decision from a fixed taxonomy through MiniMax, local validation checks the result, policy gates risky actions, and the CLI/server emit provenance plus scorecard output.
+The important architectural idea is that the workflow owns control flow, factual investigation steps, mitigation governance, and safety, while the LLM owns evidence-grounded explanation plus one bounded judgment. Raw incident facts are converted into an evidence package, the local `incident-triage` skill returns an explanation layer and nested bounded decision from a fixed taxonomy through MiniMax, local validation checks the result, the Mitigation Control Plane evaluates risky action intent through deterministic catalog and evidence checks, and the CLI/server emit provenance plus scorecard output.
 
 Core flow:
 
@@ -12,7 +12,7 @@ Core flow:
 raw incident data -> evidence package + investigation trace
   -> incident-triage skill -> structured result validation
   -> explanation validation -> evidence citation validation
-  -> safety gate -> operator output -> scorecard
+  -> mitigation control plane -> safety gate -> operator output -> scorecard
 ```
 
 The `incident-triage` skill should make its bounded judgment by following a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
@@ -26,7 +26,8 @@ Primary TypeScript code lives in `src/`:
 - `grafana.ts`: Grafana webhook payload normalization into raw incidents.
 - `loki.ts`: bounded Loki query client and log evidence conversion.
 - `llm.ts`: Flue-backed MiniMax decision adapter and decision validation.
-- `policy.ts`: safety gate and simulated approval handling.
+- `mitigation-control.ts`: catalog-backed mitigation governance, dry-run, staged action, audit, and verification simulation.
+- `policy.ts`: safety compatibility gate derived from mitigation governance.
 - `recorded-observability.ts`: recorded Loki-shaped log replay for recorded triage runs and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
 - `server.ts`: local Grafana webhook server and JSON response rendering.
@@ -89,11 +90,13 @@ git diff --check
 - Treat workflow-authored investigation steps as factual trace data. Do not let the LLM claim it called tools or gathered evidence.
 - Treat LLM-authored hypotheses, finding summaries, and recommendation rationales as non-authoritative explanation. They can be dropped or degraded without blocking a valid bounded decision.
 - Do not let `recommendation` introduce its own action field. The only action that can drive safety is `decision.next_action`.
+- Do not let the LLM author mitigation catalog entries, dry-run results, approval posture, or verification outcomes. Those belong to deterministic Mitigation Control Plane code or eval expectations.
 - Keep the incident class taxonomy bounded to `dependency_outage`, `bad_deploy`, `capacity_saturation`, `noisy_alert`, `insufficient_context`, and `unknown`.
 - Keep the next action taxonomy bounded to `escalate_owner`, `request_rollback_approval`, `apply_runbook_step_with_approval`, `continue_monitoring`, `ask_human`, and `gather_more_context`.
 - Approval-sensitive actions must be staged and audited, not executed.
+- Mitigation Control Plane outputs must keep simulated dry-run, staged action, and audit records at `executed: false`.
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
-- Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, safety behavior, and recoverable failure handling.
+- Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, mitigation governance, safety behavior, and recoverable failure handling.
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Recorded observability tests should replay Grafana webhook payloads and Loki-shaped logs through real handler and workflow code.
@@ -101,15 +104,15 @@ git diff --check
 - Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
 - Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.
 - Eval expectations must live in eval cases, not in raw incident fixtures or Grafana payloads.
-- Recorded triage quality gates must remain deterministic pass/fail checks with stable names such as `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, and `recorded_triage_readability`.
+- Recorded triage quality gates must remain deterministic pass/fail checks with stable names such as `schema_contract`, `evidence_grounding`, `provenance_support`, `safety_contract`, `mitigation_contract`, and `recorded_triage_readability`.
 - A missing `recommendation.rationale` is an explanation-quality/readability failure, not a safety-policy failure.
 - Failed eval artifacts should preserve enough response and gate context to decide whether the model failed or the grader is too strict.
-- Judge-based evals may score explanation quality, but schema validity, citation validity, provenance, and safety gates must remain deterministic assertions.
+- Judge-based evals may score explanation quality, but schema validity, citation validity, provenance, mitigation governance, and safety gates must remain deterministic assertions.
 - Recorded log fixtures may contain timestamps, labels, and raw log lines, but must not contain expected classes, next actions, rollback hints, or eval expectations.
 - Use `npm test`, `npm run typecheck`, and `npm run triage -- ...` for local verification.
 - Use Docker only for local image packaging unless a future plan reintroduces a connector smoke test.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
-- Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, safety gating, and scorecard results.
+- Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, mitigation governance, safety gating, and scorecard results.
 - Keep diagnostic logs on stderr so stdout remains usable for the triage report.
 - When changing library, SDK, API, CLI, framework, or cloud-service usage, fetch current docs with `ctx7` first as described by the repo instructions.
 

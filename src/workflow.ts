@@ -2,6 +2,7 @@ import type { Scenario, WorkflowState } from "./domain";
 import type { EvidencePackage, InvestigationStep, MockOperationalTools } from "./evidence";
 import type { ExplanationValidation, LLMDecisionClient, TriageExplanation, ValidationResult } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
+import type { MitigationControlResult } from "./mitigation-control";
 import { evaluateSafety, type SafetyResult } from "./policy";
 import { scoreRun, type Scorecard } from "./scoring";
 
@@ -22,6 +23,7 @@ export interface TriageRun {
   validation?: ValidationResult;
   explanation?: TriageExplanation;
   explanationValidation?: ExplanationValidation;
+  mitigationControl?: MitigationControlResult;
   safety?: SafetyResult;
   scorecard?: Scorecard;
 }
@@ -75,15 +77,20 @@ export class TriageWorkflow {
     }, "LLM decision validated");
     this.transition(run, "decision_validated");
     run.safety = evaluateSafety(run.validation.decision, run.evidencePackage);
+    run.mitigationControl = run.safety.mitigationControl;
     this.logger.info({
       component: "policy",
       status: run.safety.status,
       approvalRequired: run.safety.approvalRequired,
+      mitigationStatus: run.mitigationControl.status,
     }, "Safety evaluated");
 
     if (run.safety.status === "approval_required") {
       this.transition(run, "approval_pending");
       this.transition(run, "simulated_action_recorded");
+      if (run.mitigationControl.verification?.status === "still_unhealthy") {
+        this.transition(run, "verification_failed");
+      }
     } else if (run.safety.status === "needs_human_input") {
       this.transition(run, "human_input_needed");
     } else {

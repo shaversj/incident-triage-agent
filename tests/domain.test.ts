@@ -17,6 +17,7 @@ test("loadScenario parses raw fixture and expected metadata", () => {
   expect(scenario.incident.incidentId).toBe("INC-2026-014");
   expect(scenario.expected?.incidentClass).toBe("dependency_outage");
   expect(scenario.expected?.allowedNextActions).toContain("escalate_owner");
+  expect(scenario.expected?.mitigationControl?.status).toBe("recommendation_only");
 });
 
 test("fixture with prohibited answer fields is rejected", () => {
