@@ -51,7 +51,7 @@ flowchart LR
 
 The workflow owns control flow, factual investigation steps, validation, provenance, mitigation governance, safety, and scoring. The `incident-triage` skill guides the LLM through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
 
-The Mitigation Control Plane sits after local decision validation. It deterministically decides whether the proposed action is recommendation-only, catalog-approved but approval-required, or blocked/escalated. It records evidence checks, simulated dry-run output, staged action state, audit data, and recorded verification outcomes without granting production mutation authority.
+The Mitigation Control Plane is the action-control layer of the prototype: the place an AI Operator-style system would prove a proposed mitigation is cataloged, bounded, approval-aware, and observable. It sits after local decision validation and deterministically decides whether the proposed action is recommendation-only, catalog-approved but approval-required, or blocked/escalated. It records evidence checks, simulated dry-run output, staged action state, audit data, and recorded verification outcomes without granting production mutation authority.
 
 ## Scenarios
 

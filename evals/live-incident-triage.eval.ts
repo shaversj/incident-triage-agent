@@ -12,17 +12,17 @@ describeEval(
       {
         name: "live checkout keeps bounded grounded decision",
         scenarioName: "checkout-payment-timeout",
-        evidencePrefixes: ["alert:", "log:"],
+        evidencePrefixes: ["alert:", "log:", "runbook:"],
       },
       {
         name: "live capacity keeps approval-sensitive safety behavior",
         scenarioName: "capacity-saturation",
-        evidencePrefixes: ["alert:", "log:"],
+        evidencePrefixes: ["alert:", "log:", "runbook:"],
       },
       {
         name: "live bad deploy keeps deployment evidence in play",
         scenarioName: "bad-deploy-latency",
-        evidencePrefixes: ["alert:", "deploy:", "log:"],
+        evidencePrefixes: ["deploy:", "log:", "runbook:"],
       },
       {
         name: "live noisy alert stays bounded and non-mutating or context-seeking",

@@ -53,7 +53,7 @@ An LLM judgment constrained to the project's allowed incident classes and next a
 The deterministic policy step that decides whether a bounded decision is safe to present, requires approval, needs human input, or is unsupported.
 
 ### Mitigation Control Plane
-The deterministic control layer that evaluates a validated next-action intent before any mitigation is staged, blocked, escalated, or rendered as recommendation-only.
+The deterministic action-control layer that evaluates a validated next-action intent before any mitigation is staged, blocked, escalated, or rendered as recommendation-only. This is the repo's name for the Actus-like boundary.
 
 ### Mitigation Catalog
 The approved set of simulated mitigation intents, required evidence sources, approval posture, dry-run expectation, and verification expectation. The LLM cannot author this catalog at runtime.

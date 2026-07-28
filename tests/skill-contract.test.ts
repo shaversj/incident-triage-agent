@@ -47,6 +47,12 @@ describe("incident-triage skill contract", () => {
     expect(skill).toContain("verify `recommendation.evidence_ids` cites the evidence");
   });
 
+  test("requires runbook guidance to be cited in authoritative evidence", () => {
+    expect(skill).toContain("If runbook guidance supports the selected `decision.next_action`");
+    expect(skill).toContain("include the relevant `runbook:*` evidence ID in both `decision.evidence_ids` and `recommendation.evidence_ids`");
+    expect(skill).toContain("verify any runbook guidance used to justify the next action is cited by a `runbook:*` ID");
+  });
+
   test("requires evidence citations to come from the supplied package", () => {
     expect(skill).toContain("Cite only evidence IDs present in the supplied evidence package");
     expect(skill).toContain("verify every evidence ID appears exactly in the supplied evidence package");
