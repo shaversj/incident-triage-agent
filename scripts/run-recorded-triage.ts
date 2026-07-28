@@ -232,8 +232,15 @@ function printSummary(summary: ReturnType<typeof sanitizedSummary>): void {
   process.stdout.write(`- status: ${mitigationControl.status ?? "none"}\n`);
   process.stdout.write(`- approval_required: ${String(mitigationControl.approval_required ?? false)}\n`);
   process.stdout.write(`- catalog_id: ${objectValue(mitigationControl.catalog_match).catalog_id ?? "none"}\n`);
+  process.stdout.write(`- runbook_id: ${objectValue(mitigationControl.catalog_match).runbook_id ?? "none"}\n`);
   process.stdout.write(`- verification: ${objectValue(mitigationControl.verification).status ?? "none"}\n`);
   process.stdout.write(`- staged_executed: ${String(objectValue(mitigationControl.staged_action).executed ?? false)}\n`);
+  const approvalRequest = objectValue(mitigationControl.approval_request);
+  if (Object.keys(approvalRequest).length > 0) {
+    process.stdout.write(`- approval_id: ${approvalRequest.approval_id ?? "none"}\n`);
+    process.stdout.write(`- approval_status: ${approvalRequest.status ?? "none"}\n`);
+    process.stdout.write(`- approve_command: ${approvalRequest.approve_command ?? "none"}\n`);
+  }
 
   const caveats = arrayValue(decision.caveats);
   if (caveats.length > 0) {

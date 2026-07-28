@@ -1,0 +1,30 @@
+[
+  {
+    "catalog_id": "rollback-approval",
+    "runbook_id": "bad-deploy",
+    "incident_class": "bad_deploy",
+    "next_action": "request_rollback_approval",
+    "action_intent": "Request human approval for rollback of the suspected deploy.",
+    "approval_summary": "Rollback approval is required before changing production deploy state.",
+    "approve_command": "npm run triage:approval -- approve rollback-approval",
+    "reject_command": "npm run triage:approval -- reject rollback-approval",
+    "required_evidence_sources": ["deploy", "runbook", "verification"],
+    "approval_required": true,
+    "dry_run_required": true,
+    "verification_required": true
+  },
+  {
+    "catalog_id": "capacity-runbook-approval",
+    "runbook_id": "capacity-saturation",
+    "incident_class": "capacity_saturation",
+    "next_action": "apply_runbook_step_with_approval",
+    "action_intent": "Request approval to apply the capacity saturation runbook mitigation.",
+    "approval_summary": "Capacity mitigation approval is required before applying bounded runbook changes.",
+    "approve_command": "npm run triage:approval -- approve capacity-runbook-approval",
+    "reject_command": "npm run triage:approval -- reject capacity-runbook-approval",
+    "required_evidence_sources": ["runbook", "verification"],
+    "approval_required": true,
+    "dry_run_required": true,
+    "verification_required": true
+  }
+]

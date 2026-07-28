@@ -2,7 +2,11 @@ import { expect, test } from "vitest";
 import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import { parseDecisionText } from "../src/llm";
-import { evaluateMitigationControl } from "../src/mitigation-control";
+import {
+  evaluateMitigationControl,
+  loadMitigationCatalog,
+  parseMitigationCatalog,
+} from "../src/mitigation-control";
 
 test("bad deploy rollback maps to approval mitigation with dry-run and audit", () => {
   const package_ = packageFor("bad-deploy-latency");
@@ -19,11 +23,52 @@ test("bad deploy rollback maps to approval mitigation with dry-run and audit", (
 
   expect(mitigation.status).toBe("approval_required");
   expect(mitigation.catalogMatch?.catalogId).toBe("rollback-approval");
+  expect(mitigation.catalogMatch?.runbookId).toBe("bad-deploy");
   expect(mitigation.approvalRequired).toBe(true);
   expect(mitigation.dryRun?.executed).toBe(false);
   expect(mitigation.stagedAction?.executed).toBe(false);
+  expect(mitigation.stagedAction?.runbookId).toBe("bad-deploy");
+  expect(mitigation.approvalRequest).toMatchObject({
+    approvalId: "approval:INC-2026-015:rollback-approval",
+    status: "pending_human_approval",
+    runbookId: "bad-deploy",
+    executed: false,
+  });
   expect(mitigation.auditEvent?.executed).toBe(false);
+  expect(mitigation.auditEvent?.runbookId).toBe("bad-deploy");
   expect(mitigation.verification?.status).toBe("still_unhealthy");
+});
+
+test("mitigation catalog loads runbook-backed approval entries from fixtures", () => {
+  const catalog = loadMitigationCatalog("fixtures");
+
+  expect(catalog).toEqual(expect.arrayContaining([
+    expect.objectContaining({
+      catalogId: "rollback-approval",
+      runbookId: "bad-deploy",
+      approvalRequired: true,
+      dryRunRequired: true,
+    }),
+  ]));
+});
+
+test("mitigation catalog parser rejects malformed approval commands", () => {
+  expect(() => parseMitigationCatalog([
+    {
+      catalog_id: "rollback-approval",
+      runbook_id: "bad-deploy",
+      incident_class: "bad_deploy",
+      next_action: "request_rollback_approval",
+      action_intent: "Request approval.",
+      approval_summary: "Approval required.",
+      approve_command: "",
+      reject_command: "npm run triage:approval -- reject rollback-approval",
+      required_evidence_sources: ["runbook"],
+      approval_required: true,
+      dry_run_required: true,
+      verification_required: true,
+    },
+  ])).toThrow("approve_command");
 });
 
 test("capacity mitigation requires runbook evidence before staging", () => {

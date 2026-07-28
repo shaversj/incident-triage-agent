@@ -10,6 +10,7 @@
     "list": "tsx src/cli.ts list",
     "serve": "tsx src/cli.ts serve",
     "triage:recorded": "tsx scripts/run-recorded-triage.ts",
+    "triage:approval": "tsx src/approval-cli.ts",
     "test": "vitest run",
     "evals": "vitest run --config evals/vitest.evals.config.ts",
     "evals:json": "mkdir -p eval-results && vitest run --config evals/vitest.evals.config.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/vitest-results.json",

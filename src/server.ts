@@ -349,6 +349,7 @@ export function mitigationControlToResponse(mitigation: MitigationControlResult)
   if (mitigation.catalogMatch) {
     response.catalog_match = {
       catalog_id: mitigation.catalogMatch.catalogId,
+      runbook_id: mitigation.catalogMatch.runbookId,
       action_intent: mitigation.catalogMatch.actionIntent,
     };
   }
@@ -364,6 +365,7 @@ export function mitigationControlToResponse(mitigation: MitigationControlResult)
       incident_id: mitigation.stagedAction.incidentId,
       service: mitigation.stagedAction.service,
       catalog_id: mitigation.stagedAction.catalogId,
+      runbook_id: mitigation.stagedAction.runbookId,
       action_intent: mitigation.stagedAction.actionIntent,
       next_action: mitigation.stagedAction.nextAction,
       incident_class: mitigation.stagedAction.incidentClass,
@@ -373,6 +375,20 @@ export function mitigationControlToResponse(mitigation: MitigationControlResult)
       executed: mitigation.stagedAction.executed,
     };
   }
+  if (mitigation.approvalRequest) {
+    response.approval_request = {
+      approval_id: mitigation.approvalRequest.approvalId,
+      status: mitigation.approvalRequest.status,
+      catalog_id: mitigation.approvalRequest.catalogId,
+      runbook_id: mitigation.approvalRequest.runbookId,
+      incident_id: mitigation.approvalRequest.incidentId,
+      service: mitigation.approvalRequest.service,
+      summary: mitigation.approvalRequest.summary,
+      approve_command: mitigation.approvalRequest.approveCommand,
+      reject_command: mitigation.approvalRequest.rejectCommand,
+      executed: mitigation.approvalRequest.executed,
+    };
+  }
   if (mitigation.auditEvent) {
     response.audit_event = {
       event: mitigation.auditEvent.event,
@@ -380,6 +396,7 @@ export function mitigationControlToResponse(mitigation: MitigationControlResult)
       status: mitigation.auditEvent.status,
       next_action: mitigation.auditEvent.nextAction,
       catalog_id: mitigation.auditEvent.catalogId,
+      runbook_id: mitigation.auditEvent.runbookId,
       executed: mitigation.auditEvent.executed,
     };
   }

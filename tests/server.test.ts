@@ -51,6 +51,39 @@ test("invalid LLM response is recoverable without safety action", async () => {
   expect(response).not.toHaveProperty("safety");
 });
 
+test("bad deploy webhook exposes pending human approval request without execution", async () => {
+  const [status, response] = await handleGrafanaWebhook(
+    JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8")),
+    "test-secret",
+    runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      new StaticDecisionClient({
+        "grafana-bad-deploy-latency": JSON.stringify({
+          incident_class: "bad_deploy",
+          next_action: "request_rollback_approval",
+          confidence: 0.88,
+          evidence_ids: ["deploy:0", "runbook:bad-deploy", "verification:0"],
+          caveats: [],
+          verification_plan: ["Check latency after rollback."],
+        }),
+      }),
+    ),
+  );
+
+  const mitigation = response.mitigation_control as any;
+
+  expect(status).toBe(200);
+  expect(mitigation.status).toBe("approval_required");
+  expect(mitigation.catalog_match.runbook_id).toBe("bad-deploy");
+  expect(mitigation.staged_action.executed).toBe(false);
+  expect(mitigation.approval_request).toMatchObject({
+    approval_id: "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval",
+    status: "pending_human_approval",
+    runbook_id: "bad-deploy",
+    executed: false,
+  });
+});
+
 test("resolved webhook is ignored", async () => {
   const body = payload();
   body.status = "resolved";
