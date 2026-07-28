@@ -135,10 +135,13 @@ Approval-required mitigation responses include a pending `approval_request` with
 
 ```bash
 npm run triage -- run bad-deploy-latency --mock-llm --trace
+npm run triage:approval -- request rollback-approval --incident-id INC-2026-015 --service checkout-api --json
 npm run triage:approval -- approve rollback-approval --incident-id INC-2026-015 --service checkout-api --json
+npm run triage:approval -- status approval:INC-2026-015:rollback-approval --json
+npm run triage:approval -- list
 ```
 
-The approval command records a simulated human decision only. It does not execute rollback, scaling, throttling, ticketing, chat, or production API calls.
+The approval command persists local approval state in `.triage/approvals.json` by default and records a simulated executor result for approvals. It does not execute rollback, scaling, throttling, ticketing, chat, or production API calls.
 
 ## Live Provider Path
 

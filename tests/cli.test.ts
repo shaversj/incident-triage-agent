@@ -1,5 +1,8 @@
 import { expect, test } from "vitest";
 import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { text } from "node:stream/consumers";
 
 test("CLI list prints scenarios without credentials", async () => {
@@ -41,6 +44,7 @@ test("CLI trace includes workflow states and evidence", async () => {
 });
 
 test("approval CLI records simulated human approval without execution", async () => {
+  const storePath = tempStorePath();
   const result = await runApprovalCli([
     "approve",
     "rollback-approval",
@@ -48,6 +52,8 @@ test("approval CLI records simulated human approval without execution", async ()
     "INC-2026-015",
     "--service",
     "checkout-api",
+    "--store-path",
+    storePath,
     "--json",
   ]);
   const record = JSON.parse(result.stdout);
@@ -59,6 +65,68 @@ test("approval CLI records simulated human approval without execution", async ()
     runbook_id: "bad-deploy",
     executed: false,
   });
+  expect(record.execution).toMatchObject({
+    status: "simulated_not_executed",
+    dry_run: true,
+    executed: false,
+  });
+});
+
+test("approval CLI persists request and supports status and list", async () => {
+  const storePath = tempStorePath();
+  const request = await runApprovalCli([
+    "request",
+    "capacity-runbook-approval",
+    "--incident-id",
+    "INC-2026-020",
+    "--service",
+    "search-api",
+    "--store-path",
+    storePath,
+    "--json",
+  ]);
+  const requestRecord = JSON.parse(request.stdout);
+  const status = await runApprovalCli([
+    "status",
+    "approval:INC-2026-020:capacity-runbook-approval",
+    "--store-path",
+    storePath,
+    "--json",
+  ]);
+  const list = await runApprovalCli(["list", "--store-path", storePath, "--json"]);
+
+  expect(request.exitCode).toBe(0);
+  expect(requestRecord.status).toBe("pending_human_approval");
+  expect(status.exitCode).toBe(0);
+  expect(JSON.parse(status.stdout).runbook_id).toBe("capacity-saturation");
+  expect(JSON.parse(list.stdout).approvals).toHaveLength(1);
+});
+
+test("approval CLI request does not downgrade a decided approval", async () => {
+  const storePath = tempStorePath();
+  await runApprovalCli([
+    "approve",
+    "rollback-approval",
+    "--incident-id",
+    "INC-2026-030",
+    "--service",
+    "checkout-api",
+    "--store-path",
+    storePath,
+  ]);
+  const requestAgain = await runApprovalCli([
+    "request",
+    "rollback-approval",
+    "--incident-id",
+    "INC-2026-030",
+    "--service",
+    "checkout-api",
+    "--store-path",
+    storePath,
+    "--json",
+  ]);
+
+  expect(JSON.parse(requestAgain.stdout).status).toBe("human_approved");
 });
 
 test("CLI run requires credentials without mock LLM", async () => {
@@ -106,4 +174,8 @@ async function runApprovalCli(args: string[]) {
     new Promise<number | null>((resolve) => proc.on("exit", resolve)),
   ]);
   return { stdout, stderr, exitCode };
+}
+
+function tempStorePath(): string {
+  return join(mkdtempSync(join(tmpdir(), "incident-triage-approval-")), "approvals.json");
 }

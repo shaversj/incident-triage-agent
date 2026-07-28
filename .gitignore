@@ -9,6 +9,7 @@ build/
 dist/
 eval-results/
 .vitest-evals/
+.triage/
 node_modules/
 bun.lockb
 .tsbuildinfo
