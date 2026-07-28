@@ -702,3 +702,16 @@ The implementation added deterministic recorded triage quality gates under the F
 ### Why This Matters
 
 The eval suite now catches the exact class of issue that produced `recommendation_rationale: none`: a response can be valid and safe but still not readable enough as a representative recorded triage run. That distinction keeps safety logic strict while making output quality visible.
+
+## Mitigation Control Plane Learnings: 2026-07-28
+
+The project now has a named Mitigation Control Plane between validated triage decisions and simulated action handling.
+
+- [ ] Explain why this is closer to an AI Operator actuation layer without becoming real production actuation.
+- [ ] Explain why Flue stays at the bounded decision boundary while mitigation catalog matching, dry-run, approval posture, and verification classification stay deterministic.
+- [ ] Explain why `mitigation_control` is richer than `safety`: safety is the compatibility/readiness posture, while mitigation control shows catalog match, evidence checks, dry-run, staged action, audit, and verification.
+- [ ] Explain why raw incident and Grafana fixtures still must not contain mitigation answers; expectations and catalog entries live outside raw facts.
+- [ ] Explain why `executed: false` is a product claim, not a cosmetic field.
+- [ ] Explain why `mitigation_contract` belongs in deterministic recorded-triage evals rather than an LLM judge.
+
+The important architecture lesson is that useful AI operations are not just better RCA prose. The risky boundary is action. This implementation makes that boundary visible: the model proposes a bounded next action, deterministic code decides whether it maps to an approved mitigation, and recorded outputs show approval, blocking, dry-run, audit, and verification without touching production.

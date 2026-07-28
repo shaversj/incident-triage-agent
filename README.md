@@ -7,7 +7,7 @@
 
 A portfolio prototype for bounded, evidence-grounded SRE incident triage.
 
-The project demonstrates an agentic incident workflow where the system owns state, evidence, validation, provenance, safety gates, and scoring. The LLM owns one constrained judgment: explain the incident evidence and choose from a bounded operational taxonomy.
+The project demonstrates an agentic incident workflow where the system owns state, evidence, validation, provenance, mitigation governance, safety gates, and scoring. The LLM owns one constrained judgment: explain the incident evidence and choose from a bounded operational taxonomy.
 
 The goal is not to build an incident chatbot. The goal is to show how an AI-assisted SRE workflow can remain inspectable, auditable, and safe.
 
@@ -29,7 +29,7 @@ Sample output: [docs/examples/checkout-payment-timeout-trace.txt](docs/examples/
 - The workflow gathers evidence before asking the LLM for judgment.
 - Raw incident fixtures do not contain expected causes or actions.
 - The LLM result must pass local schema, taxonomy, confidence, and evidence-citation validation.
-- Safety policy stages approval-sensitive actions instead of executing them.
+- The Mitigation Control Plane maps mutating intents to an approved catalog, simulates dry-run and verification, and stages approval-sensitive actions instead of executing them.
 - The scorecard is deterministic; the model does not grade itself.
 - Recorded Grafana and Loki-shaped inputs exercise the real webhook and workflow path.
 
@@ -43,12 +43,15 @@ flowchart LR
     D --> E["Structured LLM result"]
     E --> F["Schema and taxonomy validation"]
     F --> G["Evidence citation validation"]
-    G --> H["Safety gate"]
-    H --> I["Operator output"]
-    I --> J["Scorecard"]
+    G --> H["Mitigation Control Plane"]
+    H --> I["Safety compatibility gate"]
+    I --> J["Operator output"]
+    J --> K["Scorecard"]
 ```
 
-The workflow owns control flow, factual investigation steps, validation, provenance, safety, and scoring. The `incident-triage` skill guides the LLM through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
+The workflow owns control flow, factual investigation steps, validation, provenance, mitigation governance, safety, and scoring. The `incident-triage` skill guides the LLM through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
+
+The Mitigation Control Plane is the action-control layer of the prototype: the place an AI Operator-style system would prove a proposed mitigation is cataloged, bounded, approval-aware, and observable. It sits after local decision validation and deterministically decides whether the proposed action is recommendation-only, catalog-approved but approval-required, or blocked/escalated. It records evidence checks, simulated dry-run output, staged action state, audit data, and recorded verification outcomes without granting production mutation authority.
 
 ## Scenarios
 
@@ -76,7 +79,8 @@ npm run triage -- run bad-deploy-latency --mock-llm --trace
 - [src/workflow.ts](src/workflow.ts): the incident triage state machine.
 - [src/evidence.ts](src/evidence.ts): deterministic evidence gathering and provenance.
 - [src/llm.ts](src/llm.ts): Flue-backed MiniMax adapter and response validation.
-- [src/policy.ts](src/policy.ts): safety gate and simulated approval handling.
+- [src/mitigation-control.ts](src/mitigation-control.ts): catalog-backed mitigation governance, dry-run, audit, and verification simulation.
+- [src/policy.ts](src/policy.ts): safety compatibility gate derived from mitigation governance.
 - [src/scoring.ts](src/scoring.ts): deterministic scorecard.
 - [evals/recorded-triage-quality.eval.ts](evals/recorded-triage-quality.eval.ts): deterministic quality gates.
 - [.agents/skills/incident-triage/SKILL.md](.agents/skills/incident-triage/SKILL.md): local skill boundary used for bounded SRE judgment.
@@ -90,7 +94,8 @@ Each completed triage run returns a run envelope:
 - `analysis`, `finding_summary`, and `recommendation` are LLM-authored explanation fields.
 - `explanation_validation` reports whether explanation fields were valid, degraded, or unavailable.
 - `decision` is the authoritative bounded operational result.
-- `safety`, `provenance`, and `scorecard` derive from the validated decision.
+- `mitigation_control` records catalog match, policy reason, dry-run, staged or blocked state, audit event, and verification outcome.
+- `safety`, `provenance`, and `scorecard` derive from the validated decision and deterministic mitigation governance.
 
 Allowed `incident_class` values:
 
@@ -110,7 +115,7 @@ Allowed `next_action` values:
 - `ask_human`
 - `gather_more_context`
 
-The provider response is never trusted directly. Local validation checks JSON shape, taxonomy values, confidence, and cited evidence IDs before the workflow applies safety policy.
+The provider response is never trusted directly. Local validation checks JSON shape, taxonomy values, confidence, and cited evidence IDs before the workflow applies mitigation governance or safety policy.
 
 ## Recorded Observability Path
 
@@ -122,7 +127,7 @@ npm run triage:recorded -- --scenario capacity-saturation
 npm run triage:recorded -- --scenario bad-deploy-latency --json
 ```
 
-The recorded path does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads fixtures from `fixtures/grafana/` and `fixtures/logs/`, then exercises webhook normalization, evidence construction, workflow validation, safety policy, provenance, and scorecard output.
+The recorded path does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads fixtures from `fixtures/grafana/` and `fixtures/logs/`, then exercises webhook normalization, evidence construction, workflow validation, mitigation governance, safety policy, provenance, and scorecard output.
 
 ## Live Provider Path
 
@@ -175,7 +180,7 @@ npm run evals
 
 Default tests avoid real MiniMax calls, Docker, and networked Loki. They exercise parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki-shaped log replay, webhook, and outcome code paths with fixture payloads and mock external transports.
 
-Deterministic evals cover scenario contracts, evidence citations, provenance, safety behavior, and recorded-triage readability. Live evals are opt-in:
+Deterministic evals cover scenario contracts, evidence citations, provenance, safety behavior, mitigation governance, and recorded-triage readability. Live evals are opt-in:
 
 ```bash
 RUN_LIVE_FLUE_EVALS=1 npm run evals
@@ -203,4 +208,4 @@ docker run --rm --env-file .env incident-triage-agent:local run checkout-payment
 
 ## Why Actions Are Simulated
 
-Incident response actions can affect customers. This prototype stages approval-sensitive actions and prints audit payloads, but it does not call deployment, ticketing, chat, or production observability systems. That keeps the architecture inspectable without creating production blast radius.
+Incident response actions can affect customers. This prototype stages approval-sensitive actions and prints mitigation-control audit payloads, but it does not call deployment, ticketing, chat, or production observability systems. Simulated dry-runs and verification outcomes are recorded-fixture proof, not production execution. That keeps the architecture inspectable without creating production blast radius.

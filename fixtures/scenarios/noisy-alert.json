@@ -38,6 +38,10 @@
       "log:",
       "verification:"
     ],
-    "approval_required": false
+    "approval_required": false,
+    "mitigation_control": {
+      "status": "recommendation_only",
+      "verification_status": "recovered"
+    }
   }
 }

@@ -1,6 +1,7 @@
 import type { NextAction } from "./domain";
 import type { EvidencePackage } from "./evidence";
 import type { TriageDecision } from "./llm";
+import { evaluateMitigationControl, type MitigationControlResult } from "./mitigation-control";
 
 export const safetyStatuses = [
   "safe_recommendation",
@@ -34,6 +35,7 @@ export interface SafetyResult {
   reason: string;
   stagedPayload?: StagedPayload;
   auditEvent?: AuditEvent;
+  mitigationControl: MitigationControlResult;
 }
 
 export const approvalRequiredActions = new Set<NextAction>([
@@ -42,31 +44,23 @@ export const approvalRequiredActions = new Set<NextAction>([
 ]);
 
 export function evaluateSafety(decision: TriageDecision, evidencePackage: EvidencePackage): SafetyResult {
-  if (
-    decision.nextAction === "apply_runbook_step_with_approval" &&
-    !hasEvidenceSource(evidencePackage, "runbook")
-  ) {
+  const mitigationControl = evaluateMitigationControl(decision, evidencePackage);
+
+  if (mitigationControl.status === "blocked") {
     return {
       status: "needs_human_input",
       approvalRequired: false,
-      reason: "Runbook-guided action requires runbook context before it can be staged.",
+      reason: mitigationControl.reason,
+      mitigationControl,
     };
   }
 
-  if (approvalRequiredActions.has(decision.nextAction) && !hasEvidenceSource(evidencePackage, "verification")) {
-    return {
-      status: "needs_human_input",
-      approvalRequired: false,
-      reason: "Approval-sensitive action requires verification signals before it can be staged.",
-    };
-  }
-
-  if (approvalRequiredActions.has(decision.nextAction)) {
+  if (mitigationControl.status === "approval_required") {
     const stagedPayload = buildStagedPayload(decision, evidencePackage);
     return {
       status: "approval_required",
       approvalRequired: true,
-      reason: "Action requires human approval; simulated payload staged and not executed.",
+      reason: mitigationControl.reason,
       stagedPayload,
       auditEvent: {
         event: "simulated_action_staged",
@@ -74,6 +68,7 @@ export function evaluateSafety(decision: TriageDecision, evidencePackage: Eviden
         nextAction: decision.nextAction,
         executed: false,
       },
+      mitigationControl,
     };
   }
 
@@ -82,13 +77,15 @@ export function evaluateSafety(decision: TriageDecision, evidencePackage: Eviden
       status: "needs_human_input",
       approvalRequired: false,
       reason: "Decision selected human input as the safest next step.",
+      mitigationControl,
     };
   }
 
   return {
     status: "safe_recommendation",
     approvalRequired: false,
-    reason: "Recommendation is non-mutating and can be presented with caveats.",
+    reason: mitigationControl.reason,
+    mitigationControl,
   };
 }
 
@@ -103,8 +100,4 @@ function buildStagedPayload(decision: TriageDecision, evidencePackage: EvidenceP
     verificationPlan: decision.verificationPlan,
     executed: false,
   };
-}
-
-function hasEvidenceSource(evidencePackage: EvidencePackage, source: string): boolean {
-  return evidencePackage.evidence.some((item) => item.source === source);
 }

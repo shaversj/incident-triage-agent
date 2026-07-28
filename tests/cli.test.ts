@@ -20,6 +20,7 @@ test("CLI mock run renders decision provenance safety and scorecard", async () =
   expect(result.stdout).toContain("LLM decision");
   expect(result.stdout).toContain("Provenance");
   expect(result.stdout).toContain("Safety gate");
+  expect(result.stdout).toContain("Mitigation Control Plane");
   expect(result.stdout).toContain("Scorecard");
   expect(result.stdout).toContain("current_or_operational");
   expect(result.stdout).not.toContain("MINIMAX_API_KEY");
@@ -32,6 +33,7 @@ test("CLI trace includes workflow states and evidence", async () => {
   expect(result.stdout).toContain("State trace");
   expect(result.stdout).toContain("Investigation steps");
   expect(result.stdout).toContain("simulated_action_recorded");
+  expect(result.stdout).toContain("verification_failed");
   expect(result.stdout).toContain("deploy:0");
   expect(result.stdout).toContain("[deploy/operational_context]");
 });

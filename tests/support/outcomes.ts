@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import type { IncidentClass, NextAction, SourceTier, WorkflowState } from "../../src/domain";
 import type { TriageRun } from "../../src/workflow";
 import type { SafetyStatus } from "../../src/policy";
+import type { MitigationControlStatus, MitigationVerificationStatus } from "../../src/mitigation-control";
 
 export function assertValidRunOutcome(
   run: TriageRun,
@@ -13,6 +14,9 @@ export function assertValidRunOutcome(
     citedTiers?: Array<SourceTier | string>;
     safetyStatus?: SafetyStatus | string;
     approvalRequired?: boolean;
+    mitigationStatus?: MitigationControlStatus | string;
+    mitigationCatalogId?: string;
+    mitigationVerificationStatus?: MitigationVerificationStatus | string;
     scorecardChecks?: string[];
   } = {},
 ): void {
@@ -59,6 +63,23 @@ export function assertValidRunOutcome(
     }
   }
 
+  if (
+    options.mitigationStatus !== undefined ||
+    options.mitigationCatalogId !== undefined ||
+    options.mitigationVerificationStatus !== undefined
+  ) {
+    expect(run.mitigationControl, "expected run to include mitigation control result").toBeDefined();
+    assertMitigation(
+      run.mitigationControl?.status,
+      run.mitigationControl?.catalogMatch?.catalogId,
+      run.mitigationControl?.verification?.status,
+      options.mitigationStatus,
+      options.mitigationCatalogId,
+      options.mitigationVerificationStatus,
+    );
+    expect(run.safety?.mitigationControl, "expected safety compatibility result to include mitigation control").toBeDefined();
+  }
+
   assertScorecardChecks(run.scorecard?.scores, options.scorecardChecks ?? []);
 }
 
@@ -74,6 +95,9 @@ export function assertValidResponseOutcome(
     requireSafety?: boolean;
     safetyStatus?: SafetyStatus | string;
     approvalRequired?: boolean;
+    mitigationStatus?: MitigationControlStatus | string;
+    mitigationCatalogId?: string;
+    mitigationVerificationStatus?: MitigationVerificationStatus | string;
     scorecardChecks?: string[];
   } = {},
 ): void {
@@ -110,6 +134,22 @@ export function assertValidResponseOutcome(
     if (response.safety.approval_required) {
       expect(response.safety.audit_event, "expected approval-required response to include audit event").toEqual(expect.any(Object));
     }
+  }
+
+  if (
+    options.mitigationStatus !== undefined ||
+    options.mitigationCatalogId !== undefined ||
+    options.mitigationVerificationStatus !== undefined
+  ) {
+    expect(response.mitigation_control, "expected response mitigation_control object").toEqual(expect.any(Object));
+    assertMitigation(
+      response.mitigation_control?.status,
+      response.mitigation_control?.catalog_match?.catalog_id,
+      response.mitigation_control?.verification?.status,
+      options.mitigationStatus,
+      options.mitigationCatalogId,
+      options.mitigationVerificationStatus,
+    );
   }
 
   assertScorecardChecks(response.scorecard?.scores, options.scorecardChecks ?? []);
@@ -179,6 +219,25 @@ function assertSafety(
   }
   if (expectedApprovalRequired !== undefined) {
     expect(actualApprovalRequired).toBe(expectedApprovalRequired);
+  }
+}
+
+function assertMitigation(
+  actualStatus: unknown,
+  actualCatalogId: unknown,
+  actualVerificationStatus: unknown,
+  expectedStatus?: MitigationControlStatus | string,
+  expectedCatalogId?: string,
+  expectedVerificationStatus?: MitigationVerificationStatus | string,
+): void {
+  if (expectedStatus !== undefined) {
+    expect(actualStatus).toBe(value(expectedStatus));
+  }
+  if (expectedCatalogId !== undefined) {
+    expect(actualCatalogId).toBe(expectedCatalogId);
+  }
+  if (expectedVerificationStatus !== undefined) {
+    expect(actualVerificationStatus).toBe(value(expectedVerificationStatus));
   }
 }
 

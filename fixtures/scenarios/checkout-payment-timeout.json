@@ -49,6 +49,10 @@
       "log:",
       "runbook:"
     ],
-    "approval_required": false
+    "approval_required": false,
+    "mitigation_control": {
+      "status": "recommendation_only",
+      "verification_status": "still_unhealthy"
+    }
   }
 }

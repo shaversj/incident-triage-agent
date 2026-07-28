@@ -4,6 +4,7 @@ import { PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
 import { GrafanaPayloadError, normalizeGrafanaPayload } from "./grafana";
 import type { LLMDecisionClient } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
+import type { MitigationControlResult } from "./mitigation-control";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
 export interface WebhookRuntime {
@@ -320,6 +321,10 @@ export function runToResponse(run: TriageRun): Record<string, unknown> {
     };
   }
 
+  if (run.mitigationControl) {
+    response.mitigation_control = mitigationControlToResponse(run.mitigationControl);
+  }
+
   if (run.scorecard) {
     response.scorecard = {
       scenario_name: run.scorecard.scenarioName,
@@ -328,5 +333,62 @@ export function runToResponse(run: TriageRun): Record<string, unknown> {
     };
   }
 
+  return response;
+}
+
+export function mitigationControlToResponse(mitigation: MitigationControlResult): Record<string, unknown> {
+  const response: Record<string, unknown> = {
+    status: mitigation.status,
+    approval_required: mitigation.approvalRequired,
+    reason: mitigation.reason,
+    evidence_checks: mitigation.evidenceChecks.map((check) => ({
+      source: check.source,
+      passed: check.passed,
+    })),
+  };
+  if (mitigation.catalogMatch) {
+    response.catalog_match = {
+      catalog_id: mitigation.catalogMatch.catalogId,
+      action_intent: mitigation.catalogMatch.actionIntent,
+    };
+  }
+  if (mitigation.dryRun) {
+    response.dry_run = {
+      status: mitigation.dryRun.status,
+      summary: mitigation.dryRun.summary,
+      executed: mitigation.dryRun.executed,
+    };
+  }
+  if (mitigation.stagedAction) {
+    response.staged_action = {
+      incident_id: mitigation.stagedAction.incidentId,
+      service: mitigation.stagedAction.service,
+      catalog_id: mitigation.stagedAction.catalogId,
+      action_intent: mitigation.stagedAction.actionIntent,
+      next_action: mitigation.stagedAction.nextAction,
+      incident_class: mitigation.stagedAction.incidentClass,
+      confidence: mitigation.stagedAction.confidence,
+      evidence_ids: mitigation.stagedAction.evidenceIds,
+      verification_plan: mitigation.stagedAction.verificationPlan,
+      executed: mitigation.stagedAction.executed,
+    };
+  }
+  if (mitigation.auditEvent) {
+    response.audit_event = {
+      event: mitigation.auditEvent.event,
+      incident_id: mitigation.auditEvent.incidentId,
+      status: mitigation.auditEvent.status,
+      next_action: mitigation.auditEvent.nextAction,
+      catalog_id: mitigation.auditEvent.catalogId,
+      executed: mitigation.auditEvent.executed,
+    };
+  }
+  if (mitigation.verification) {
+    response.verification = {
+      status: mitigation.verification.status,
+      signals: mitigation.verification.signals,
+      reason: mitigation.verification.reason,
+    };
+  }
   return response;
 }

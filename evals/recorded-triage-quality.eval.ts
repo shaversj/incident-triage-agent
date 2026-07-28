@@ -34,6 +34,9 @@ describeEval("recorded triage quality gates", { harness: incidentTriageHarness }
 
     assertOnlyGateFails(withoutRecommendationRationale(result.output), "recorded_triage_readability");
     assertOnlyGateFails(withoutSafety(result.output), "safety_contract");
+    assertOnlyGateFails(withoutMitigationControl(result.output), "mitigation_contract");
+    assertOnlyGateFails(withExecutedMitigation(result.output), "mitigation_contract");
+    assertOnlyGateFails(withInvalidMitigationStatus(result.output), "mitigation_contract");
     assertOnlyGateFails(withInvalidRecommendationEvidence(result.output), "evidence_grounding");
     assertOnlyGateFails(withoutProvenance(result.output), "provenance_support");
   });
@@ -69,6 +72,32 @@ function withoutRecommendationRationale(response: IncidentTriageEvalOutput): Inc
 function withoutSafety(response: IncidentTriageEvalOutput): IncidentTriageEvalOutput {
   const clone = deepClone(response);
   delete clone.safety;
+  return clone;
+}
+
+function withoutMitigationControl(response: IncidentTriageEvalOutput): IncidentTriageEvalOutput {
+  const clone = deepClone(response);
+  delete clone.mitigation_control;
+  return clone;
+}
+
+function withExecutedMitigation(response: IncidentTriageEvalOutput): IncidentTriageEvalOutput {
+  const clone = deepClone(response);
+  clone.mitigation_control = {
+    ...objectValue(clone.mitigation_control),
+    staged_action: {
+      executed: true,
+    },
+  };
+  return clone;
+}
+
+function withInvalidMitigationStatus(response: IncidentTriageEvalOutput): IncidentTriageEvalOutput {
+  const clone = deepClone(response);
+  clone.mitigation_control = {
+    ...objectValue(clone.mitigation_control),
+    status: "executed_anyway",
+  };
   return clone;
 }
 

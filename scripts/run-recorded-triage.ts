@@ -114,6 +114,7 @@ export function sanitizedSummary(
     decision: response.decision,
     provenance: response.provenance,
     safety: response.safety,
+    mitigation_control: response.mitigation_control,
     scorecard: response.scorecard,
   };
 }
@@ -188,6 +189,7 @@ function printSummary(summary: ReturnType<typeof sanitizedSummary>): void {
   const validation = objectValue(summary.validation);
   const explanationValidation = objectValue(summary.explanation_validation);
   const safety = objectValue(summary.safety);
+  const mitigationControl = objectValue(summary.mitigation_control);
   const provenance = objectValue(summary.provenance);
   const recommendation = objectValue(summary.recommendation);
   const input = objectValue(summary.input);
@@ -225,6 +227,13 @@ function printSummary(summary: ReturnType<typeof sanitizedSummary>): void {
   process.stdout.write("\nSAFETY\n");
   process.stdout.write(`- safety: ${safety.status ?? "none"}\n`);
   process.stdout.write(`- approval_required: ${String(safety.approval_required ?? false)}\n`);
+
+  process.stdout.write("\nMITIGATION CONTROL PLANE\n");
+  process.stdout.write(`- status: ${mitigationControl.status ?? "none"}\n`);
+  process.stdout.write(`- approval_required: ${String(mitigationControl.approval_required ?? false)}\n`);
+  process.stdout.write(`- catalog_id: ${objectValue(mitigationControl.catalog_match).catalog_id ?? "none"}\n`);
+  process.stdout.write(`- verification: ${objectValue(mitigationControl.verification).status ?? "none"}\n`);
+  process.stdout.write(`- staged_executed: ${String(objectValue(mitigationControl.staged_action).executed ?? false)}\n`);
 
   const caveats = arrayValue(decision.caveats);
   if (caveats.length > 0) {
