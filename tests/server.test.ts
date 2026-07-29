@@ -1,8 +1,12 @@
 import { expect, test } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getApproval, requestApproval } from "../src/approval-store";
 import { StaticDecisionClient } from "../src/llm";
+import { loadMitigationCatalog } from "../src/mitigation-control";
 import { RecordedLokiClient } from "../src/recorded-observability";
-import { handleGrafanaWebhook, type WebhookRuntime } from "../src/server";
+import { handleGrafanaWebhook, startWebhookServer, type WebhookRuntime } from "../src/server";
 
 test("webhook rejects invalid secret", async () => {
   const [status, response] = await handleGrafanaWebhook(payload(), "wrong-secret", runtime());
@@ -84,6 +88,64 @@ test("bad deploy webhook exposes pending human approval request without executio
   });
 });
 
+test("bad deploy webhook persists pending approval when approval store is configured", async () => {
+  const storePath = tempStorePath();
+  const [status] = await handleGrafanaWebhook(
+    JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8")),
+    "test-secret",
+    runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      badDeployLlm(),
+      storePath,
+    ),
+  );
+
+  const approval = getApproval(storePath, "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval");
+
+  expect(status).toBe(200);
+  expect(approval).toMatchObject({
+    status: "pending_human_approval",
+    catalogId: "rollback-approval",
+    runbookId: "bad-deploy",
+    executed: false,
+  });
+});
+
+test("approval console serves queue and approve API records simulated execution", async () => {
+  const storePath = tempStorePath();
+  const entry = requiredCatalogEntry("rollback-approval");
+  requestApproval(storePath, entry, {
+    incidentId: "INC-2026-015",
+    service: "checkout-api",
+    now: new Date("2026-07-29T18:00:00.000Z"),
+  });
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(undefined, defaultLlm(), storePath),
+  });
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const html = await fetchText(`${baseUrl}/approvals`);
+    const list = await fetchJson(`${baseUrl}/api/approvals`);
+    const approvalId = encodeURIComponent("approval:INC-2026-015:rollback-approval");
+    const approved = await fetchJson(`${baseUrl}/api/approvals/${approvalId}/approve`, { method: "POST" });
+
+    expect(html).toContain("Incident Approval Console");
+    expect((list.approvals as any[])).toHaveLength(1);
+    expect((approved.approval as any).status).toBe("human_approved");
+    expect((approved.approval as any).execution).toMatchObject({
+      status: "simulated_not_executed",
+      executed: false,
+      dry_run: true,
+    });
+  } finally {
+    await server.close();
+  }
+});
+
 test("resolved webhook is ignored", async () => {
   const body = payload();
   body.status = "resolved";
@@ -98,7 +160,7 @@ test("resolved webhook is ignored", async () => {
   expect(response.reason).toBe("resolved_alert");
 });
 
-function runtime(lokiClient?: RecordedLokiClient, llmClient = defaultLlm()): WebhookRuntime {
+function runtime(lokiClient?: RecordedLokiClient, llmClient = defaultLlm(), approvalStorePath?: string): WebhookRuntime {
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",
@@ -107,6 +169,9 @@ function runtime(lokiClient?: RecordedLokiClient, llmClient = defaultLlm()): Web
   };
   if (lokiClient) {
     runtime.lokiClient = lokiClient;
+  }
+  if (approvalStorePath) {
+    runtime.approvalStorePath = approvalStorePath;
   }
   return runtime;
 }
@@ -124,6 +189,49 @@ function defaultLlm() {
   });
 }
 
+function badDeployLlm() {
+  return new StaticDecisionClient({
+    "grafana-bad-deploy-latency": JSON.stringify({
+      incident_class: "bad_deploy",
+      next_action: "request_rollback_approval",
+      confidence: 0.88,
+      evidence_ids: ["deploy:0", "runbook:bad-deploy", "verification:0"],
+      caveats: [],
+      verification_plan: ["Check latency after rollback."],
+    }),
+  });
+}
+
 function payload(): any {
   return JSON.parse(readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8"));
+}
+
+function requiredCatalogEntry(catalogId: string) {
+  const entry = loadMitigationCatalog("fixtures").find((item) => item.catalogId === catalogId);
+  if (!entry) {
+    throw new Error(`missing catalog entry: ${catalogId}`);
+  }
+  return entry;
+}
+
+function tempStorePath(): string {
+  return join(mkdtempSync(join(tmpdir(), "incident-triage-server-")), "approvals.json");
+}
+
+function serverUrl(server: Awaited<ReturnType<typeof startWebhookServer>>["server"]): string {
+  const address = server.address();
+  if (typeof address !== "object" || address === null) {
+    throw new Error("server did not expose an address");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function fetchJson(url: string, init?: RequestInit): Promise<Record<string, unknown>> {
+  const response = await fetch(url, init);
+  return await response.json() as Record<string, unknown>;
+}
+
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url);
+  return await response.text();
 }

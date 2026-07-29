@@ -135,10 +135,15 @@ Approval-required mitigation responses include a pending `approval_request` with
 
 ```bash
 npm run triage -- run bad-deploy-latency --mock-llm --trace
+npm run triage:approval -- request rollback-approval --incident-id INC-2026-015 --service checkout-api --json
 npm run triage:approval -- approve rollback-approval --incident-id INC-2026-015 --service checkout-api --json
+npm run triage:approval -- status approval:INC-2026-015:rollback-approval --json
+npm run triage:approval -- list
 ```
 
-The approval command records a simulated human decision only. It does not execute rollback, scaling, throttling, ticketing, chat, or production API calls.
+The approval command persists local approval state in `.triage/approvals.json` by default and records a simulated executor result for approvals. The local server also exposes the same store at `http://127.0.0.1:8080/approvals` with an approval queue, detail view, and approve/reject controls.
+
+The approval CLI and console do not execute rollback, scaling, throttling, ticketing, chat, or production API calls.
 
 ## Live Provider Path
 
@@ -168,6 +173,18 @@ Run the local webhook server with mock LLM output:
 
 ```bash
 npm run serve -- --mock-llm
+```
+
+Without a local `.env`, provide a throwaway webhook secret:
+
+```bash
+GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
+```
+
+Open the approval console:
+
+```text
+http://127.0.0.1:8080/approvals
 ```
 
 Post a recorded Grafana payload:

@@ -1,13 +1,24 @@
-import { loadMitigationCatalog } from "./mitigation-control";
+import {
+  decideApproval,
+  defaultApprovalStorePath,
+  getApproval,
+  listApprovals,
+  requestApproval,
+  approvalRecordToJson,
+  type ApprovalRecord,
+} from "./approval-store";
+import { simulateApprovedMitigation } from "./mitigation-executor";
+import { loadMitigationCatalog, type MitigationCatalogEntry } from "./mitigation-control";
 
-const approvalDecisions = ["approve", "reject"] as const;
+const approvalCommands = ["request", "approve", "reject", "status", "list"] as const;
 
-type ApprovalDecision = (typeof approvalDecisions)[number];
+type ApprovalCommand = (typeof approvalCommands)[number];
 
 interface ParsedApprovalArgs {
-  decision: ApprovalDecision | undefined;
-  catalogId: string | undefined;
+  command: ApprovalCommand | undefined;
+  target: string | undefined;
   fixturesDir: string;
+  storePath: string;
   incidentId: string;
   service: string;
   json: boolean;
@@ -16,49 +27,53 @@ interface ParsedApprovalArgs {
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
-  if (args.help || !args.decision || !args.catalogId) {
+  if (args.help || !args.command) {
     printUsage();
     return args.help ? 0 : 2;
   }
 
-  const catalogEntry = loadMitigationCatalog(args.fixturesDir)
-    .find((entry) => entry.catalogId === args.catalogId);
-  if (!catalogEntry) {
-    console.error(`Unknown mitigation catalog id: ${args.catalogId}`);
-    return 2;
-  }
-
-  const record = {
-    approval_id: `approval:${args.incidentId}:${catalogEntry.catalogId}`,
-    status: args.decision === "approve" ? "human_approved" : "human_rejected",
-    catalog_id: catalogEntry.catalogId,
-    runbook_id: catalogEntry.runbookId,
-    incident_id: args.incidentId,
-    service: args.service,
-    action_intent: catalogEntry.actionIntent,
-    executed: false,
-    execution_note: "Human approval decision recorded for simulation only; no mitigation was executed.",
-  };
-
-  if (args.json) {
-    process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
+  if (args.command === "list") {
+    renderList(listApprovals(args.storePath), args.json);
     return 0;
   }
 
-  process.stdout.write("Approval decision recorded\n");
-  process.stdout.write(`- approval_id: ${record.approval_id}\n`);
-  process.stdout.write(`- status: ${record.status}\n`);
-  process.stdout.write(`- catalog_id: ${record.catalog_id}\n`);
-  process.stdout.write(`- runbook_id: ${record.runbook_id}\n`);
-  process.stdout.write(`- executed: ${String(record.executed)}\n`);
-  process.stdout.write(`- note: ${record.execution_note}\n`);
+  if (!args.target) {
+    printUsage();
+    return 2;
+  }
+
+  if (args.command === "status") {
+    const record = getApproval(args.storePath, args.target);
+    if (!record) {
+      console.error(`Unknown approval id: ${args.target}`);
+      return 2;
+    }
+    renderRecord(record, args.json);
+    return 0;
+  }
+
+  const catalogEntry = findCatalogEntry(args.fixturesDir, args.target);
+  if (!catalogEntry) {
+    console.error(`Unknown mitigation catalog id: ${args.target}`);
+    return 2;
+  }
+
+  const record = args.command === "request"
+    ? requestApproval(args.storePath, catalogEntry, {
+      incidentId: args.incidentId,
+      service: args.service,
+    })
+    : decideApproval(args.storePath, catalogEntry, decisionDetails(args, catalogEntry));
+
+  renderRecord(record, args.json);
   return 0;
 }
 
 function parseArgs(argv: string[]): ParsedApprovalArgs {
-  let decision: ApprovalDecision | undefined;
-  let catalogId: string | undefined;
+  let command: ApprovalCommand | undefined;
+  let target: string | undefined;
   let fixturesDir = "fixtures";
+  let storePath = defaultApprovalStorePath;
   let incidentId = "manual";
   let service = "unknown";
   let json = false;
@@ -76,6 +91,8 @@ function parseArgs(argv: string[]): ParsedApprovalArgs {
       json = true;
     } else if (arg === "--fixtures-dir") {
       fixturesDir = requiredValue(argv[++index], "--fixtures-dir");
+    } else if (arg === "--store-path") {
+      storePath = requiredValue(argv[++index], "--store-path");
     } else if (arg === "--incident-id") {
       incidentId = requiredValue(argv[++index], "--incident-id");
     } else if (arg === "--service") {
@@ -85,19 +102,76 @@ function parseArgs(argv: string[]): ParsedApprovalArgs {
     }
   }
 
-  const candidateDecision = positional[0];
-  if (isApprovalDecision(candidateDecision)) {
-    decision = candidateDecision;
-  } else if (candidateDecision !== undefined) {
-    throw new Error(`Approval decision must be one of ${approvalDecisions.join(", ")}.`);
+  const candidateCommand = positional[0];
+  if (isApprovalCommand(candidateCommand)) {
+    command = candidateCommand;
+  } else if (candidateCommand !== undefined) {
+    throw new Error(`Approval command must be one of ${approvalCommands.join(", ")}.`);
   }
-  catalogId = positional[1];
+  target = positional[1];
 
-  return { decision, catalogId, fixturesDir, incidentId, service, json, help };
+  return { command, target, fixturesDir, storePath, incidentId, service, json, help };
 }
 
-function isApprovalDecision(value: string | undefined): value is ApprovalDecision {
-  return value === "approve" || value === "reject";
+function findCatalogEntry(fixturesDir: string, catalogId: string): MitigationCatalogEntry | undefined {
+  return loadMitigationCatalog(fixturesDir).find((entry) => entry.catalogId === catalogId);
+}
+
+function decisionDetails(
+  args: ParsedApprovalArgs,
+  catalogEntry: MitigationCatalogEntry,
+): Parameters<typeof decideApproval>[2] {
+  const details: Parameters<typeof decideApproval>[2] = {
+    incidentId: args.incidentId,
+    service: args.service,
+    status: args.command === "approve" ? "human_approved" : "human_rejected",
+  };
+  if (args.command === "approve") {
+    details.execution = simulateApprovedMitigation(catalogEntry);
+  }
+  return details;
+}
+
+function renderList(records: ApprovalRecord[], json: boolean): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify({ approvals: records.map(approvalRecordToJson) }, null, 2)}\n`);
+    return;
+  }
+  process.stdout.write("Approval records\n");
+  if (records.length === 0) {
+    process.stdout.write("- none\n");
+    return;
+  }
+  for (const record of records) {
+    process.stdout.write(`- ${record.approvalId}: ${record.status} (${record.catalogId}, executed: ${String(record.executed)})\n`);
+  }
+}
+
+function renderRecord(record: ApprovalRecord, json: boolean): void {
+  if (json) {
+    process.stdout.write(`${JSON.stringify(approvalRecordToJson(record), null, 2)}\n`);
+    return;
+  }
+
+  process.stdout.write("Approval record\n");
+  process.stdout.write(`- approval_id: ${record.approvalId}\n`);
+  process.stdout.write(`- status: ${record.status}\n`);
+  process.stdout.write(`- catalog_id: ${record.catalogId}\n`);
+  process.stdout.write(`- runbook_id: ${record.runbookId}\n`);
+  process.stdout.write(`- incident_id: ${record.incidentId}\n`);
+  process.stdout.write(`- service: ${record.service}\n`);
+  process.stdout.write(`- executed: ${String(record.executed)}\n`);
+  if (record.execution) {
+    process.stdout.write("- execution:\n");
+    process.stdout.write(`  - status: ${record.execution.status}\n`);
+    process.stdout.write(`  - dry_run: ${String(record.execution.dryRun)}\n`);
+    process.stdout.write(`  - executed: ${String(record.execution.executed)}\n`);
+    process.stdout.write(`  - reason: ${record.execution.reason}\n`);
+  }
+}
+
+function isApprovalCommand(value: string | undefined): value is ApprovalCommand {
+  return value === "request" || value === "approve" || value === "reject" || value === "status" || value === "list";
 }
 
 function requiredValue(value: string | undefined, flag: string): string {
@@ -108,7 +182,9 @@ function requiredValue(value: string | undefined, flag: string): string {
 }
 
 function printUsage(): void {
-  console.log("Usage: npm run triage:approval -- <approve|reject> <catalog-id> [--incident-id INC] [--service SERVICE] [--json]");
+  console.log("Usage: npm run triage:approval -- <request|approve|reject> <catalog-id> [--incident-id INC] [--service SERVICE] [--store-path PATH] [--json]");
+  console.log("       npm run triage:approval -- status <approval-id> [--store-path PATH] [--json]");
+  console.log("       npm run triage:approval -- list [--store-path PATH] [--json]");
 }
 
 if (import.meta.main) {
