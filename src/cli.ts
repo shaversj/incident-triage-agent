@@ -1,4 +1,5 @@
 import { loadConfig, loadWebhookConfig } from "./config";
+import { defaultApprovalStorePath } from "./approval-store";
 import { type Scenario, listScenarios, loadScenario } from "./domain";
 import { loadTools } from "./evidence";
 import { FlueDecisionClient, StaticDecisionClient } from "./llm";
@@ -85,6 +86,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         llmClient,
         lokiClient: new LokiClient(webhookConfig.lokiBaseUrl),
         lokiLimit: webhookConfig.lokiLimit,
+        approvalStorePath: parsed.approvalStorePath,
       },
     });
     logger.info({
@@ -112,6 +114,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   let mockLlm = false;
   let trace = false;
   let help = false;
+  let approvalStorePath = defaultApprovalStorePath;
 
   const positional: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -147,6 +150,12 @@ function parseArgs(argv: string[]): ParsedArgs {
         throw new Error("--port must be a positive integer.");
       }
       port = parsed;
+    } else if (arg === "--approval-store-path") {
+      const value = args[++index];
+      if (!value) {
+        throw new Error("--approval-store-path requires a value.");
+      }
+      approvalStorePath = value;
     } else if (arg !== undefined) {
       positional.push(arg);
     }
@@ -162,6 +171,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     logLevel,
     mockLlm,
     trace,
+    approvalStorePath,
   };
 }
 
@@ -175,12 +185,13 @@ interface ParsedArgs {
   logLevel: string;
   mockLlm: boolean;
   trace: boolean;
+  approvalStorePath: string;
 }
 
 function printUsage(): void {
   console.log("Usage: npm run triage -- [--log-level info] <list|run|serve>");
   console.log("       npm run triage -- run <scenario> [--mock-llm] [--trace] [--fixtures-dir fixtures]");
-  console.log("       npm run triage -- serve [--mock-llm] [--host 127.0.0.1] [--port 8080]");
+  console.log("       npm run triage -- serve [--mock-llm] [--host 127.0.0.1] [--port 8080] [--approval-store-path .triage/approvals.json]");
 }
 
 async function liveDecisionClient(logger: TriageLogger): Promise<FlueDecisionClient> {

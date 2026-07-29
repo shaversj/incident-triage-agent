@@ -103,6 +103,35 @@ export function listApprovals(storePath: string): ApprovalRecord[] {
     .sort((left, right) => left.requestedAt.localeCompare(right.requestedAt));
 }
 
+export function approvalRecordToJson(record: ApprovalRecord): Record<string, unknown> {
+  const json: Record<string, unknown> = {
+    approval_id: record.approvalId,
+    status: record.status,
+    catalog_id: record.catalogId,
+    runbook_id: record.runbookId,
+    incident_id: record.incidentId,
+    service: record.service,
+    action_intent: record.actionIntent,
+    requested_at: record.requestedAt,
+    executed: record.executed,
+  };
+  if (record.decidedAt) {
+    json.decided_at = record.decidedAt;
+  }
+  if (record.execution) {
+    json.execution = {
+      status: record.execution.status,
+      catalog_id: record.execution.catalogId,
+      runbook_id: record.execution.runbookId,
+      action_intent: record.execution.actionIntent,
+      executed: record.execution.executed,
+      dry_run: record.execution.dryRun,
+      reason: record.execution.reason,
+    };
+  }
+  return json;
+}
+
 export function buildApprovalId(incidentId: string, catalogId: string): string {
   return `approval:${incidentId}:${catalogId}`;
 }

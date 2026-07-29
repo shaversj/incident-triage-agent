@@ -4,6 +4,7 @@ import {
   getApproval,
   listApprovals,
   requestApproval,
+  approvalRecordToJson,
   type ApprovalRecord,
 } from "./approval-store";
 import { simulateApprovedMitigation } from "./mitigation-executor";
@@ -133,7 +134,7 @@ function decisionDetails(
 
 function renderList(records: ApprovalRecord[], json: boolean): void {
   if (json) {
-    process.stdout.write(`${JSON.stringify({ approvals: records.map(recordToJson) }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ approvals: records.map(approvalRecordToJson) }, null, 2)}\n`);
     return;
   }
   process.stdout.write("Approval records\n");
@@ -148,7 +149,7 @@ function renderList(records: ApprovalRecord[], json: boolean): void {
 
 function renderRecord(record: ApprovalRecord, json: boolean): void {
   if (json) {
-    process.stdout.write(`${JSON.stringify(recordToJson(record), null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(approvalRecordToJson(record), null, 2)}\n`);
     return;
   }
 
@@ -167,35 +168,6 @@ function renderRecord(record: ApprovalRecord, json: boolean): void {
     process.stdout.write(`  - executed: ${String(record.execution.executed)}\n`);
     process.stdout.write(`  - reason: ${record.execution.reason}\n`);
   }
-}
-
-function recordToJson(record: ApprovalRecord): Record<string, unknown> {
-  const json: Record<string, unknown> = {
-    approval_id: record.approvalId,
-    status: record.status,
-    catalog_id: record.catalogId,
-    runbook_id: record.runbookId,
-    incident_id: record.incidentId,
-    service: record.service,
-    action_intent: record.actionIntent,
-    requested_at: record.requestedAt,
-    executed: record.executed,
-  };
-  if (record.decidedAt) {
-    json.decided_at = record.decidedAt;
-  }
-  if (record.execution) {
-    json.execution = {
-      status: record.execution.status,
-      catalog_id: record.execution.catalogId,
-      runbook_id: record.execution.runbookId,
-      action_intent: record.execution.actionIntent,
-      executed: record.execution.executed,
-      dry_run: record.execution.dryRun,
-      reason: record.execution.reason,
-    };
-  }
-  return json;
 }
 
 function isApprovalCommand(value: string | undefined): value is ApprovalCommand {
