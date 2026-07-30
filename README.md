@@ -145,6 +145,34 @@ The approval command persists local approval state in `.triage/approvals.json` b
 
 The approval CLI and console do not execute rollback, scaling, throttling, ticketing, chat, or production API calls.
 
+## Approval UI Demo
+
+Run the deterministic approval UI demo with recorded Grafana and Loki-shaped inputs:
+
+```bash
+npm run approval-demo
+```
+
+The demo seeds a pending `bad-deploy-latency` approval, starts the local approval console, and prints:
+
+```text
+http://127.0.0.1:8080/approvals
+```
+
+Use the live LLM path with the same recorded observability inputs:
+
+```bash
+npm run approval-demo -- --live
+```
+
+Live mode still uses recorded Grafana and Loki-shaped inputs, but the decision comes from MiniMax through Flue. The approval queue is populated only when the live model returns the bounded approval action, such as `request_rollback_approval`.
+
+For scriptable verification without starting the server:
+
+```bash
+npm run approval-demo -- --once --json
+```
+
 ## Live Provider Path
 
 Create `.env` from `.env.example`:
@@ -187,14 +215,16 @@ Open the approval console:
 http://127.0.0.1:8080/approvals
 ```
 
-Post a recorded Grafana payload:
+Post a recorded approval-generating Grafana payload:
 
 ```bash
-curl -s http://localhost:8080/webhooks/grafana \
+curl -s http://127.0.0.1:8080/webhooks/grafana \
   -H 'Content-Type: application/json' \
-  -H 'X-Webhook-Secret: replace-with-a-local-webhook-secret' \
-  --data @fixtures/grafana/checkout-payment-timeout-webhook.json
+  -H 'X-Webhook-Secret: local-secret' \
+  --data @fixtures/grafana/bad-deploy-latency-webhook.json
 ```
+
+Real webhook mode expects real Grafana and Loki. The approval demo is the safer portfolio path because it uses recorded inputs while exercising the same webhook handler, workflow, approval store, and console.
 
 ## Verification
 
