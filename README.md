@@ -84,6 +84,8 @@ npm run triage -- run bad-deploy-latency --mock-llm --trace
 - [src/scoring.ts](src/scoring.ts): deterministic scorecard.
 - [evals/recorded-triage-quality.eval.ts](evals/recorded-triage-quality.eval.ts): deterministic quality gates.
 - [.agents/skills/incident-triage/SKILL.md](.agents/skills/incident-triage/SKILL.md): local skill boundary used for bounded SRE judgment.
+- [docs/ai-operator-architecture.md](docs/ai-operator-architecture.md): architecture, trust boundaries, demo paths, and production integration points.
+- [docs/ai-operator-architecture.html](docs/ai-operator-architecture.html): single-page visual companion for portfolio review.
 
 ## Decision Contract
 
