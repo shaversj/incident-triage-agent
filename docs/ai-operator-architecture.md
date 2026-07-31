@@ -4,6 +4,8 @@ This project is an AI Operator-style incident response prototype, not an inciden
 
 The LLM contributes one constrained judgment. The system owns everything that decides whether that judgment can be trusted or acted on.
 
+Visual companion: [ai-operator-architecture.html](ai-operator-architecture.html).
+
 ## Executive Summary
 
 The prototype shows how an incident triage agent can move from alert to approval-ready mitigation without giving the model production authority.

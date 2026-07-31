@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Operator Architecture</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      html {
+        color-scheme: light;
+      }
+
+      .flow-text {
+        font-family:
+          ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        fill: #172033;
+      }
+
+      .flow-small {
+        font-size: 13px;
+      }
+
+      .flow-label {
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .flow-note {
+        font-size: 12px;
+        fill: #526071;
+      }
+
+      @media print {
+        body {
+          background: white !important;
+        }
+
+        a {
+          color: #172033 !important;
+          text-decoration: none !important;
+        }
+
+        .no-print {
+          display: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body class="bg-white text-slate-900 antialiased">
+    <main class="mx-auto max-w-6xl px-5 py-8 sm:px-8 lg:px-10">
+      <header class="max-w-4xl">
+        <p class="text-sm font-semibold text-teal-700">Incident triage agent</p>
+        <h1 class="mt-2 text-3xl font-semibold tracking-normal text-slate-950 sm:text-4xl">
+          AI Operator architecture
+        </h1>
+        <p class="mt-4 max-w-3xl text-base leading-7 text-slate-700">
+          The model contributes one bounded judgment. Deterministic code owns evidence,
+          validation, approval posture, simulated execution records, and scoring.
+        </p>
+        <div class="mt-5 flex flex-wrap gap-3 text-sm">
+          <a class="rounded-md border border-slate-300 px-3 py-2 text-slate-800 hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-600" href="./ai-operator-architecture.md">
+            Markdown source
+          </a>
+          <a class="rounded-md border border-slate-300 px-3 py-2 text-slate-800 hover:border-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-600" href="../README.md">
+            README
+          </a>
+        </div>
+      </header>
+
+      <section class="mt-8" aria-labelledby="operator-loop">
+        <div class="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="operator-loop" class="text-xl font-semibold text-slate-950">Operator loop</h2>
+            <p class="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
+              The loop is split into three authority lanes: observability evidence,
+              model judgment, and deterministic control.
+            </p>
+          </div>
+          <p class="text-xs text-slate-500">Current prototype: no production mutation</p>
+        </div>
+
+        <div class="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <svg
+            role="img"
+            aria-labelledby="diagram-title diagram-desc"
+            viewBox="0 0 1180 560"
+            class="min-w-[980px] w-full"
+          >
+            <title id="diagram-title">AI Operator architecture loop</title>
+            <desc id="diagram-desc">
+              Incident evidence flows into a bounded LLM decision. Local validation and the mitigation
+              control plane decide whether to recommend, request approval, block, or record simulated action.
+            </desc>
+
+            <defs>
+              <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="#475569" />
+              </marker>
+              <marker id="arrow-teal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="#0f766e" />
+              </marker>
+              <marker id="arrow-amber" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="#b45309" />
+              </marker>
+              <marker id="arrow-rose" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="#be123c" />
+              </marker>
+            </defs>
+
+            <rect x="20" y="48" width="1140" height="110" rx="8" fill="#f0fdfa" stroke="#99f6e4" />
+            <rect x="20" y="196" width="1140" height="110" rx="8" fill="#fffbeb" stroke="#fde68a" />
+            <rect x="20" y="344" width="1140" height="166" rx="8" fill="#f8fafc" stroke="#cbd5e1" />
+
+            <text x="42" y="83" class="flow-text flow-label">Evidence lane</text>
+            <text x="42" y="103" class="flow-text flow-note">workflow-owned facts</text>
+            <text x="42" y="231" class="flow-text flow-label">Judgment lane</text>
+            <text x="42" y="251" class="flow-text flow-note">one bounded model decision</text>
+            <text x="42" y="379" class="flow-text flow-label">Control lane</text>
+            <text x="42" y="399" class="flow-text flow-note">policy, approval, and audit</text>
+
+            <g>
+              <rect x="190" y="74" width="150" height="58" rx="6" fill="#ffffff" stroke="#14b8a6" />
+              <text x="213" y="99" class="flow-text flow-label">Alert input</text>
+              <text x="207" y="119" class="flow-text flow-note">Grafana or scenario</text>
+            </g>
+            <g>
+              <rect x="400" y="74" width="164" height="58" rx="6" fill="#ffffff" stroke="#14b8a6" />
+              <text x="428" y="99" class="flow-text flow-label">Evidence package</text>
+              <text x="420" y="119" class="flow-text flow-note">stable evidence IDs</text>
+            </g>
+            <g>
+              <rect x="628" y="74" width="184" height="58" rx="6" fill="#ffffff" stroke="#14b8a6" />
+              <text x="653" y="99" class="flow-text flow-label">Investigation trace</text>
+              <text x="648" y="119" class="flow-text flow-note">workflow-authored steps</text>
+            </g>
+
+            <path d="M340 103 H390" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arrow-teal)" />
+            <path d="M564 103 H618" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arrow-teal)" />
+            <path d="M720 132 V194" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arrow-teal)" />
+
+            <g>
+              <rect x="618" y="222" width="204" height="58" rx="6" fill="#ffffff" stroke="#f59e0b" />
+              <text x="658" y="247" class="flow-text flow-label">Flue + MiniMax</text>
+              <text x="651" y="267" class="flow-text flow-note">explain, classify, cite</text>
+            </g>
+            <g>
+              <rect x="882" y="222" width="188" height="58" rx="6" fill="#ffffff" stroke="#f59e0b" />
+              <text x="917" y="247" class="flow-text flow-label">Bounded decision</text>
+              <text x="905" y="267" class="flow-text flow-note">class and next action</text>
+            </g>
+            <path d="M822 251 H872" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)" />
+            <path d="M976 280 V344" stroke="#b45309" stroke-width="2.5" marker-end="url(#arrow-amber)" />
+
+            <g>
+              <rect x="908" y="372" width="216" height="58" rx="6" fill="#ffffff" stroke="#64748b" />
+              <text x="950" y="397" class="flow-text flow-label">Local validation</text>
+              <text x="934" y="417" class="flow-text flow-note">schema, taxonomy, citations</text>
+            </g>
+            <g>
+              <rect x="658" y="372" width="198" height="58" rx="6" fill="#ffffff" stroke="#64748b" />
+              <text x="688" y="397" class="flow-text flow-label">Control plane</text>
+              <text x="682" y="417" class="flow-text flow-note">catalog and safety gate</text>
+            </g>
+            <g>
+              <rect x="424" y="372" width="204" height="58" rx="6" fill="#ffffff" stroke="#64748b" />
+              <text x="469" y="397" class="flow-text flow-label">Approval store</text>
+              <text x="449" y="417" class="flow-text flow-note">human approved or rejected</text>
+            </g>
+            <g>
+              <rect x="202" y="372" width="178" height="58" rx="6" fill="#ffffff" stroke="#64748b" />
+              <text x="234" y="397" class="flow-text flow-label">Executor record</text>
+              <text x="228" y="417" class="flow-text flow-note">simulated_not_executed</text>
+            </g>
+
+            <path d="M908 401 H866" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)" />
+            <path d="M658 401 H638" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)" />
+            <path d="M424 401 H390" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)" />
+
+            <g>
+              <path d="M757 430 V470 H1010 V438" fill="none" stroke="#0f766e" stroke-width="2.5" marker-end="url(#arrow-teal)" />
+              <rect x="842" y="468" width="256" height="42" rx="6" fill="#ecfdf5" stroke="#10b981" />
+              <text x="872" y="494" class="flow-text flow-label">scorecard + audit trail</text>
+            </g>
+
+            <g>
+              <path d="M1016 430 V470 H1118 V438" fill="none" stroke="#be123c" stroke-width="2.5" marker-end="url(#arrow-rose)" />
+              <rect x="1014" y="360" width="126" height="40" rx="6" fill="#fff1f2" stroke="#fb7185" />
+              <text x="1039" y="385" class="flow-text flow-small">invalid: stop</text>
+            </g>
+
+            <g>
+              <rect x="658" y="456" width="168" height="32" rx="6" fill="#eff6ff" stroke="#60a5fa" />
+              <text x="682" y="477" class="flow-text flow-small">recommendation-only</text>
+              <path d="M742 430 V450" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)" />
+            </g>
+          </svg>
+        </div>
+      </section>
+
+      <section class="mt-10 grid gap-5 lg:grid-cols-[1.1fr_0.9fr]" aria-labelledby="authority-split">
+        <div>
+          <h2 id="authority-split" class="text-xl font-semibold text-slate-950">Authority split</h2>
+          <dl class="mt-4 divide-y divide-slate-200 border-y border-slate-200">
+            <div class="grid gap-2 py-4 sm:grid-cols-[12rem_1fr]">
+              <dt class="font-semibold text-amber-800">LLM can do</dt>
+              <dd class="text-sm leading-6 text-slate-700">
+                Explain the provided evidence, choose one incident class, choose one next action,
+                cite workflow-provided evidence IDs, and state caveats.
+              </dd>
+            </div>
+            <div class="grid gap-2 py-4 sm:grid-cols-[12rem_1fr]">
+              <dt class="font-semibold text-slate-800">System owns</dt>
+              <dd class="text-sm leading-6 text-slate-700">
+                Evidence construction, response validation, provenance, mitigation catalog matching,
+                approval state, simulated executor records, and scorecards.
+              </dd>
+            </div>
+            <div class="grid gap-2 py-4 sm:grid-cols-[12rem_1fr]">
+              <dt class="font-semibold text-rose-800">LLM cannot do</dt>
+              <dd class="text-sm leading-6 text-slate-700">
+                Create runbooks, approve actions, execute mitigations, decide production mutation
+                happened, or grade its own safety.
+              </dd>
+            </div>
+          </dl>
+        </div>
+
+        <aside class="border-l-4 border-teal-600 bg-teal-50 p-5">
+          <h2 class="text-lg font-semibold text-slate-950">Current safety line</h2>
+          <p class="mt-3 text-sm leading-6 text-slate-700">
+            Approval-sensitive actions can be staged and approved, but execution remains simulated.
+            The executor record stays explicit:
+          </p>
+          <pre class="mt-4 overflow-x-auto rounded-md bg-slate-950 p-4 text-xs leading-5 text-slate-100"><code>{
+  "status": "simulated_not_executed",
+  "executed": false,
+  "dry_run": true
+}</code></pre>
+        </aside>
+      </section>
+
+      <section class="mt-10" aria-labelledby="review-path">
+        <h2 id="review-path" class="text-xl font-semibold text-slate-950">Reviewer path</h2>
+        <div class="mt-4 grid gap-4 md:grid-cols-3">
+          <div class="border-t-4 border-teal-600 bg-slate-50 p-4">
+            <h3 class="font-semibold text-slate-950">1. See the loop</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-700">
+              Read the architecture doc for the source-of-truth Mermaid diagram and trust boundaries.
+            </p>
+          </div>
+          <div class="border-t-4 border-amber-500 bg-slate-50 p-4">
+            <h3 class="font-semibold text-slate-950">2. Run the demo</h3>
+            <p class="mt-2 font-mono text-sm text-slate-800">npm run approval-demo</p>
+            <p class="mt-2 text-sm leading-6 text-slate-700">
+              Open <span class="font-mono">http://127.0.0.1:8080/approvals</span>.
+            </p>
+          </div>
+          <div class="border-t-4 border-slate-700 bg-slate-50 p-4">
+            <h3 class="font-semibold text-slate-950">3. Verify the boundary</h3>
+            <p class="mt-2 text-sm leading-6 text-slate-700">
+              Approval may change state, but the executor records simulated action only.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <footer class="mt-10 border-t border-slate-200 pt-5 text-sm leading-6 text-slate-600">
+        <p>
+          Scope: this artifact describes the current local prototype. Production integrations
+          remain explicit boundary points, not implemented execution paths.
+        </p>
+      </footer>
+    </main>
+  </body>
+</html>
