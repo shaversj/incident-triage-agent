@@ -1,6 +1,6 @@
 # AI Operator Architecture
 
-This project is an AI Operator-style incident response prototype, not an incident chatbot. The core claim is that useful AI operations require a governed harness around the model: evidence collection, bounded decisions, deterministic validation, approval-aware mitigation control, non-executing actuation records, and repeatable evaluation.
+This project is an AI Operator-style incident response prototype, not an incident chatbot. The repo is organized around the harness that must exist around a model before its output can affect incident response: evidence collection, bounded decisions, deterministic validation, approval-aware mitigation control, non-executing actuation records, and repeatable evaluation.
 
 The LLM contributes one constrained judgment. The system owns everything that decides whether that judgment can be trusted or acted on.
 
@@ -14,7 +14,7 @@ The prototype shows how an incident triage agent can move from alert to approval
 - The Mitigation Control Plane maps approval-sensitive actions to a catalog, evidence checks, dry-run record, staged approval request, audit event, and verification status.
 - The approval console lets a human approve or reject the staged mitigation.
 - The executor boundary records simulated execution only. Production action remains `executed: false`.
-- Tests and evals prove the safety contract without relying on the model to grade itself.
+- Tests and evals check the safety contract without relying on the model to grade itself.
 
 ## Architecture
 
@@ -43,7 +43,7 @@ flowchart LR
   L --> S
 ```
 
-The important design choice is the authority split. The LLM can explain and classify, but it cannot create catalog entries, approve actions, execute mitigations, score itself, or decide that production mutation happened.
+The key design choice is the authority split. The LLM can explain and classify, but it cannot create catalog entries, approve actions, execute mitigations, score itself, or decide that production mutation happened.
 
 ## Trust Boundaries
 
@@ -76,7 +76,7 @@ The model does not call tools, inspect systems directly, write runbooks, create 
 
 Deterministic code owns the harness:
 
-- Builds evidence from scenarios, Grafana payloads, Loki-shaped logs, deploy facts, services, runbooks, prior incidents, and verification signals.
+- Builds evidence from recorded scenarios, Grafana-shaped payloads, Loki-shaped logs, deploy facts, service metadata, runbooks, prior incidents, and verification signals.
 - Records workflow state transitions such as `received`, `context_gathered`, `decision_validated`, `approval_pending`, `simulated_action_recorded`, and `verification_failed`.
 - Validates the LLM response before the workflow trusts it.
 - Computes provenance from cited evidence.
@@ -99,7 +99,7 @@ For approval-sensitive actions, it checks:
 - What staged action and audit event should be recorded?
 - Do recorded verification signals show recovery or continued unhealthy behavior?
 
-For example, `bad-deploy-latency` can produce:
+For example, `bad-deploy-latency` can stage this decision:
 
 ```text
 incident_class: bad_deploy
@@ -110,7 +110,7 @@ status: approval_required
 executed: false
 ```
 
-That is intentionally not a rollback. It is a governed approval request for a rollback-shaped mitigation.
+That is intentionally not a rollback. It is an approval request for a rollback-shaped mitigation, backed by catalog and evidence checks.
 
 ## Approval And Execution Boundary
 
@@ -131,7 +131,7 @@ If approved, the executor records:
 }
 ```
 
-This is the current safety line. The project demonstrates the actuation boundary without integrating with deployment systems, Kubernetes, incident tooling, Slack, ticketing, or production observability.
+This is the current safety line. The project exercises the actuation boundary without integrating with deployment systems, Kubernetes, incident tooling, Slack, ticketing, or production observability.
 
 ## Demo Paths
 
@@ -179,9 +179,9 @@ npm run approval-demo -- --once --json
 
 ## Evaluation Strategy
 
-The project uses two kinds of quality gates:
+The repo uses two kinds of quality gates:
 
-- Deterministic tests prove the system contract: parser behavior, evidence construction, validation, safety, mitigation governance, approval persistence, UI/API approval behavior, and recoverable failures.
+- Deterministic tests check the system contract: parser behavior, evidence construction, validation, safety, mitigation governance, approval persistence, UI/API approval behavior, and recoverable failures.
 - Evals exercise model and skill behavior while keeping schema validity, citation validity, provenance, mitigation governance, and safety gates deterministic.
 
 Important commands:
@@ -197,13 +197,13 @@ npm run triage:recorded -- --scenario bad-deploy-latency
 
 The scorecard is computed by code. The model never grades its own run.
 
-## Current Versus Future
+## Current Versus Production
 
-| Capability | Current state | Future production shape |
+| Capability | Current state | Production integration point |
 | --- | --- | --- |
 | Alert ingestion | Grafana-shaped webhook fixtures and local webhook handler | Real Grafana alerts into the same handler |
 | Logs | Recorded Loki-shaped logs or bounded Loki client | Real Loki query with production auth and rate limits |
-| LLM | MiniMax through Flue or deterministic mock client | Same adapter boundary with model monitoring |
+| LLM | MiniMax through Flue or deterministic mock client | Same adapter boundary, with model monitoring |
 | Runbooks | Local fixture-backed runbook evidence | Versioned runbook source of truth |
 | Mitigation catalog | Local JSON catalog | Change-controlled mitigation catalog with owners |
 | Approval | Local JSON store plus console | Authenticated approval workflow with audit storage |
@@ -224,5 +224,4 @@ An AI Operator is not just an LLM that describes incidents. It is a harness that
 - Record what would happen without executing it.
 - Verify and score the run.
 
-This repository now demonstrates that loop end to end while keeping production mutation authority deliberately out of scope.
-
+This repository demonstrates that loop end to end while keeping production mutation authority deliberately out of scope.
