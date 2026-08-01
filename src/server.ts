@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
   approvalRecordToJson,
   defaultApprovalStorePath,
@@ -10,7 +11,14 @@ import {
 import type { OperatorMode } from "./config";
 import { type Scenario } from "./domain";
 import { PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
-import { GrafanaPayloadError, normalizeGrafanaPayload } from "./grafana";
+import {
+  GrafanaPayloadError,
+  defaultGrafanaSignatureHeader,
+  defaultGrafanaTimestampHeader,
+  defaultGrafanaTimestampToleranceMs,
+  normalizeGrafanaPayload,
+  verifyGrafanaWebhookHmac,
+} from "./grafana";
 import type { LLMDecisionClient } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
@@ -26,6 +34,8 @@ export interface WebhookRuntime {
   lokiLimit: number;
   mode?: OperatorMode;
   runStore?: TriageRunPersistenceStore;
+  hmacToleranceMs?: number;
+  replayTtlMs?: number;
   approvalStorePath?: string;
 }
 
@@ -215,19 +225,97 @@ async function routeRequest(
     return;
   }
 
+  let rawBody: string;
+  try {
+    rawBody = await readRequestBody(request);
+  } catch {
+    writeJson(response, 413, { status: "error", error: "request_body_too_large" });
+    return;
+  }
+
+  const auth = await authenticateGrafanaRequest(rawBody, request.headers, runtime);
+  if (!auth.accepted) {
+    writeJson(response, auth.status, { status: "error", error: auth.error });
+    return;
+  }
+
   let payload: unknown;
   try {
-    payload = JSON.parse(await readRequestBody(request));
+    payload = JSON.parse(rawBody);
   } catch {
     writeJson(response, 400, { status: "error", error: "invalid_json" });
     return;
   }
 
-  const secret = request.headers["x-webhook-secret"];
-  const providedSecret = Array.isArray(secret) ? secret[0] : secret;
   logger.info({ component: "server" }, "Grafana webhook received");
-  const [status, body] = await handleGrafanaWebhook(payload, providedSecret, runtime);
+  const [status, body] = await handleGrafanaWebhook(payload, runtime.webhookSecret, runtime);
   writeJson(response, status, body);
+}
+
+async function authenticateGrafanaRequest(
+  rawBody: string,
+  headers: IncomingHttpHeaders,
+  runtime: WebhookRuntime,
+): Promise<{ accepted: true } | { accepted: false; status: number; error: string }> {
+  const signature = firstHeader(headers[defaultGrafanaSignatureHeader]);
+  const timestamp = firstHeader(headers[defaultGrafanaTimestampHeader]);
+  const legacySecret = firstHeader(headers["x-webhook-secret"]);
+  const requiresHmac = runtimeMode(runtime) === "read_only";
+
+  if (signature || requiresHmac) {
+    if (requiresHmac && !timestamp) {
+      return { accepted: false, status: 401, error: "missing_hmac_timestamp" };
+    }
+    try {
+      const hmacOptions = {
+        rawBody,
+        secret: runtime.webhookSecret,
+        signature,
+      };
+      if (timestamp) {
+        Object.assign(hmacOptions, { timestamp });
+      }
+      if (runtime.hmacToleranceMs !== undefined) {
+        Object.assign(hmacOptions, { toleranceMs: runtime.hmacToleranceMs });
+      }
+      verifyGrafanaWebhookHmac(hmacOptions);
+    } catch (error) {
+      return {
+        accepted: false,
+        status: 401,
+        error: error instanceof GrafanaPayloadError ? hmacErrorCode(error) : "invalid_hmac_signature",
+      };
+    }
+    if (runtime.runStore && timestamp) {
+      const replayClaim = await runtime.runStore.claimReplayKey({
+        sender: "grafana",
+        signature: signature ?? "",
+        timestamp,
+        bodyDigest: createHash("sha256").update(rawBody).digest("hex"),
+        ttlMs: runtime.replayTtlMs ?? runtime.hmacToleranceMs ?? defaultGrafanaTimestampToleranceMs,
+      });
+      if (!replayClaim.accepted) {
+        return { accepted: false, status: 409, error: "replayed_webhook" };
+      }
+    }
+    return { accepted: true };
+  }
+
+  if (runtime.webhookSecret && legacySecret !== runtime.webhookSecret) {
+    return { accepted: false, status: 401, error: "unauthorized" };
+  }
+  return { accepted: true };
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function hmacErrorCode(error: GrafanaPayloadError): string {
+  if (error.message.includes("timestamp")) {
+    return "invalid_hmac_timestamp";
+  }
+  return "invalid_hmac_signature";
 }
 
 function readRequestBody(request: IncomingMessage): Promise<string> {

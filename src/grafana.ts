@@ -1,3 +1,5 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
+
 import { FixtureError, type Incident, validateRawIncidentPayload } from "./domain";
 
 export class GrafanaPayloadError extends Error {
@@ -17,7 +19,38 @@ export interface GrafanaNormalizationResult {
   ignoredReason: string;
 }
 
+export interface GrafanaHmacVerificationOptions {
+  rawBody: string;
+  secret: string;
+  signature: string | undefined;
+  timestamp?: string;
+  now?: Date;
+  toleranceMs?: number;
+}
+
 const serviceLabels = ["service", "app", "job"] as const;
+
+export const defaultGrafanaSignatureHeader = "x-grafana-alerting-signature";
+export const defaultGrafanaTimestampHeader = "x-grafana-alerting-timestamp";
+export const defaultGrafanaTimestampToleranceMs = 5 * 60 * 1000;
+
+export function signGrafanaWebhookBody(rawBody: string, secret: string, timestamp?: string): string {
+  const payload = timestamp ? `${timestamp}:${rawBody}` : rawBody;
+  return createHmac("sha256", secret).update(payload).digest("hex");
+}
+
+export function verifyGrafanaWebhookHmac(options: GrafanaHmacVerificationOptions): void {
+  if (!options.signature) {
+    throw new GrafanaPayloadError("Missing Grafana HMAC signature.");
+  }
+  if (options.timestamp) {
+    assertFreshTimestamp(options.timestamp, options.now ?? new Date(), options.toleranceMs ?? defaultGrafanaTimestampToleranceMs);
+  }
+  const expected = signGrafanaWebhookBody(options.rawBody, options.secret, options.timestamp);
+  if (!constantTimeEqualHex(expected, options.signature)) {
+    throw new GrafanaPayloadError("Invalid Grafana HMAC signature.");
+  }
+}
 
 export function normalizeGrafanaPayload(payload: unknown): GrafanaNormalizationResult {
   const body = readObject(payload, "Grafana payload");
@@ -129,6 +162,28 @@ function rejectAnswerLikeFields(value: unknown): void {
   for (const item of Object.values(value)) {
     rejectAnswerLikeFields(item);
   }
+}
+
+function assertFreshTimestamp(timestamp: string, now: Date, toleranceMs: number): void {
+  if (!/^\d+$/.test(timestamp)) {
+    throw new GrafanaPayloadError("Grafana HMAC timestamp must be a Unix timestamp.");
+  }
+  const timestampMs = Number.parseInt(timestamp, 10) * 1000;
+  if (!Number.isSafeInteger(timestampMs)) {
+    throw new GrafanaPayloadError("Grafana HMAC timestamp is invalid.");
+  }
+  if (Math.abs(now.getTime() - timestampMs) > toleranceMs) {
+    throw new GrafanaPayloadError("Grafana HMAC timestamp is stale.");
+  }
+}
+
+function constantTimeEqualHex(expected: string, actual: string): boolean {
+  if (!/^[0-9a-f]+$/i.test(actual)) {
+    return false;
+  }
+  const expectedBuffer = Buffer.from(expected, "hex");
+  const actualBuffer = Buffer.from(actual, "hex");
+  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
 function extractService(payload: Record<string, unknown>, alerts: unknown[]): [string, string] {

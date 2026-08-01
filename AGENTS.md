@@ -87,6 +87,7 @@ git diff --check
 - Keep bad-deploy webhook evidence raw. Deployment facts belong in deploy evidence fixtures or real deploy sources, not rollback hints inside Grafana annotations.
 - Keep Loki lookup bounded by service labels, time window, and result limit before prompt assembly.
 - Keep webhook secrets out of output and logs. Use `X-Webhook-Secret` only as an auth boundary, never as evidence.
+- Production-shaped Grafana webhook handling must use HMAC over the raw request body with timestamp freshness and replay protection.
 - Do not let LLM output drive workflow state until local validation passes.
 - Treat workflow-authored investigation steps as factual trace data. Do not let the LLM claim it called tools or gathered evidence.
 - Treat LLM-authored hypotheses, finding summaries, and recommendation rationales as non-authoritative explanation. They can be dropped or degraded without blocking a valid bounded decision.

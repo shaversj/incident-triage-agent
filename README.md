@@ -230,7 +230,9 @@ For Phase 1 read-only triage, set:
 AI_OPERATOR_MODE=read_only GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
 ```
 
-Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation.
+Read-only mode requires Grafana HMAC headers on webhook requests. Configure Grafana with the shared secret from `GRAFANA_WEBHOOK_SECRET`, the default signature header `X-Grafana-Alerting-Signature`, and timestamp header `X-Grafana-Alerting-Timestamp`. The server verifies `HMAC(timestamp + ":" + raw_body)`, rejects stale timestamps, and rejects duplicate signed payloads when persistence is configured.
+
+Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation. The older `X-Webhook-Secret` header remains for local/demo mode only.
 
 To persist Phase 1 run envelopes and evidence snapshots locally, start Postgres first and provide `DATABASE_URL`:
 
