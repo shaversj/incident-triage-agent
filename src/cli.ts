@@ -1,4 +1,4 @@
-import { loadConfig, loadOperatorMode, loadWebhookConfig } from "./config";
+import { loadConfig, loadOperatorMode, loadPersistenceConfig, loadWebhookConfig } from "./config";
 import { defaultApprovalStorePath } from "./approval-store";
 import { type Scenario, listScenarios, loadScenario } from "./domain";
 import { loadTools } from "./evidence";
@@ -6,6 +6,7 @@ import { FlueDecisionClient, StaticDecisionClient } from "./llm";
 import { createLogger, type TriageLogger } from "./logger";
 import { mockDecisionForScenario, mockDecisionResponses } from "./mock-decisions";
 import { LokiClient } from "./loki";
+import { PostgresTriageRunPersistenceStore, type TriageRunPersistenceStore } from "./persistence";
 import { startWebhookServer } from "./server";
 import type { SafetyResult } from "./policy";
 import type { MitigationControlResult } from "./mitigation-control";
@@ -67,13 +68,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     let llmClient;
     let webhookConfig;
     let operatorMode;
+    let runStore: TriageRunPersistenceStore | undefined;
     try {
       operatorMode = loadOperatorMode(".env", process.env, { command: "serve" });
       webhookConfig = loadWebhookConfig(".env");
+      const persistenceConfig = loadPersistenceConfig(".env");
+      if (persistenceConfig.databaseUrl) {
+        runStore = new PostgresTriageRunPersistenceStore({ connectionString: persistenceConfig.databaseUrl });
+        await runStore.migrate?.();
+      }
       llmClient = parsed.mockLlm
         ? new StaticDecisionClient(mockDecisionResponses())
         : await liveDecisionClient(logger);
     } catch (error) {
+      await runStore?.close?.();
       console.error(`Runtime error: ${error instanceof Error ? error.message : String(error)}`);
       return 2;
     }
@@ -88,6 +96,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     };
     if (operatorMode.capabilities.approvalStaging) {
       Object.assign(runtime, { approvalStorePath: parsed.approvalStorePath });
+    }
+    if (runStore) {
+      Object.assign(runtime, { runStore });
     }
 
     const server = startWebhookServer({
@@ -108,6 +119,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     await server.ready;
     logger.info({ component: "cli", host: parsed.host, port: parsed.port }, "Webhook server ready");
     await server.closed;
+    await runStore?.close?.();
     return 0;
   }
 

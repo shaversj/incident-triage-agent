@@ -15,6 +15,7 @@ import type { LLMDecisionClient } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
+import type { TriageRunPersistenceStore } from "./persistence";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
 export interface WebhookRuntime {
@@ -24,6 +25,7 @@ export interface WebhookRuntime {
   lokiClient?: LokiClientLike;
   lokiLimit: number;
   mode?: OperatorMode;
+  runStore?: TriageRunPersistenceStore;
   approvalStorePath?: string;
 }
 
@@ -122,6 +124,7 @@ export async function handleGrafanaWebhook(
     { mode: runtimeMode(runtime) },
   );
   const run = await workflow.run(scenario);
+  await persistTriageRun(run, runtime);
   persistApprovalRequest(run, runtime);
   return [200, runToResponse(run)];
 }
@@ -354,6 +357,16 @@ function persistApprovalRequest(run: TriageRun, runtime: WebhookRuntime): void {
   requestApproval(runtime.approvalStorePath, catalogEntry, {
     incidentId: approvalRequest.incidentId,
     service: approvalRequest.service,
+  });
+}
+
+async function persistTriageRun(run: TriageRun, runtime: WebhookRuntime): Promise<void> {
+  if (!runtime.runStore) {
+    return;
+  }
+  await runtime.runStore.recordTriageRun(run, {
+    correlationId: run.runId,
+    retentionClass: runtimeMode(runtime) === "read_only" ? "read_only_triage" : "ephemeral",
   });
 }
 

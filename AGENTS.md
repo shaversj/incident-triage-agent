@@ -27,6 +27,7 @@ Primary TypeScript code lives in `src/`:
 - `loki.ts`: bounded Loki query client and log evidence conversion.
 - `llm.ts`: Flue-backed MiniMax decision adapter and decision validation.
 - `mitigation-control.ts`: catalog-backed mitigation governance, dry-run, staged action, audit, and verification simulation.
+- `persistence/`: Phase 1 run/evidence/replay persistence interfaces, in-memory test store, Postgres store, and SQL migrations.
 - `policy.ts`: safety compatibility gate derived from mitigation governance.
 - `recorded-observability.ts`: recorded Loki-shaped log replay for recorded triage runs and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
@@ -96,6 +97,7 @@ git diff --check
 - Approval-sensitive actions must be staged and audited, not executed.
 - `AI_OPERATOR_MODE=read_only` must not emit approval requests, staged actions, simulated action state, or approval-store writes.
 - `serve` with real integration configuration must require an explicit `AI_OPERATOR_MODE`; do not let missing mode fall back into local approval behavior.
+- `DATABASE_URL` enables Phase 1 Postgres persistence; default tests must keep using mocked or in-memory stores and must not require Docker.
 - Mitigation Control Plane outputs must keep simulated dry-run, staged action, and audit records at `executed: false`.
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
 - Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, mitigation governance, safety behavior, and recoverable failure handling.

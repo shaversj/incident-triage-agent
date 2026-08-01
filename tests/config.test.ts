@@ -2,7 +2,15 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { ConfigError, loadConfig, loadDotenv, loadOperatorMode, loadWebhookConfig, redactSecret } from "../src/config";
+import {
+  ConfigError,
+  loadConfig,
+  loadDotenv,
+  loadOperatorMode,
+  loadPersistenceConfig,
+  loadWebhookConfig,
+  redactSecret,
+} from "../src/config";
 
 test("loadConfig reads required MiniMax values", () => {
   const envFile = writeTempEnv("MINIMAX_API_KEY=secret-key\nMODEL_NAME=MiniMax-M2.7\n");
@@ -99,6 +107,15 @@ test("loadOperatorMode blocks execution-enabled mode until durable execution exi
   const envFile = writeTempEnv("AI_OPERATOR_MODE=execution_enabled\nGRAFANA_WEBHOOK_SECRET=webhook-secret\n");
 
   expect(() => loadOperatorMode(envFile, {}, { command: "serve" })).toThrow("not available");
+});
+
+test("loadPersistenceConfig redacts database URL", () => {
+  const envFile = writeTempEnv("DATABASE_URL=postgres://user:secret@localhost:5432/triage\n");
+
+  const config = loadPersistenceConfig(envFile, {});
+
+  expect(config.databaseUrl).toBe("postgres://user:secret@localhost:5432/triage");
+  expect(config.redacted.DATABASE_URL).toBe("<redacted>");
 });
 
 function writeTempEnv(contents: string): string {

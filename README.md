@@ -195,6 +195,7 @@ MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
 MINIMAX_BASE_URL=https://api.minimax.io
 AI_OPERATOR_MODE=read_only
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
@@ -230,6 +231,18 @@ AI_OPERATOR_MODE=read_only GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- 
 ```
 
 Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation.
+
+To persist Phase 1 run envelopes and evidence snapshots locally, start Postgres first and provide `DATABASE_URL`:
+
+```bash
+docker compose up -d postgres
+AI_OPERATOR_MODE=read_only \
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage \
+GRAFANA_WEBHOOK_SECRET=local-secret \
+npm run serve -- --mock-llm
+```
+
+The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Default tests do not require Docker or a live database.
 
 Open the approval console:
 
@@ -267,6 +280,12 @@ RUN_LIVE_FLUE_EVALS=1 npm run evals
 ```
 
 ## Docker
+
+Start local Postgres for persistence development:
+
+```bash
+docker compose up -d postgres
+```
 
 Build the local image:
 

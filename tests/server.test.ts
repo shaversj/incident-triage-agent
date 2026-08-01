@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { getApproval, requestApproval } from "../src/approval-store";
 import { StaticDecisionClient } from "../src/llm";
 import { loadMitigationCatalog } from "../src/mitigation-control";
+import { InMemoryTriageRunPersistenceStore, type TriageRunPersistenceStore } from "../src/persistence";
 import { RecordedLokiClient } from "../src/recorded-observability";
 import { handleGrafanaWebhook, startWebhookServer, type WebhookRuntime } from "../src/server";
 
@@ -135,6 +136,34 @@ test("read-only webhook does not expose or persist approval side effects", async
   expect(getApproval(storePath, "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval")).toBeUndefined();
 });
 
+test("read-only webhook records run persistence when configured", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const [status] = await handleGrafanaWebhook(
+    JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8")),
+    "test-secret",
+    runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      badDeployLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  );
+
+  const run = runStore.runs.get("triage-run:grafana-bad-deploy-latency");
+
+  expect(status).toBe(200);
+  expect(run).toMatchObject({
+    incidentId: "GRAFANA-checkout-bad-deploy-latency-001",
+    service: "checkout-api",
+    validationStatus: "valid",
+    safetyStatus: "approval_required",
+    mitigationStatus: "approval_required",
+    retentionClass: "read_only_triage",
+  });
+  expect(runStore.evidenceSnapshots.has("triage-run:grafana-bad-deploy-latency")).toBe(true);
+});
+
 test("approval console serves queue and approve API records simulated execution", async () => {
   const storePath = tempStorePath();
   const entry = requiredCatalogEntry("rollback-approval");
@@ -189,6 +218,7 @@ function runtime(
   llmClient = defaultLlm(),
   approvalStorePath?: string,
   mode?: WebhookRuntime["mode"],
+  runStore?: TriageRunPersistenceStore,
 ): WebhookRuntime {
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
@@ -198,6 +228,9 @@ function runtime(
   };
   if (mode) {
     runtime.mode = mode;
+  }
+  if (runStore) {
+    runtime.runStore = runStore;
   }
   if (lokiClient) {
     runtime.lokiClient = lokiClient;

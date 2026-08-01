@@ -45,6 +45,13 @@ export interface OperatorModeConfig {
   };
 }
 
+export interface PersistenceConfig {
+  databaseUrl?: string;
+  redacted: {
+    DATABASE_URL?: "<redacted>";
+  };
+}
+
 export function loadDotenv(path = ".env"): Record<string, string> {
   if (!existsSync(path)) {
     return {};
@@ -159,6 +166,23 @@ export function loadOperatorMode(
     capabilities: capabilitiesForMode(mode),
     redacted: {
       AI_OPERATOR_MODE: mode,
+    },
+  };
+}
+
+export function loadPersistenceConfig(
+  envPath = ".env",
+  environ: Record<string, string | undefined> = process.env,
+): PersistenceConfig {
+  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const databaseUrl = source.DATABASE_URL;
+  if (!databaseUrl) {
+    return { redacted: {} };
+  }
+  return {
+    databaseUrl,
+    redacted: {
+      DATABASE_URL: "<redacted>",
     },
   };
 }
