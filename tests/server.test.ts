@@ -111,6 +111,30 @@ test("bad deploy webhook persists pending approval when approval store is config
   });
 });
 
+test("read-only webhook does not expose or persist approval side effects", async () => {
+  const storePath = tempStorePath();
+  const [status, response] = await handleGrafanaWebhook(
+    JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8")),
+    "test-secret",
+    runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      badDeployLlm(),
+      storePath,
+      "read_only",
+    ),
+  );
+
+  const mitigation = response.mitigation_control as any;
+
+  expect(status).toBe(200);
+  expect((response.safety as any).status).toBe("approval_required");
+  expect((response.safety as any).staged_payload).toBeUndefined();
+  expect(mitigation.status).toBe("approval_required");
+  expect(mitigation.staged_action).toBeUndefined();
+  expect(mitigation.approval_request).toBeUndefined();
+  expect(getApproval(storePath, "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval")).toBeUndefined();
+});
+
 test("approval console serves queue and approve API records simulated execution", async () => {
   const storePath = tempStorePath();
   const entry = requiredCatalogEntry("rollback-approval");
@@ -160,13 +184,21 @@ test("resolved webhook is ignored", async () => {
   expect(response.reason).toBe("resolved_alert");
 });
 
-function runtime(lokiClient?: RecordedLokiClient, llmClient = defaultLlm(), approvalStorePath?: string): WebhookRuntime {
+function runtime(
+  lokiClient?: RecordedLokiClient,
+  llmClient = defaultLlm(),
+  approvalStorePath?: string,
+  mode?: WebhookRuntime["mode"],
+): WebhookRuntime {
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",
     llmClient,
     lokiLimit: 20,
   };
+  if (mode) {
+    runtime.mode = mode;
+  }
   if (lokiClient) {
     runtime.lokiClient = lokiClient;
   }

@@ -1,4 +1,4 @@
-import { loadConfig, loadWebhookConfig } from "./config";
+import { loadConfig, loadOperatorMode, loadWebhookConfig } from "./config";
 import { defaultApprovalStorePath } from "./approval-store";
 import { type Scenario, listScenarios, loadScenario } from "./domain";
 import { loadTools } from "./evidence";
@@ -66,7 +66,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "serve") {
     let llmClient;
     let webhookConfig;
+    let operatorMode;
     try {
+      operatorMode = loadOperatorMode(".env", process.env, { command: "serve" });
       webhookConfig = loadWebhookConfig(".env");
       llmClient = parsed.mockLlm
         ? new StaticDecisionClient(mockDecisionResponses())
@@ -76,24 +78,32 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 2;
     }
 
+    const runtime = {
+      fixturesDir: parsed.fixturesDir,
+      webhookSecret: webhookConfig.grafanaWebhookSecret,
+      llmClient,
+      lokiClient: new LokiClient(webhookConfig.lokiBaseUrl),
+      lokiLimit: webhookConfig.lokiLimit,
+      mode: operatorMode.mode,
+    };
+    if (operatorMode.capabilities.approvalStaging) {
+      Object.assign(runtime, { approvalStorePath: parsed.approvalStorePath });
+    }
+
     const server = startWebhookServer({
       host: parsed.host,
       port: parsed.port,
       logger,
-      runtime: {
-        fixturesDir: parsed.fixturesDir,
-        webhookSecret: webhookConfig.grafanaWebhookSecret,
-        llmClient,
-        lokiClient: new LokiClient(webhookConfig.lokiBaseUrl),
-        lokiLimit: webhookConfig.lokiLimit,
-        approvalStorePath: parsed.approvalStorePath,
-      },
+      runtime,
     });
     logger.info({
       component: "cli",
       host: parsed.host,
       port: parsed.port,
       mockLlm: parsed.mockLlm,
+      mode: operatorMode.mode,
+      approvalStaging: operatorMode.capabilities.approvalStaging,
+      execution: operatorMode.capabilities.execution,
     }, "Starting webhook server");
     await server.ready;
     logger.info({ component: "cli", host: parsed.host, port: parsed.port }, "Webhook server ready");

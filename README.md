@@ -53,6 +53,17 @@ The workflow owns control flow, factual investigation steps, validation, provena
 
 The Mitigation Control Plane is the action-control layer of the prototype: the place an AI Operator-style system would prove a proposed mitigation is cataloged, bounded, approval-aware, and observable. It sits after local decision validation and deterministically decides whether the proposed action is recommendation-only, catalog-approved but approval-required, or blocked/escalated. It records evidence checks, simulated dry-run output, staged action state, audit data, and recorded verification outcomes without granting production mutation authority.
 
+`AI_OPERATOR_MODE` controls which authority the server is allowed to exercise:
+
+| Mode | Intended use | Approval staging | Execution |
+| --- | --- | --- | --- |
+| `local` | Fixture demos and local approval simulation | Enabled | Disabled |
+| `read_only` | Phase 1 production triage against real alerts/logs | Disabled | Disabled |
+| `approval` | Future durable approval workflow | Enabled | Disabled |
+| `execution_enabled` | Future bounded executor mode | Blocked until implemented | Blocked until implemented |
+
+When `serve` sees real integration configuration such as Grafana, Loki, MiniMax, or database settings, `AI_OPERATOR_MODE` must be set explicitly. In `read_only`, the webhook path can return a safety decision that says approval would be required, but it does not emit approval requests, staged actions, simulated action states, or approval-store writes.
+
 ## Scenarios
 
 | Scenario | Incident type | Expected action | Shows |
@@ -183,6 +194,7 @@ Create `.env` from `.env.example`:
 MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
 MINIMAX_BASE_URL=https://api.minimax.io
+AI_OPERATOR_MODE=read_only
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
@@ -202,14 +214,22 @@ The real `.env` is ignored by git.
 Run the local webhook server with mock LLM output:
 
 ```bash
-npm run serve -- --mock-llm
+AI_OPERATOR_MODE=local npm run serve -- --mock-llm
 ```
 
 Without a local `.env`, provide a throwaway webhook secret:
 
 ```bash
-GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
+AI_OPERATOR_MODE=local GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
 ```
+
+For Phase 1 read-only triage, set:
+
+```bash
+AI_OPERATOR_MODE=read_only GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
+```
+
+Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation.
 
 Open the approval console:
 

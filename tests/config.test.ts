@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { ConfigError, loadConfig, loadDotenv, loadWebhookConfig, redactSecret } from "../src/config";
+import { ConfigError, loadConfig, loadDotenv, loadOperatorMode, loadWebhookConfig, redactSecret } from "../src/config";
 
 test("loadConfig reads required MiniMax values", () => {
   const envFile = writeTempEnv("MINIMAX_API_KEY=secret-key\nMODEL_NAME=MiniMax-M2.7\n");
@@ -61,6 +61,44 @@ test("loadWebhookConfig requires secret without printing values", () => {
     expect(String(error)).toContain("GRAFANA_WEBHOOK_SECRET");
     expect(String(error)).not.toContain("http://loki:3100");
   }
+});
+
+test("loadOperatorMode defaults local commands to local mode", () => {
+  const config = loadOperatorMode(writeTempEnv(""), {}, { command: "run" });
+
+  expect(config.mode).toBe("local");
+  expect(config.capabilities).toEqual({
+    readOnlyTriage: true,
+    approvalStaging: true,
+    execution: false,
+  });
+});
+
+test("loadOperatorMode requires explicit mode for serve with real integrations", () => {
+  const envFile = writeTempEnv("GRAFANA_WEBHOOK_SECRET=webhook-secret\nLOKI_BASE_URL=http://loki:3100\n");
+
+  expect(() => loadOperatorMode(envFile, {}, { command: "serve" })).toThrow(ConfigError);
+  expect(() => loadOperatorMode(envFile, {}, { command: "serve" })).toThrow("AI_OPERATOR_MODE");
+});
+
+test("loadOperatorMode exposes read-only capabilities", () => {
+  const envFile = writeTempEnv("AI_OPERATOR_MODE=read_only\nGRAFANA_WEBHOOK_SECRET=webhook-secret\n");
+
+  const config = loadOperatorMode(envFile, {}, { command: "serve" });
+
+  expect(config.mode).toBe("read_only");
+  expect(config.capabilities).toEqual({
+    readOnlyTriage: true,
+    approvalStaging: false,
+    execution: false,
+  });
+  expect(config.redacted.AI_OPERATOR_MODE).toBe("read_only");
+});
+
+test("loadOperatorMode blocks execution-enabled mode until durable execution exists", () => {
+  const envFile = writeTempEnv("AI_OPERATOR_MODE=execution_enabled\nGRAFANA_WEBHOOK_SECRET=webhook-secret\n");
+
+  expect(() => loadOperatorMode(envFile, {}, { command: "serve" })).toThrow("not available");
 });
 
 function writeTempEnv(contents: string): string {

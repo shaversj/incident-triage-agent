@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
@@ -139,6 +139,22 @@ test("CLI run requires credentials without mock LLM", async () => {
 
   expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain("MINIMAX_API_KEY");
+});
+
+test("CLI serve requires explicit operator mode with real integration config", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "incident-triage-serve-"));
+  writeFileSync(join(cwd, ".env"), "GRAFANA_WEBHOOK_SECRET=webhook-secret\nLOKI_BASE_URL=http://loki:3100\n");
+
+  const result = await runCli([
+    "serve",
+    "--mock-llm",
+    "--fixtures-dir",
+    `${process.cwd()}/fixtures`,
+  ], { cwd });
+
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain("AI_OPERATOR_MODE");
+  expect(result.stderr).not.toContain("webhook-secret");
 });
 
 async function runCli(args: string[], options: { cwd?: string; withoutMiniMaxEnv?: boolean } = {}) {

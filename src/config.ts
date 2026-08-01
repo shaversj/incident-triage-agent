@@ -29,6 +29,22 @@ export interface WebhookConfig {
   };
 }
 
+export const operatorModes = ["local", "read_only", "approval", "execution_enabled"] as const;
+
+export type OperatorMode = (typeof operatorModes)[number];
+
+export interface OperatorModeConfig {
+  mode: OperatorMode;
+  capabilities: {
+    readOnlyTriage: boolean;
+    approvalStaging: boolean;
+    execution: boolean;
+  };
+  redacted: {
+    AI_OPERATOR_MODE: OperatorMode;
+  };
+}
+
 export function loadDotenv(path = ".env"): Record<string, string> {
   if (!existsSync(path)) {
     return {};
@@ -115,6 +131,38 @@ export function loadWebhookConfig(
   };
 }
 
+export function loadOperatorMode(
+  envPath = ".env",
+  environ: Record<string, string | undefined> = process.env,
+  options: { command?: string } = {},
+): OperatorModeConfig {
+  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const rawMode = source.AI_OPERATOR_MODE;
+  const hasRealIntegrationConfig = [
+    "GRAFANA_WEBHOOK_SECRET",
+    "LOKI_BASE_URL",
+    "MINIMAX_API_KEY",
+    "DATABASE_URL",
+  ].some((name) => Boolean(source[name]));
+
+  if (!rawMode && options.command === "serve" && hasRealIntegrationConfig) {
+    throw new ConfigError("AI_OPERATOR_MODE must be set explicitly for serve when real integration configuration is present.");
+  }
+
+  const mode = rawMode ? parseOperatorMode(rawMode) : "local";
+  if (mode === "execution_enabled") {
+    throw new ConfigError("AI_OPERATOR_MODE=execution_enabled is not available until durable approvals and bounded executors are implemented.");
+  }
+
+  return {
+    mode,
+    capabilities: capabilitiesForMode(mode),
+    redacted: {
+      AI_OPERATOR_MODE: mode,
+    },
+  };
+}
+
 export function redactSecret(text: string, config?: Pick<AppConfig, "minimaxApiKey">): string {
   if (!config?.minimaxApiKey) {
     return text;
@@ -134,4 +182,24 @@ function stripQuotes(value: string): string {
     return value.slice(1, -1);
   }
   return value;
+}
+
+function parseOperatorMode(value: string): OperatorMode {
+  const normalized = value.trim();
+  if (isOperatorMode(normalized)) {
+    return normalized;
+  }
+  throw new ConfigError(`AI_OPERATOR_MODE must be one of ${operatorModes.join(", ")}.`);
+}
+
+function isOperatorMode(value: string): value is OperatorMode {
+  return (operatorModes as readonly string[]).includes(value);
+}
+
+function capabilitiesForMode(mode: OperatorMode): OperatorModeConfig["capabilities"] {
+  return {
+    readOnlyTriage: true,
+    approvalStaging: mode === "local" || mode === "approval" || mode === "execution_enabled",
+    execution: mode === "execution_enabled",
+  };
 }

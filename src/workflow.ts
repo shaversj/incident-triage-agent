@@ -1,3 +1,4 @@
+import type { OperatorMode } from "./config";
 import type { Scenario, WorkflowState } from "./domain";
 import type { EvidencePackage, InvestigationStep, MockOperationalTools } from "./evidence";
 import type { ExplanationValidation, LLMDecisionClient, TriageExplanation, ValidationResult } from "./llm";
@@ -28,11 +29,16 @@ export interface TriageRun {
   scorecard?: Scorecard;
 }
 
+export interface TriageWorkflowOptions {
+  mode?: OperatorMode;
+}
+
 export class TriageWorkflow {
   constructor(
     private readonly tools: MockOperationalTools,
     private readonly llmClient: LLMDecisionClient,
     private readonly logger: TriageLogger = noopLogger,
+    private readonly options: TriageWorkflowOptions = {},
   ) {}
 
   async run(scenario: Scenario): Promise<TriageRun> {
@@ -76,7 +82,7 @@ export class TriageWorkflow {
       confidence: run.validation.decision.confidence,
     }, "LLM decision validated");
     this.transition(run, "decision_validated");
-    run.safety = evaluateSafety(run.validation.decision, run.evidencePackage);
+    run.safety = evaluateSafety(run.validation.decision, run.evidencePackage, { mode: this.mode() });
     run.mitigationControl = run.safety.mitigationControl;
     this.logger.info({
       component: "policy",
@@ -85,7 +91,9 @@ export class TriageWorkflow {
       mitigationStatus: run.mitigationControl.status,
     }, "Safety evaluated");
 
-    if (run.safety.status === "approval_required") {
+    if (run.safety.status === "approval_required" && this.mode() === "read_only") {
+      this.transition(run, "verification_ready");
+    } else if (run.safety.status === "approval_required") {
       this.transition(run, "approval_pending");
       this.transition(run, "simulated_action_recorded");
       if (run.mitigationControl.verification?.status === "still_unhealthy") {
@@ -108,6 +116,10 @@ export class TriageWorkflow {
   private transition(run: TriageRun, state: WorkflowState): void {
     run.states.push(state);
     this.logger.debug({ component: "workflow", state }, "State transition");
+  }
+
+  private mode(): OperatorMode {
+    return this.options.mode ?? "local";
   }
 }
 

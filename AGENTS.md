@@ -20,7 +20,7 @@ The `incident-triage` skill should make its bounded judgment by following a huma
 Primary TypeScript code lives in `src/`:
 
 - `cli.ts`: command-line interface.
-- `config.ts`: `.env` loading for MiniMax and webhook config.
+- `config.ts`: `.env` loading for MiniMax, webhook config, and operator capability mode.
 - `domain.ts`: taxonomy, fixture loading, and raw incident validation.
 - `evidence.ts`: deterministic SRE context tools and evidence package construction.
 - `grafana.ts`: Grafana webhook payload normalization into raw incidents.
@@ -57,7 +57,7 @@ npm run triage -- run checkout-payment-timeout --trace
 Run the webhook server locally with mock LLM output:
 
 ```bash
-npm run serve -- --mock-llm
+AI_OPERATOR_MODE=local npm run serve -- --mock-llm
 ```
 
 Run the recorded observability triage path:
@@ -94,6 +94,8 @@ git diff --check
 - Keep the incident class taxonomy bounded to `dependency_outage`, `bad_deploy`, `capacity_saturation`, `noisy_alert`, `insufficient_context`, and `unknown`.
 - Keep the next action taxonomy bounded to `escalate_owner`, `request_rollback_approval`, `apply_runbook_step_with_approval`, `continue_monitoring`, `ask_human`, and `gather_more_context`.
 - Approval-sensitive actions must be staged and audited, not executed.
+- `AI_OPERATOR_MODE=read_only` must not emit approval requests, staged actions, simulated action state, or approval-store writes.
+- `serve` with real integration configuration must require an explicit `AI_OPERATOR_MODE`; do not let missing mode fall back into local approval behavior.
 - Mitigation Control Plane outputs must keep simulated dry-run, staged action, and audit records at `executed: false`.
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
 - Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, mitigation governance, safety behavior, and recoverable failure handling.

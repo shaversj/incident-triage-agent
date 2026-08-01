@@ -100,11 +100,34 @@ test("approval mitigation with unhealthy verification records failed verificatio
   expect(run.states).toContain("verification_failed");
 });
 
-async function runWithResponse(scenarioName: string, response: object) {
+test("read-only mode suppresses approval and simulated action states", async () => {
+  const run = await runWithResponse("bad-deploy-latency", {
+    incident_class: "bad_deploy",
+    next_action: "request_rollback_approval",
+    confidence: 0.9,
+    evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
+    caveats: [],
+    verification_plan: ["Check checkout latency."],
+  }, { mode: "read_only" });
+
+  expect(run.safety?.status).toBe("approval_required");
+  expect(run.mitigationControl?.status).toBe("approval_required");
+  expect(run.safety?.stagedPayload).toBeUndefined();
+  expect(run.safety?.auditEvent).toBeUndefined();
+  expect(run.mitigationControl?.stagedAction).toBeUndefined();
+  expect(run.mitigationControl?.approvalRequest).toBeUndefined();
+  expect(run.states).not.toContain("approval_pending");
+  expect(run.states).not.toContain("simulated_action_recorded");
+  expect(run.states).toContain("verification_ready");
+});
+
+async function runWithResponse(scenarioName: string, response: object, options?: ConstructorParameters<typeof TriageWorkflow>[3]) {
   const scenario = loadScenario("fixtures", scenarioName);
   const workflow = new TriageWorkflow(
     loadTools("fixtures"),
     new StaticDecisionClient({ [scenarioName]: JSON.stringify(response) }),
+    undefined,
+    options,
   );
   return workflow.run(scenario);
 }

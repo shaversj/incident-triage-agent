@@ -7,6 +7,7 @@ import {
   listApprovals,
   requestApproval,
 } from "./approval-store";
+import type { OperatorMode } from "./config";
 import { type Scenario } from "./domain";
 import { PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
 import { GrafanaPayloadError, normalizeGrafanaPayload } from "./grafana";
@@ -22,6 +23,7 @@ export interface WebhookRuntime {
   llmClient: LLMDecisionClient;
   lokiClient?: LokiClientLike;
   lokiLimit: number;
+  mode?: OperatorMode;
   approvalStorePath?: string;
 }
 
@@ -113,7 +115,12 @@ export async function handleGrafanaWebhook(
     name: normalized.scenarioName,
     incident: normalized.incident,
   };
-  const workflow = new TriageWorkflow(new PrebuiltOperationalTools(package_), runtime.llmClient);
+  const workflow = new TriageWorkflow(
+    new PrebuiltOperationalTools(package_),
+    runtime.llmClient,
+    undefined,
+    { mode: runtimeMode(runtime) },
+  );
   const run = await workflow.run(scenario);
   persistApprovalRequest(run, runtime);
   return [200, runToResponse(run)];
@@ -170,11 +177,19 @@ async function routeRequest(
 
   const url = new URL(request.url ?? "/", "http://localhost");
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/approvals")) {
+    if (!approvalRoutesEnabled(runtime)) {
+      writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
+      return;
+    }
     writeHtml(response, 200, approvalConsoleHtml());
     return;
   }
 
   if (url.pathname === "/api/approvals") {
+    if (!approvalRoutesEnabled(runtime)) {
+      writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
+      return;
+    }
     if (request.method !== "GET") {
       writeJson(response, 405, { status: "error", error: "method_not_allowed" });
       return;
@@ -184,6 +199,10 @@ async function routeRequest(
   }
 
   if (url.pathname.startsWith("/api/approvals/")) {
+    if (!approvalRoutesEnabled(runtime)) {
+      writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
+      return;
+    }
     await routeApprovalApi(request, response, runtime, url.pathname);
     return;
   }
@@ -324,7 +343,7 @@ function approvalsListResponse(runtime: WebhookRuntime): Record<string, unknown>
 
 function persistApprovalRequest(run: TriageRun, runtime: WebhookRuntime): void {
   const approvalRequest = run.mitigationControl?.approvalRequest;
-  if (!approvalRequest || !runtime.approvalStorePath) {
+  if (!approvalRequest || !runtime.approvalStorePath || !approvalRoutesEnabled(runtime)) {
     return;
   }
   const catalogEntry = loadMitigationCatalog(runtime.fixturesDir)
@@ -340,6 +359,14 @@ function persistApprovalRequest(run: TriageRun, runtime: WebhookRuntime): void {
 
 function approvalStorePath(runtime: WebhookRuntime): string {
   return runtime.approvalStorePath ?? defaultApprovalStorePath;
+}
+
+function approvalRoutesEnabled(runtime: WebhookRuntime): boolean {
+  return runtimeMode(runtime) !== "read_only";
+}
+
+function runtimeMode(runtime: WebhookRuntime): OperatorMode {
+  return runtime.mode ?? "local";
 }
 
 function approvalConsoleHtml(): string {
