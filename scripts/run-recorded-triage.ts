@@ -3,10 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../src/config";
 import { FlueDecisionClient, StaticDecisionClient } from "../src/llm";
+import { signGrafanaWebhookBody } from "../src/grafana";
 import { createLogger } from "../src/logger";
 import { mockDecisionForName } from "../src/mock-decisions";
+import { InMemoryTriageRunPersistenceStore } from "../src/persistence";
 import { loadRecordedLogs, RecordedLokiClient } from "../src/recorded-observability";
-import { handleGrafanaWebhook } from "../src/server";
+import { handleGrafanaWebhook, startWebhookServer } from "../src/server";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const recordedTriageSecret = "recorded-triage-secret";
@@ -52,6 +54,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const logger = createLogger(args.logLevel);
 
   try {
+    if (args.readOnlyCanary) {
+      const summary = await runReadOnlyCanary(args, scenario, logger);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+      } else {
+        printSummary(summary);
+        process.stdout.write("\nCANARY\n");
+        for (const [key, value] of Object.entries(summary.canary)) {
+          process.stdout.write(`- ${key}: ${String(value)}\n`);
+        }
+      }
+      return summary.canary.passed ? 0 : 1;
+    }
+
     const webhookPayload = payload(scenario.webhookFixture);
     const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
     const llmClient = args.live
@@ -121,8 +137,10 @@ export function sanitizedSummary(
 
 function parseArgs(argv: string[]) {
   let scenario: ScenarioName = "checkout-payment-timeout";
+  let scenarioProvided = false;
   let live = false;
   let json = false;
+  let readOnlyCanary = false;
   let logLevel = "info";
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -133,10 +151,13 @@ function parseArgs(argv: string[]) {
         throw new Error(`--scenario must be one of ${Object.keys(scenarios).join(", ")}.`);
       }
       scenario = value;
+      scenarioProvided = true;
     } else if (arg === "--live") {
       live = true;
     } else if (arg === "--json") {
       json = true;
+    } else if (arg === "--read-only-canary") {
+      readOnlyCanary = true;
     } else if (arg === "--log-level") {
       logLevel = requiredValue(argv[++index], "--log-level");
     } else {
@@ -144,7 +165,11 @@ function parseArgs(argv: string[]) {
     }
   }
 
-  return { scenario, live, json, logLevel };
+  if (readOnlyCanary && !scenarioProvided) {
+    scenario = "bad-deploy-latency";
+  }
+
+  return { scenario, live, json, readOnlyCanary, logLevel };
 }
 
 function isScenarioName(value: string | undefined): value is ScenarioName {
@@ -160,6 +185,111 @@ function requiredValue(value: string | undefined, flag: string): string {
 
 function payload(name: string): unknown {
   return JSON.parse(readFileSync(join(projectRoot, "fixtures", "grafana", name), "utf8")) as unknown;
+}
+
+function payloadText(name: string): string {
+  return readFileSync(join(projectRoot, "fixtures", "grafana", name), "utf8");
+}
+
+async function runReadOnlyCanary(
+  args: ReturnType<typeof parseArgs>,
+  scenario: RecordedScenario,
+  logger: ReturnType<typeof createLogger>,
+) {
+  const rawBody = payloadText(scenario.webhookFixture);
+  const webhookPayload = JSON.parse(rawBody) as unknown;
+  const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const llmClient = args.live
+    ? new FlueDecisionClient(loadConfig(join(projectRoot, ".env")), undefined, logger)
+    : new StaticDecisionClient({
+      [scenario.grafanaScenario]: JSON.stringify(mockDecisionForName(scenario.grafanaScenario)),
+    });
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+    runtime: {
+      fixturesDir: join(projectRoot, "fixtures"),
+      webhookSecret: recordedTriageSecret,
+      llmClient,
+      lokiClient: new RecordedLokiClient(recordedLogs),
+      lokiLimit: 20,
+      mode: "read_only",
+      runStore,
+    },
+  });
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const timestamp = unixTimestamp(new Date());
+    const first = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+    const response = await first.json() as Record<string, unknown>;
+    const replay = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+    const approvals = await fetch(`${baseUrl}/api/approvals`);
+    const summary = sanitizedSummary(
+      args.scenario,
+      args.live ? "live" : "mock",
+      first.status,
+      response,
+      summarizeInput(webhookPayload, recordedLogs.length),
+    );
+    const runId = typeof response.run_id === "string" ? response.run_id : "";
+    const safety = objectValue(response.safety);
+    const mitigation = objectValue(response.mitigation_control);
+    const canary = {
+      passed: first.ok &&
+        replay.status === 409 &&
+        approvals.status === 404 &&
+        Boolean(runStore.runs.get(runId)) &&
+        Boolean(runStore.evidenceSnapshots.get(runId)) &&
+        safety.staged_payload === undefined &&
+        mitigation.staged_action === undefined &&
+        mitigation.approval_request === undefined,
+      read_only_mode: true,
+      persisted_run: Boolean(runStore.runs.get(runId)),
+      persisted_evidence_snapshot: Boolean(runStore.evidenceSnapshots.get(runId)),
+      replay_rejected: replay.status === 409,
+      approval_routes_disabled: approvals.status === 404,
+      approval_artifacts_absent: safety.staged_payload === undefined &&
+        mitigation.staged_action === undefined &&
+        mitigation.approval_request === undefined,
+    };
+    return {
+      ...summary,
+      canary,
+    };
+  } finally {
+    await server.close();
+  }
+}
+
+function serverUrl(server: ReturnType<typeof startWebhookServer>["server"]): string {
+  const address = server.address();
+  if (typeof address !== "object" || address === null) {
+    throw new Error("server did not expose an address");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function signedGrafanaHeaders(rawBody: string, timestamp: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "X-Grafana-Alerting-Signature": signGrafanaWebhookBody(rawBody, recordedTriageSecret, timestamp),
+    "X-Grafana-Alerting-Timestamp": timestamp,
+  };
+}
+
+function unixTimestamp(date: Date): string {
+  return `${Math.floor(date.getTime() / 1000)}`;
 }
 
 function summarizeInput(webhookPayload: unknown, logRecords: number): InputSummary {

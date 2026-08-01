@@ -186,6 +186,24 @@ For scriptable verification without starting the server:
 npm run approval-demo -- --once --json
 ```
 
+## Phase 1 Read-Only Canary
+
+Run the signed read-only webhook canary against recorded Grafana and Loki-shaped inputs:
+
+```bash
+npm run triage:read-only-canary -- --json
+```
+
+The canary starts the local server in `AI_OPERATOR_MODE=read_only`, posts a signed Grafana webhook, verifies the run and evidence snapshot were persisted in the in-memory store, verifies duplicate replay is rejected, verifies approval routes are disabled, and verifies no approval request or staged action appears in the response.
+
+Use the live LLM boundary with the same recorded observability inputs:
+
+```bash
+npm run triage:read-only-canary -- --live --json
+```
+
+Live canary mode requires `.env` values for `MINIMAX_API_KEY` and `MODEL_NAME`. It still uses recorded Grafana and Loki-shaped inputs and does not execute production actions.
+
 ## Live Provider Path
 
 Create `.env` from `.env.example`:
@@ -274,6 +292,7 @@ Run the full local verification path:
 
 ```bash
 npm test
+npm run triage:read-only-canary -- --json
 npm run typecheck
 npm run evals
 ```

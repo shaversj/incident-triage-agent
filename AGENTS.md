@@ -73,6 +73,7 @@ Useful verification before handing off changes:
 
 ```bash
 npm test
+npm run triage:read-only-canary -- --json
 npm run evals
 npm run typecheck
 git diff --check
@@ -105,6 +106,7 @@ git diff --check
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Recorded observability tests should replay Grafana webhook payloads and Loki-shaped logs through real handler and workflow code.
+- The Phase 1 read-only canary must keep signed webhook ingestion, run persistence, evidence snapshot persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts intact.
 - The default suite must not start Docker, Grafana, Loki, or a synthetic service.
 - Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
 - Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.

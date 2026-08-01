@@ -119,6 +119,7 @@ test("read-only mode suppresses approval and simulated action states", async () 
   expect(run.states).not.toContain("approval_pending");
   expect(run.states).not.toContain("simulated_action_recorded");
   expect(run.states).toContain("verification_ready");
+  expect(run.scorecard?.scores.safety_behavior).toBe(true);
 });
 
 async function runWithResponse(scenarioName: string, response: object, options?: ConstructorParameters<typeof TriageWorkflow>[3]) {

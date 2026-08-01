@@ -10,6 +10,7 @@
     "list": "tsx src/cli.ts list",
     "serve": "tsx src/cli.ts serve",
     "triage:recorded": "tsx scripts/run-recorded-triage.ts",
+    "triage:read-only-canary": "tsx scripts/run-recorded-triage.ts --read-only-canary",
     "triage:approval": "tsx src/approval-cli.ts",
     "approval-demo": "tsx scripts/run-approval-demo.ts",
     "test": "vitest run",

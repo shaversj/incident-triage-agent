@@ -71,3 +71,27 @@ test("recorded triage output groups input separately from run decision and safet
   expect(result.stdout).toContain("\nMITIGATION CONTROL PLANE\n");
   expect(result.stdout.indexOf("\nINPUT\n")).toBeLessThan(result.stdout.indexOf("\nRUN\n"));
 });
+
+test("read-only canary verifies signed ingestion persistence replay and no approval artifacts", () => {
+  const result = spawnSync("npx", ["tsx", "scripts/run-recorded-triage.ts", "--read-only-canary", "--json"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+  });
+  const summary = JSON.parse(result.stdout);
+
+  expect(result.status).toBe(0);
+  expect(summary.scenario).toBe("bad-deploy-latency");
+  expect(summary.canary).toMatchObject({
+    passed: true,
+    read_only_mode: true,
+    persisted_run: true,
+    persisted_evidence_snapshot: true,
+    replay_rejected: true,
+    approval_routes_disabled: true,
+    approval_artifacts_absent: true,
+  });
+  expect(summary.safety.staged_payload).toBeUndefined();
+  expect(summary.mitigation_control.staged_action).toBeUndefined();
+  expect(summary.mitigation_control.approval_request).toBeUndefined();
+  expect(result.stdout).not.toContain("recorded-triage-secret");
+});
