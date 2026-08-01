@@ -218,6 +218,19 @@ Tooling should reinforce the architecture instead of creating a second way for i
 
 The architecture has been captured as a reusable solution learning in `docs/solutions/architecture-patterns/bounded-llm-incident-triage-workflow.md`, and the first project vocabulary seed now lives in `CONCEPTS.md`.
 
+## Productionization Learning: 2026-08-01
+
+Phase 1 productionization should prove real-signal ingestion before approval or execution authority.
+
+- [ ] Explain why `AI_OPERATOR_MODE=read_only` is safer than relying on operator convention.
+- [ ] Explain why Grafana HMAC must be verified against the raw body before parsing JSON.
+- [ ] Explain why replay keys need durable TTL-backed storage rather than in-memory process state.
+- [ ] Explain why the incident reviewer needs both an incident run envelope and an evidence snapshot.
+- [ ] Explain why context-source adapters can provide service/runbook evidence but must not inject expected incident classes, next actions, or approval hints.
+- [ ] Explain why a read-only approval-required decision should suppress approval requests and staged actions while still recording the safety status.
+
+The key lesson is that read-only production mode is not a weaker version of approval mode. It is a separate capability boundary: the system may observe, reason, validate, persist, and score, but it must not create any operational object that looks like permission to mutate production.
+
 - [ ] Explain why `docs/solutions/` is different from `docs/learnings.md`: the former is a searchable durable solution store, while the latter is the running teaching checklist for this session.
 - [ ] Explain why `CONCEPTS.md` defines domain terms without implementation file paths or current enum values.
 - [ ] Explain why documenting this as an architecture pattern helps future work avoid collapsing model reasoning, workflow control, safety policy, and evaluation into one blob.

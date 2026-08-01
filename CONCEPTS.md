@@ -22,8 +22,23 @@ A compact explanation of which evidence sources shaped a triage result, how stro
 ### Grafana Webhook Ingestion
 A local observability integration surface that accepts Grafana alert payloads as raw alert facts for the triage workflow.
 
+### Operator Mode
+The explicit runtime capability setting that controls whether the server behaves as local simulation, production read-only triage, approval workflow, or future execution mode.
+
+### Read-Only Triage Mode
+`AI_OPERATOR_MODE=read_only`. The server can ingest signed alerts, gather evidence, validate decisions, persist run review artifacts, and score outcomes, but cannot stage approvals or execute actions.
+
+### Replay Key
+A durable claim derived from a signed webhook sender, signature, timestamp, and body digest. It prevents duplicate signed Grafana payloads from running the workflow more than once within the freshness window.
+
+### Phase 1 Run Store
+The persistence boundary for production read-only triage. It stores incident run envelopes, evidence snapshots, replay keys, retention class, expiry timestamps, and correlation IDs without storing approval or executor records.
+
 ### Loki Log Lookup
 The bounded log-enrichment step that queries Loki for service-specific logs around an alert window and converts results into operational evidence.
+
+### Context Source
+A typed adapter boundary for service ownership and runbook evidence. Context sources may be fixture-backed locally or production-backed later, but they cannot inject expected incident classes, next actions, or approval hints into evidence.
 
 ### Recorded Observability Input
 Synthetic-but-realistic Grafana webhook payloads and Loki-shaped log entries stored as fixtures so the agent can be tested without running an observability stack.
@@ -66,4 +81,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, or Live Provider Replay assertions.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, Live Provider Replay assertions, or Phase 1 Run Store review artifacts.
