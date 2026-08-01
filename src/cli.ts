@@ -73,6 +73,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       operatorMode = loadOperatorMode(".env", process.env, { command: "serve" });
       webhookConfig = loadWebhookConfig(".env");
       const persistenceConfig = loadPersistenceConfig(".env");
+      if (operatorMode.mode === "read_only" && !persistenceConfig.databaseUrl) {
+        throw new Error("DATABASE_URL is required when AI_OPERATOR_MODE=read_only.");
+      }
       if (persistenceConfig.databaseUrl) {
         runStore = new PostgresTriageRunPersistenceStore({ connectionString: persistenceConfig.databaseUrl });
         await runStore.migrate?.();

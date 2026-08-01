@@ -234,7 +234,127 @@ test("server accepts signed read-only Grafana webhook and rejects replay", async
     expect((await first.json() as any).status).toBe("ok");
     expect(replay.status).toBe(409);
     expect((await replay.json() as any).error).toBe("replayed_webhook");
-    expect(runStore.runs.has("triage-run:grafana-checkout-api")).toBe(true);
+    expect([...runStore.runs.keys()].some((runId) => runId.startsWith("triage-run:GRAFANA-checkout-latency-001:"))).toBe(true);
+  } finally {
+    await server.close();
+  }
+});
+
+test("server rejects replay when signature hex casing changes", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8");
+  const timestamp = unixTimestamp(new Date());
+  const headers = signedGrafanaHeaders(rawBody, timestamp) as Record<string, string>;
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const first = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers,
+      body: rawBody,
+    });
+    const replay = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "X-Grafana-Alerting-Signature": headers["X-Grafana-Alerting-Signature"]?.toUpperCase() ?? "",
+      },
+      body: rawBody,
+    });
+
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(409);
+  } finally {
+    await server.close();
+  }
+});
+
+test("server persists distinct same-service webhooks as separate runs", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const firstBody = readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8");
+  const secondPayload = payload();
+  secondPayload.alerts[0].fingerprint = "checkout-latency-002";
+  const secondBody = JSON.stringify(secondPayload);
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const first = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(firstBody, unixTimestamp(new Date())),
+      body: firstBody,
+    });
+    const second = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(secondBody, unixTimestamp(new Date())),
+      body: secondBody,
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(runStore.runs.size).toBe(2);
+    expect(runStore.evidenceSnapshots.size).toBe(2);
+  } finally {
+    await server.close();
+  }
+});
+
+test("server releases replay claim after persistence failure", async () => {
+  const runStore = new FailingOnceRunStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8");
+  const timestamp = unixTimestamp(new Date());
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const first = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+    const retry = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+
+    expect(first.status).toBe(500);
+    expect(retry.status).toBe(200);
+    expect(runStore.runs.size).toBe(1);
   } finally {
     await server.close();
   }
@@ -282,6 +402,34 @@ test("server rejects invalid or stale signed read-only Grafana webhook before pe
   }
 });
 
+test("read-only webhook fails closed without replay store", async () => {
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8");
+
+  await server.ready;
+  try {
+    const response = await fetch(`${serverUrl(server.server)}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, unixTimestamp(new Date())),
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(503);
+    expect((await response.json() as any).error).toBe("replay_store_unavailable");
+  } finally {
+    await server.close();
+  }
+});
+
 test("resolved webhook is ignored", async () => {
   const body = payload();
   body.status = "resolved";
@@ -322,6 +470,18 @@ function runtime(
     runtime.approvalStorePath = approvalStorePath;
   }
   return runtime;
+}
+
+class FailingOnceRunStore extends InMemoryTriageRunPersistenceStore {
+  private shouldFail = true;
+
+  override async recordTriageRun(...args: Parameters<InMemoryTriageRunPersistenceStore["recordTriageRun"]>) {
+    if (this.shouldFail) {
+      this.shouldFail = false;
+      throw new Error("simulated persistence failure");
+    }
+    return super.recordTriageRun(...args);
+  }
 }
 
 function defaultLlm() {

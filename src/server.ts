@@ -69,10 +69,15 @@ interface LokiLogEntryLike {
   labels: Record<string, string>;
 }
 
+interface HandleGrafanaWebhookOptions {
+  bodyDigest?: string;
+}
+
 export async function handleGrafanaWebhook(
   payload: unknown,
   providedSecret: string | undefined,
   runtime: WebhookRuntime,
+  options: HandleGrafanaWebhookOptions = {},
 ): Promise<[number, Record<string, unknown>]> {
   if (runtime.webhookSecret && providedSecret !== runtime.webhookSecret) {
     return [401, { status: "error", error: "unauthorized" }];
@@ -127,11 +132,16 @@ export async function handleGrafanaWebhook(
     name: normalized.scenarioName,
     incident: normalized.incident,
   };
+  const workflowOptions = { mode: runtimeMode(runtime) };
+  const runId = runIdForWebhook(normalized.incident.incidentId, options.bodyDigest);
+  if (runId) {
+    Object.assign(workflowOptions, { runId });
+  }
   const workflow = new TriageWorkflow(
     new PrebuiltOperationalTools(package_),
     runtime.llmClient,
     undefined,
-    { mode: runtimeMode(runtime) },
+    workflowOptions,
   );
   const run = await workflow.run(scenario);
   await persistTriageRun(run, runtime);
@@ -232,6 +242,7 @@ async function routeRequest(
     return;
   }
 
+  const bodyDigest = createHash("sha256").update(rawBody).digest("hex");
   let payload: unknown;
   try {
     payload = JSON.parse(rawBody);
@@ -240,16 +251,32 @@ async function routeRequest(
     return;
   }
 
+  const replayClaim = await claimGrafanaReplay(bodyDigest, auth, runtime);
+  if (!replayClaim.accepted) {
+    writeJson(response, replayClaim.status, { status: "error", error: replayClaim.error });
+    return;
+  }
+
   logger.info({ component: "server" }, "Grafana webhook received");
-  const [status, body] = await handleGrafanaWebhook(payload, runtime.webhookSecret, runtime);
-  writeJson(response, status, body);
+  try {
+    const [status, body] = await handleGrafanaWebhook(payload, runtime.webhookSecret, runtime, { bodyDigest });
+    writeJson(response, status, body);
+  } catch (error) {
+    if (replayClaim.replayKey) {
+      await releaseGrafanaReplay(replayClaim.replayKey, runtime, logger);
+    }
+    throw error;
+  }
 }
 
 async function authenticateGrafanaRequest(
   rawBody: string,
   headers: IncomingHttpHeaders,
   runtime: WebhookRuntime,
-): Promise<{ accepted: true } | { accepted: false; status: number; error: string }> {
+): Promise<
+  | { accepted: true; signature?: string; timestamp?: string }
+  | { accepted: false; status: number; error: string }
+> {
   const signature = firstHeader(headers[defaultGrafanaSignatureHeader]);
   const timestamp = firstHeader(headers[defaultGrafanaTimestampHeader]);
   const legacySecret = firstHeader(headers["x-webhook-secret"]);
@@ -279,25 +306,55 @@ async function authenticateGrafanaRequest(
         error: error instanceof GrafanaPayloadError ? hmacErrorCode(error) : "invalid_hmac_signature",
       };
     }
-    if (runtime.runStore && timestamp) {
-      const replayClaim = await runtime.runStore.claimReplayKey({
-        sender: "grafana",
-        signature: signature ?? "",
-        timestamp,
-        bodyDigest: createHash("sha256").update(rawBody).digest("hex"),
-        ttlMs: runtime.replayTtlMs ?? runtime.hmacToleranceMs ?? defaultGrafanaTimestampToleranceMs,
-      });
-      if (!replayClaim.accepted) {
-        return { accepted: false, status: 409, error: "replayed_webhook" };
-      }
+    const accepted: { accepted: true; signature?: string; timestamp?: string } = { accepted: true };
+    if (signature) {
+      accepted.signature = signature;
     }
-    return { accepted: true };
+    if (timestamp) {
+      accepted.timestamp = timestamp;
+    }
+    return accepted;
   }
 
   if (runtime.webhookSecret && legacySecret !== runtime.webhookSecret) {
     return { accepted: false, status: 401, error: "unauthorized" };
   }
   return { accepted: true };
+}
+
+async function claimGrafanaReplay(
+  bodyDigest: string,
+  auth: { accepted: true; signature?: string; timestamp?: string },
+  runtime: WebhookRuntime,
+): Promise<{ accepted: true; replayKey?: string } | { accepted: false; status: number; error: string }> {
+  if (!auth.timestamp) {
+    return { accepted: true };
+  }
+  if (!runtime.runStore) {
+    if (runtimeMode(runtime) === "read_only") {
+      return { accepted: false, status: 503, error: "replay_store_unavailable" };
+    }
+    return { accepted: true };
+  }
+  const replayClaim = await runtime.runStore.claimReplayKey({
+    sender: "grafana",
+    signature: (auth.signature ?? "").toLowerCase(),
+    timestamp: auth.timestamp,
+    bodyDigest,
+    ttlMs: runtime.replayTtlMs ?? runtime.hmacToleranceMs ?? defaultGrafanaTimestampToleranceMs,
+  });
+  if (!replayClaim.accepted) {
+    return { accepted: false, status: 409, error: "replayed_webhook" };
+  }
+  return { accepted: true, replayKey: replayClaim.replayKey };
+}
+
+async function releaseGrafanaReplay(replayKey: string, runtime: WebhookRuntime, logger: TriageLogger): Promise<void> {
+  try {
+    await runtime.runStore?.releaseReplayKey?.(replayKey);
+  } catch (error) {
+    logger.warn({ component: "server", error: error instanceof Error ? error.message : String(error) }, "Failed to release replay key");
+  }
 }
 
 function firstHeader(value: string | string[] | undefined): string | undefined {
@@ -449,6 +506,13 @@ async function persistTriageRun(run: TriageRun, runtime: WebhookRuntime): Promis
     correlationId: run.runId,
     retentionClass: runtimeMode(runtime) === "read_only" ? "read_only_triage" : "ephemeral",
   });
+}
+
+function runIdForWebhook(incidentId: string, bodyDigest?: string): string | undefined {
+  if (!bodyDigest) {
+    return undefined;
+  }
+  return `triage-run:${incidentId}:${bodyDigest.slice(0, 16)}`;
 }
 
 function approvalStorePath(runtime: WebhookRuntime): string {

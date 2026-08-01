@@ -122,6 +122,14 @@ test("phase 1 migration owns only run evidence and replay tables", () => {
   expect(sql).not.toContain("executor_attempts");
 });
 
+test("persistence store tracks applied migration files with checksums", () => {
+  const source = readFileSync("src/persistence/index.ts", "utf8");
+
+  expect(source).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
+  expect(source).toContain("Migration checksum changed after application");
+  expect(source).toContain("INSERT INTO schema_migrations");
+});
+
 async function runScenario(scenarioName: string, response: object | string) {
   const scenario = loadScenario("fixtures", scenarioName);
   const llmResponse = typeof response === "string" ? response : JSON.stringify(response);

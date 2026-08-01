@@ -31,6 +31,7 @@ export interface TriageRun {
 
 export interface TriageWorkflowOptions {
   mode?: OperatorMode;
+  runId?: string;
 }
 
 export class TriageWorkflow {
@@ -43,7 +44,7 @@ export class TriageWorkflow {
 
   async run(scenario: Scenario): Promise<TriageRun> {
     this.logger.info({ component: "workflow", scenario: scenario.name }, "Starting workflow");
-    const run: TriageRun = { runId: `triage-run:${scenario.name}`, runStatus: "running", scenario, states: [] };
+    const run: TriageRun = { runId: this.options.runId ?? `triage-run:${scenario.name}`, runStatus: "running", scenario, states: [] };
 
     this.transition(run, "received");
     run.evidencePackage = this.tools.buildEvidencePackage(scenario);

@@ -157,6 +157,22 @@ test("CLI serve requires explicit operator mode with real integration config", a
   expect(result.stderr).not.toContain("webhook-secret");
 });
 
+test("CLI serve read-only mode requires DATABASE_URL", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "incident-triage-read-only-"));
+  writeFileSync(join(cwd, ".env"), "AI_OPERATOR_MODE=read_only\nGRAFANA_WEBHOOK_SECRET=webhook-secret\nDATABASE_URL=\n");
+
+  const result = await runCli([
+    "serve",
+    "--mock-llm",
+    "--fixtures-dir",
+    `${process.cwd()}/fixtures`,
+  ], { cwd });
+
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain("DATABASE_URL");
+  expect(result.stderr).not.toContain("webhook-secret");
+});
+
 async function runCli(args: string[], options: { cwd?: string; withoutMiniMaxEnv?: boolean } = {}) {
   const env: Record<string, string> = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),

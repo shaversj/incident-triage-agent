@@ -191,6 +191,15 @@ test("runbook context adapter can return versioned guidance evidence", () => {
   expect(runbook?.detail).toContain("version=v3");
 });
 
+test("file runbook context rejects path-like runbook refs", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const incident = { ...scenario.incident, runbookRefs: ["../../docs/learnings", "dependency-outage"] };
+  const package_ = loadTools("fixtures").buildEvidencePackageFromIncident(scenario.name, incident);
+
+  expect(package_.byId().has("runbook:../../docs/learnings")).toBe(false);
+  expect(package_.byId().has("runbook:dependency-outage")).toBe(true);
+});
+
 test("context adapters cannot inject expected answer hints into evidence", () => {
   const scenario = loadScenario("fixtures", "checkout-payment-timeout");
   const tools = new MockOperationalTools("fixtures", {

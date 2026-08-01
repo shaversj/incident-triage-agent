@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
 
 import { FixtureError, type Incident } from "../domain";
 import type { Evidence } from "../evidence";
@@ -21,7 +21,7 @@ export class FileServiceContextSource implements ServiceContextSource {
   constructor(private readonly fixturesDir: string) {}
 
   serviceEvidence(incident: Incident): Evidence | undefined {
-    const path = join(this.fixturesDir, "services", "services.json");
+    const path = resolve(this.fixturesDir, "services", "services.json");
     const services = readJsonObjectIfPresent(path);
     if (!services) {
       return undefined;
@@ -49,7 +49,14 @@ export class FileRunbookContextSource implements RunbookContextSource {
   runbookEvidence(incident: Incident): Evidence[] {
     const evidence: Evidence[] = [];
     for (const ref of incident.runbookRefs) {
-      const path = join(this.fixturesDir, "runbooks", `${ref}.md`);
+      if (!isRunbookRef(ref)) {
+        continue;
+      }
+      const runbooksDir = resolve(this.fixturesDir, "runbooks");
+      const path = resolve(runbooksDir, `${ref}.md`);
+      if (!path.startsWith(`${runbooksDir}${sep}`)) {
+        continue;
+      }
       const text = readFileIfPresent(path)?.trim();
       if (!text) {
         continue;
@@ -106,6 +113,10 @@ function readFileIfPresent(path: string): string | undefined {
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
+}
+
+function isRunbookRef(value: string): boolean {
+  return /^[a-z0-9][a-z0-9-]*$/i.test(value);
 }
 
 function readString(value: unknown, label: string): string {

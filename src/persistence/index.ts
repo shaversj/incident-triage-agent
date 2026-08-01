@@ -61,6 +61,7 @@ export interface TriageRunPersistenceStore {
   migrate?(): Promise<void>;
   recordTriageRun(run: TriageRun, options?: PersistTriageRunOptions): Promise<TriageRunRecord>;
   claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim>;
+  releaseReplayKey?(replayKey: string): Promise<void>;
   cleanupExpired(now?: Date): Promise<{ evidenceSnapshotsDeleted: number; replayKeysDeleted: number }>;
   close?(): Promise<void>;
 }
@@ -90,6 +91,10 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     }
     this.replayKeys.set(replayKey, { input, expiresAt });
     return { accepted: true, replayKey, expiresAt };
+  }
+
+  async releaseReplayKey(replayKey: string): Promise<void> {
+    this.replayKeys.delete(replayKey);
   }
 
   async cleanupExpired(now = new Date()): Promise<{ evidenceSnapshotsDeleted: number; replayKeysDeleted: number }> {
@@ -127,8 +132,23 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
 
   async migrate(): Promise<void> {
     await this.withTransaction(async (client) => {
-      for (const sql of readMigrationSql()) {
-        await client.query(sql);
+      await ensureMigrationLedger(client);
+      for (const migration of readMigrations()) {
+        const applied = await client.query<{ checksum: string }>(
+          "SELECT checksum FROM schema_migrations WHERE migration_name = $1",
+          [migration.name],
+        );
+        if (applied.rows[0]?.checksum === migration.checksum) {
+          continue;
+        }
+        if (applied.rows[0]) {
+          throw new Error(`Migration checksum changed after application: ${migration.name}`);
+        }
+        await client.query(migration.sql);
+        await client.query(
+          "INSERT INTO schema_migrations (migration_name, checksum) VALUES ($1, $2)",
+          [migration.name, migration.checksum],
+        );
       }
     });
   }
@@ -162,6 +182,10 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
       [replayKey, input.sender, input.signature, input.timestamp, input.bodyDigest, receivedAt.toISOString(), expiresAt],
     );
     return { accepted: result.rowCount === 1, replayKey, expiresAt };
+  }
+
+  async releaseReplayKey(replayKey: string): Promise<void> {
+    await this.pool.query("DELETE FROM replay_keys WHERE replay_key = $1", [replayKey]);
   }
 
   async cleanupExpired(now = new Date()): Promise<{ evidenceSnapshotsDeleted: number; replayKeysDeleted: number }> {
@@ -311,12 +335,35 @@ async function upsertEvidenceSnapshot(client: PoolClient, snapshot: EvidenceSnap
   );
 }
 
-function readMigrationSql(): string[] {
+interface MigrationFile {
+  name: string;
+  sql: string;
+  checksum: string;
+}
+
+function readMigrations(): MigrationFile[] {
   const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), "migrations");
   return readdirSync(migrationsDir)
     .filter((name) => name.endsWith(".sql"))
     .sort()
-    .map((name) => readFileSync(join(migrationsDir, name), "utf8"));
+    .map((name) => {
+      const sql = readFileSync(join(migrationsDir, name), "utf8");
+      return {
+        name,
+        sql,
+        checksum: createHash("sha256").update(sql).digest("hex"),
+      };
+    });
+}
+
+async function ensureMigrationLedger(client: PoolClient): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      migration_name TEXT PRIMARY KEY,
+      checksum TEXT NOT NULL,
+      applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
 }
 
 function iso(date: Date): string {
