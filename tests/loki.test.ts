@@ -40,6 +40,32 @@ test("Loki client reports downstream errors", async () => {
   await expect(client.queryRange({ service: "checkout-api" }, 1, 2)).rejects.toThrow("503");
 });
 
+test("Loki client sends tenant and bearer auth headers and redacts log lines", async () => {
+  let requestedHeaders: Headers | undefined;
+  const client = new LokiClient("http://loki:3100", {
+    timeoutMs: 10_000,
+    tenantId: "tenant-a",
+    bearerToken: "secret-token",
+  }, async (_url, init) => {
+    requestedHeaders = new Headers(init?.headers);
+    return new Response(JSON.stringify({
+      status: "success",
+      data: {
+        result: [{
+          stream: { service: "checkout-api" },
+          values: [["1781622420000000000", "token=abc123 user@example.com"]],
+        }],
+      },
+    }));
+  });
+
+  const entries = await client.queryRange({ service: "checkout-api" }, 1, 2, { limit: 1 });
+
+  expect(requestedHeaders?.get("X-Scope-OrgID")).toBe("tenant-a");
+  expect(requestedHeaders?.get("Authorization")).toBe("Bearer secret-token");
+  expect(entries[0]?.line).toBe("<redacted> <redacted>");
+});
+
 test("recorded log fixtures load as Loki-shaped entries", () => {
   const entries = loadRecordedLogs("checkout-payment-timeout");
 

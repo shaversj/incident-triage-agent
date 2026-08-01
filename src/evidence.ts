@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileContextSources, type ContextSources } from "./context-sources";
 import { FixtureError, type Incident, type Scenario, type SourceTier, sourceTiers } from "./domain";
 
 export interface Evidence {
@@ -83,7 +84,11 @@ export class EvidencePackage {
 }
 
 export class MockOperationalTools {
-  constructor(readonly fixturesDir: string) {}
+  private readonly contextSources: ContextSources;
+
+  constructor(readonly fixturesDir: string, contextSources?: ContextSources) {
+    this.contextSources = contextSources ?? fileContextSources(fixturesDir);
+  }
 
   buildEvidencePackage(scenario: Scenario): EvidencePackage {
     return this.buildEvidencePackageFromIncident(scenario.name, scenario.incident);
@@ -212,44 +217,16 @@ export class MockOperationalTools {
   }
 
   serviceEvidence(incident: Incident): Evidence | undefined {
-    const path = join(this.fixturesDir, "services", "services.json");
-    if (!existsSync(path)) {
-      return undefined;
+    const evidence = this.contextSources.services.serviceEvidence(incident);
+    if (evidence) {
+      assertNoAnswerHints([evidence], "service context");
     }
-    const services = readJsonObject(path);
-    const service = services[incident.service];
-    if (!service || typeof service !== "object" || Array.isArray(service)) {
-      return undefined;
-    }
-    const payload = service as Record<string, unknown>;
-    const owner = readString(payload.owner, "owner");
-    const escalation = readString(payload.escalation, "escalation");
-    return {
-      evidenceId: `service:${incident.service}`,
-      source: "service",
-      sourceTier: "operational_context",
-      summary: `${incident.service} owned by ${owner}`,
-      detail: `Escalation: ${escalation}`,
-    };
+    return evidence;
   }
 
   runbookEvidence(incident: Incident): Evidence[] {
-    const evidence: Evidence[] = [];
-    for (const ref of incident.runbookRefs) {
-      const path = join(this.fixturesDir, "runbooks", `${ref}.md`);
-      if (!existsSync(path)) {
-        continue;
-      }
-      const text = readFileSync(path, "utf8").trim();
-      const firstLine = text.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim() || ref;
-      evidence.push({
-        evidenceId: `runbook:${ref}`,
-        source: "runbook",
-        sourceTier: "guidance",
-        summary: firstLine,
-        detail: text,
-      });
-    }
+    const evidence = this.contextSources.runbooks.runbookEvidence(incident);
+    assertNoAnswerHints(evidence, "runbook context");
     return evidence;
   }
 
@@ -303,6 +280,14 @@ export function loadTools(fixturesDir: string): MockOperationalTools {
   return new MockOperationalTools(fixturesDir);
 }
 
+export function assertNoAnswerHints(evidence: Evidence[], label: string): void {
+  const prohibited = /\b(incident_class|next_action|approval_required|requires_approval|recommended_action)\b/i;
+  const offender = evidence.find((item) => prohibited.test(`${item.summary}\n${item.detail}`));
+  if (offender) {
+    throw new FixtureError(`${label} evidence contains prohibited answer hint in ${offender.evidenceId}.`);
+  }
+}
+
 function deployToEvidence(service: string, time: string, change: string, index: number): Evidence {
   return {
     evidenceId: `deploy:${index}`,
@@ -336,14 +321,6 @@ function orderedTiers(values: SourceTier[]): SourceTier[] {
 
 function orderedStrings(values: string[]): string[] {
   return [...new Set(values)];
-}
-
-function readJsonObject(path: string): Record<string, unknown> {
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new FixtureError(`${path} must contain an object.`);
-  }
-  return parsed as Record<string, unknown>;
 }
 
 function readJsonArray(path: string): Record<string, unknown>[] {

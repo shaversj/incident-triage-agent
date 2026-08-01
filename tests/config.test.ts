@@ -49,7 +49,14 @@ test("redactSecret replaces configured API key", () => {
 
 test("loadWebhookConfig reads secret and Loki values", () => {
   const envFile = writeTempEnv(
-    "GRAFANA_WEBHOOK_SECRET=webhook-secret\nLOKI_BASE_URL=http://loki:3100\nLOKI_LIMIT=7\n",
+    [
+      "GRAFANA_WEBHOOK_SECRET=webhook-secret",
+      "LOKI_BASE_URL=http://loki:3100",
+      "LOKI_LIMIT=7",
+      "LOKI_TIMEOUT_MS=2500",
+      "LOKI_TENANT_ID=tenant-a",
+      "LOKI_BEARER_TOKEN=loki-secret",
+    ].join("\n"),
   );
 
   const config = loadWebhookConfig(envFile, {});
@@ -57,7 +64,11 @@ test("loadWebhookConfig reads secret and Loki values", () => {
   expect(config.grafanaWebhookSecret).toBe("webhook-secret");
   expect(config.lokiBaseUrl).toBe("http://loki:3100");
   expect(config.lokiLimit).toBe(7);
+  expect(config.lokiTimeoutMs).toBe(2500);
+  expect(config.lokiTenantId).toBe("tenant-a");
+  expect(config.lokiBearerToken).toBe("loki-secret");
   expect(config.redacted.GRAFANA_WEBHOOK_SECRET).toBe("<redacted>");
+  expect(config.redacted.LOKI_BEARER_TOKEN).toBe("<redacted>");
 });
 
 test("loadWebhookConfig requires secret without printing values", () => {

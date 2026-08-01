@@ -86,11 +86,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 2;
     }
 
+    const lokiOptions = {
+      timeoutMs: webhookConfig.lokiTimeoutMs,
+    };
+    if (webhookConfig.lokiTenantId) {
+      Object.assign(lokiOptions, { tenantId: webhookConfig.lokiTenantId });
+    }
+    if (webhookConfig.lokiBearerToken) {
+      Object.assign(lokiOptions, { bearerToken: webhookConfig.lokiBearerToken });
+    }
+
     const runtime = {
       fixturesDir: parsed.fixturesDir,
       webhookSecret: webhookConfig.grafanaWebhookSecret,
       llmClient,
-      lokiClient: new LokiClient(webhookConfig.lokiBaseUrl),
+      lokiClient: new LokiClient(webhookConfig.lokiBaseUrl, lokiOptions),
       lokiLimit: webhookConfig.lokiLimit,
       mode: operatorMode.mode,
     };

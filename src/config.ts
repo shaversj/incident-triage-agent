@@ -22,10 +22,16 @@ export interface WebhookConfig {
   grafanaWebhookSecret: string;
   lokiBaseUrl: string;
   lokiLimit: number;
+  lokiTimeoutMs: number;
+  lokiTenantId?: string;
+  lokiBearerToken?: string;
   redacted: {
     GRAFANA_WEBHOOK_SECRET: "<redacted>";
     LOKI_BASE_URL: string;
     LOKI_LIMIT: string;
+    LOKI_TIMEOUT_MS: string;
+    LOKI_TENANT_ID?: string;
+    LOKI_BEARER_TOKEN?: "<redacted>";
   };
 }
 
@@ -126,16 +132,28 @@ export function loadWebhookConfig(
   }
 
   const lokiBaseUrl = source.LOKI_BASE_URL ?? "http://localhost:3100";
-  return {
+  const lokiTimeoutMs = parsePositiveInteger(source.LOKI_TIMEOUT_MS ?? "10000", "LOKI_TIMEOUT_MS");
+  const config: WebhookConfig = {
     grafanaWebhookSecret: secret,
     lokiBaseUrl,
     lokiLimit,
+    lokiTimeoutMs,
     redacted: {
       GRAFANA_WEBHOOK_SECRET: "<redacted>",
       LOKI_BASE_URL: lokiBaseUrl,
       LOKI_LIMIT: `${lokiLimit}`,
+      LOKI_TIMEOUT_MS: `${lokiTimeoutMs}`,
     },
   };
+  if (source.LOKI_TENANT_ID) {
+    config.lokiTenantId = source.LOKI_TENANT_ID;
+    config.redacted.LOKI_TENANT_ID = source.LOKI_TENANT_ID;
+  }
+  if (source.LOKI_BEARER_TOKEN) {
+    config.lokiBearerToken = source.LOKI_BEARER_TOKEN;
+    config.redacted.LOKI_BEARER_TOKEN = "<redacted>";
+  }
+  return config;
 }
 
 export function loadOperatorMode(
@@ -214,6 +232,14 @@ function parseOperatorMode(value: string): OperatorMode {
     return normalized;
   }
   throw new ConfigError(`AI_OPERATOR_MODE must be one of ${operatorModes.join(", ")}.`);
+}
+
+function parsePositiveInteger(value: string, label: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || `${parsed}` !== value.trim() || parsed <= 0) {
+    throw new ConfigError(`${label} must be a positive integer.`);
+  }
+  return parsed;
 }
 
 function isOperatorMode(value: string): value is OperatorMode {

@@ -199,6 +199,9 @@ DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
+LOKI_TIMEOUT_MS=10000
+LOKI_TENANT_ID=
+LOKI_BEARER_TOKEN=
 ```
 
 Run with live MiniMax through Flue:
@@ -245,6 +248,8 @@ npm run serve -- --mock-llm
 ```
 
 The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Default tests do not require Docker or a live database.
+
+For production-shaped Loki access, the client sends bounded `query_range` requests using service labels, alert start/end timestamps, limit, direction, timeout, optional `X-Scope-OrgID` tenant header, and optional bearer auth. Returned log lines are redacted for common token/email patterns before they become evidence.
 
 Open the approval console:
 
