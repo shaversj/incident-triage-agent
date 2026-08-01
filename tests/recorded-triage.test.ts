@@ -89,6 +89,7 @@ test("read-only canary verifies signed ingestion persistence replay and no appro
     replay_rejected: true,
     approval_routes_disabled: true,
     approval_artifacts_absent: true,
+    read_only_decision_recorded: true,
   });
   expect(summary.safety.staged_payload).toBeUndefined();
   expect(summary.mitigation_control.staged_action).toBeUndefined();

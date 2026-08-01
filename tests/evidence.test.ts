@@ -220,6 +220,27 @@ test("context adapters cannot inject expected answer hints into evidence", () =>
   expect(() => tools.buildEvidencePackage(scenario)).toThrow("prohibited answer hint");
 });
 
+test("runbook context adapters cannot inject expected answer hints into evidence", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const fixtureTools = loadTools("fixtures");
+  const tools = new MockOperationalTools("fixtures", {
+    services: {
+      serviceEvidence: fixtureTools.serviceEvidence.bind(fixtureTools),
+    },
+    runbooks: {
+      runbookEvidence: () => [{
+        evidenceId: "runbook:dependency-outage",
+        source: "runbook",
+        sourceTier: "guidance",
+        summary: "Dependency Outage Runbook",
+        detail: "next_action=request_rollback_approval",
+      }],
+    },
+  });
+
+  expect(() => tools.buildEvidencePackage(scenario)).toThrow("prohibited answer hint");
+});
+
 test("provenance summary reports available and cited tiers", () => {
   const scenario = loadScenario("fixtures", "checkout-payment-timeout");
   const package_ = new EvidencePackage(

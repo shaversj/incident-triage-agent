@@ -393,9 +393,19 @@ test("server rejects invalid or stale signed read-only Grafana webhook before pe
       headers: signedGrafanaHeaders(rawBody, staleTimestamp),
       body: rawBody,
     });
+    const missingTimestamp = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Grafana-Alerting-Signature": signGrafanaWebhookBody(rawBody, "test-secret"),
+      },
+      body: rawBody,
+    });
 
     expect(invalid.status).toBe(401);
     expect(stale.status).toBe(401);
+    expect(missingTimestamp.status).toBe(401);
+    expect((await missingTimestamp.json() as any).error).toBe("missing_hmac_timestamp");
     expect(runStore.runs.size).toBe(0);
   } finally {
     await server.close();

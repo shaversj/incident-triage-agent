@@ -252,14 +252,22 @@ async function runReadOnlyCanary(
     const approvalArtifactsAbsent = safety.staged_payload === undefined &&
       mitigation.staged_action === undefined &&
       mitigation.approval_request === undefined;
+    const readOnlyDecisionRecorded = safety.status === "approval_required" && mitigation.status === "approval_required";
     const canary = {
-      passed: first.ok && persistedRun && persistedEvidenceSnapshot && replayRejected && approvalRoutesDisabled && approvalArtifactsAbsent,
+      passed: first.ok &&
+        persistedRun &&
+        persistedEvidenceSnapshot &&
+        replayRejected &&
+        approvalRoutesDisabled &&
+        approvalArtifactsAbsent &&
+        readOnlyDecisionRecorded,
       read_only_mode: true,
       persisted_run: persistedRun,
       persisted_evidence_snapshot: persistedEvidenceSnapshot,
       replay_rejected: replayRejected,
       approval_routes_disabled: approvalRoutesDisabled,
       approval_artifacts_absent: approvalArtifactsAbsent,
+      read_only_decision_recorded: readOnlyDecisionRecorded,
     };
     return {
       ...summary,
