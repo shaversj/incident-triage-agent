@@ -189,20 +189,17 @@ async function routeRequest(
   }
 
   const url = new URL(request.url ?? "/", "http://localhost");
+  if (approvalSurfaceDisabled(runtime, request.method, url.pathname)) {
+    writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
+    return;
+  }
+
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/approvals")) {
-    if (!approvalRoutesEnabled(runtime)) {
-      writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
-      return;
-    }
     writeHtml(response, 200, approvalConsoleHtml());
     return;
   }
 
   if (url.pathname === "/api/approvals") {
-    if (!approvalRoutesEnabled(runtime)) {
-      writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
-      return;
-    }
     if (request.method !== "GET") {
       writeJson(response, 405, { status: "error", error: "method_not_allowed" });
       return;
@@ -212,10 +209,6 @@ async function routeRequest(
   }
 
   if (url.pathname.startsWith("/api/approvals/")) {
-    if (!approvalRoutesEnabled(runtime)) {
-      writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
-      return;
-    }
     await routeApprovalApi(request, response, runtime, url.pathname);
     return;
   }
@@ -464,6 +457,16 @@ function approvalStorePath(runtime: WebhookRuntime): string {
 
 function approvalRoutesEnabled(runtime: WebhookRuntime): boolean {
   return runtimeMode(runtime) !== "read_only";
+}
+
+function approvalSurfaceDisabled(runtime: WebhookRuntime, method: string | undefined, pathname: string): boolean {
+  if (approvalRoutesEnabled(runtime)) {
+    return false;
+  }
+  if (method === "GET" && (pathname === "/" || pathname === "/approvals")) {
+    return true;
+  }
+  return pathname === "/api/approvals" || pathname.startsWith("/api/approvals/");
 }
 
 function runtimeMode(runtime: WebhookRuntime): OperatorMode {

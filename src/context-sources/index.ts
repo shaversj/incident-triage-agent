@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { FixtureError, type Incident } from "../domain";
@@ -22,10 +22,10 @@ export class FileServiceContextSource implements ServiceContextSource {
 
   serviceEvidence(incident: Incident): Evidence | undefined {
     const path = join(this.fixturesDir, "services", "services.json");
-    if (!existsSync(path)) {
+    const services = readJsonObjectIfPresent(path);
+    if (!services) {
       return undefined;
     }
-    const services = readJsonObject(path);
     const service = services[incident.service];
     if (!service || typeof service !== "object" || Array.isArray(service)) {
       return undefined;
@@ -50,10 +50,10 @@ export class FileRunbookContextSource implements RunbookContextSource {
     const evidence: Evidence[] = [];
     for (const ref of incident.runbookRefs) {
       const path = join(this.fixturesDir, "runbooks", `${ref}.md`);
-      if (!existsSync(path)) {
+      const text = readFileIfPresent(path)?.trim();
+      if (!text) {
         continue;
       }
-      const text = readFileSync(path, "utf8").trim();
       const firstLine = text.split(/\r?\n/, 1)[0]?.replace(/^#+\s*/, "").trim() || ref;
       evidence.push({
         evidenceId: `runbook:${ref}`,
@@ -80,6 +80,32 @@ function readJsonObject(path: string): Record<string, unknown> {
     throw new FixtureError(`${path} must contain a JSON object.`);
   }
   return parsed as Record<string, unknown>;
+}
+
+function readJsonObjectIfPresent(path: string): Record<string, unknown> | undefined {
+  try {
+    return readJsonObject(path);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function readFileIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
 function readString(value: unknown, label: string): string {

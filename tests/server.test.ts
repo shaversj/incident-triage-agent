@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getApproval, requestApproval } from "../src/approval-store";
+import { buildApprovalId, getApproval, requestApproval } from "../src/approval-store";
 import { StaticDecisionClient } from "../src/llm";
 import { loadMitigationCatalog } from "../src/mitigation-control";
 import { InMemoryTriageRunPersistenceStore, type TriageRunPersistenceStore } from "../src/persistence";
@@ -134,7 +134,7 @@ test("read-only webhook does not expose or persist approval side effects", async
   expect(mitigation.status).toBe("approval_required");
   expect(mitigation.staged_action).toBeUndefined();
   expect(mitigation.approval_request).toBeUndefined();
-  expect(getApproval(storePath, "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval")).toBeUndefined();
+  expect(getApproval(storePath, buildApprovalId("GRAFANA-checkout-bad-deploy-latency-001", "rollback-approval"))).toBeUndefined();
 });
 
 test("read-only webhook records run persistence when configured", async () => {

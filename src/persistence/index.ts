@@ -84,8 +84,8 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     const replayKey = buildReplayKey(input);
     const receivedAt = input.receivedAt ?? new Date();
     const expiresAt = iso(new Date(receivedAt.getTime() + input.ttlMs));
-    await this.cleanupExpired(receivedAt);
-    if (this.replayKeys.has(replayKey)) {
+    const existing = this.replayKeys.get(replayKey);
+    if (existing && existing.expiresAt > receivedAt.toISOString()) {
       return { accepted: false, replayKey, expiresAt };
     }
     this.replayKeys.set(replayKey, { input, expiresAt });
@@ -126,48 +126,39 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
   }
 
   async migrate(): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await this.withTransaction(async (client) => {
       for (const sql of readMigrationSql()) {
         await client.query(sql);
       }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   async recordTriageRun(run: TriageRun, options: PersistTriageRunOptions = {}): Promise<TriageRunRecord> {
     const record = buildRunRecord(run, options);
     const snapshot = buildEvidenceSnapshot(run, record, options);
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
+    await this.withTransaction(async (client) => {
       await upsertRunRecord(client, record);
       await upsertEvidenceSnapshot(client, snapshot);
-      await client.query("COMMIT");
-      return record;
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
+    return record;
   }
 
   async claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim> {
     const replayKey = buildReplayKey(input);
     const receivedAt = input.receivedAt ?? new Date();
     const expiresAt = iso(new Date(receivedAt.getTime() + input.ttlMs));
-    await this.cleanupExpired(receivedAt);
     const result = await this.pool.query(
       `INSERT INTO replay_keys (replay_key, sender, signature, timestamp, body_digest, received_at, expires_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (replay_key) DO NOTHING`,
+       ON CONFLICT (replay_key) DO UPDATE SET
+         sender = EXCLUDED.sender,
+         signature = EXCLUDED.signature,
+         timestamp = EXCLUDED.timestamp,
+         body_digest = EXCLUDED.body_digest,
+         received_at = EXCLUDED.received_at,
+         expires_at = EXCLUDED.expires_at
+       WHERE replay_keys.expires_at <= EXCLUDED.received_at
+       RETURNING replay_key`,
       [replayKey, input.sender, input.signature, input.timestamp, input.bodyDigest, receivedAt.toISOString(), expiresAt],
     );
     return { accepted: result.rowCount === 1, replayKey, expiresAt };
@@ -185,6 +176,21 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
 
   async close(): Promise<void> {
     await this.pool.end();
+  }
+
+  private async withTransaction<T>(work: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await work(client);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

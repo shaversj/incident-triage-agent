@@ -245,23 +245,21 @@ async function runReadOnlyCanary(
     const runId = typeof response.run_id === "string" ? response.run_id : "";
     const safety = objectValue(response.safety);
     const mitigation = objectValue(response.mitigation_control);
+    const persistedRun = Boolean(runStore.runs.get(runId));
+    const persistedEvidenceSnapshot = Boolean(runStore.evidenceSnapshots.get(runId));
+    const replayRejected = replay.status === 409;
+    const approvalRoutesDisabled = approvals.status === 404;
+    const approvalArtifactsAbsent = safety.staged_payload === undefined &&
+      mitigation.staged_action === undefined &&
+      mitigation.approval_request === undefined;
     const canary = {
-      passed: first.ok &&
-        replay.status === 409 &&
-        approvals.status === 404 &&
-        Boolean(runStore.runs.get(runId)) &&
-        Boolean(runStore.evidenceSnapshots.get(runId)) &&
-        safety.staged_payload === undefined &&
-        mitigation.staged_action === undefined &&
-        mitigation.approval_request === undefined,
+      passed: first.ok && persistedRun && persistedEvidenceSnapshot && replayRejected && approvalRoutesDisabled && approvalArtifactsAbsent,
       read_only_mode: true,
-      persisted_run: Boolean(runStore.runs.get(runId)),
-      persisted_evidence_snapshot: Boolean(runStore.evidenceSnapshots.get(runId)),
-      replay_rejected: replay.status === 409,
-      approval_routes_disabled: approvals.status === 404,
-      approval_artifacts_absent: safety.staged_payload === undefined &&
-        mitigation.staged_action === undefined &&
-        mitigation.approval_request === undefined,
+      persisted_run: persistedRun,
+      persisted_evidence_snapshot: persistedEvidenceSnapshot,
+      replay_rejected: replayRejected,
+      approval_routes_disabled: approvalRoutesDisabled,
+      approval_artifacts_absent: approvalArtifactsAbsent,
     };
     return {
       ...summary,
