@@ -25,6 +25,7 @@ export interface WebhookConfig {
   lokiTimeoutMs: number;
   lokiTenantId?: string;
   lokiBearerToken?: string;
+  operatorReadToken?: string;
   redacted: {
     GRAFANA_WEBHOOK_SECRET: "<redacted>";
     LOKI_BASE_URL: string;
@@ -32,6 +33,7 @@ export interface WebhookConfig {
     LOKI_TIMEOUT_MS: string;
     LOKI_TENANT_ID?: string;
     LOKI_BEARER_TOKEN?: "<redacted>";
+    OPERATOR_READ_TOKEN?: "<redacted>";
   };
 }
 
@@ -88,7 +90,7 @@ export function loadConfig(
   envPath = ".env",
   environ: Record<string, string | undefined> = process.env,
 ): AppConfig {
-  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const source = loadEnvironment(envPath, environ);
   const missing = ["MINIMAX_API_KEY", "MODEL_NAME"].filter((name) => !source[name]);
   if (missing.length > 0) {
     throw new ConfigError(`Missing required configuration: ${missing.join(", ")}.`);
@@ -116,7 +118,7 @@ export function loadWebhookConfig(
   envPath = ".env",
   environ: Record<string, string | undefined> = process.env,
 ): WebhookConfig {
-  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const source = loadEnvironment(envPath, environ);
   const secret = source.GRAFANA_WEBHOOK_SECRET;
   if (!secret) {
     throw new ConfigError("Missing required configuration: GRAFANA_WEBHOOK_SECRET.");
@@ -153,6 +155,10 @@ export function loadWebhookConfig(
     config.lokiBearerToken = source.LOKI_BEARER_TOKEN;
     config.redacted.LOKI_BEARER_TOKEN = "<redacted>";
   }
+  if (source.OPERATOR_READ_TOKEN) {
+    config.operatorReadToken = source.OPERATOR_READ_TOKEN;
+    config.redacted.OPERATOR_READ_TOKEN = "<redacted>";
+  }
   return config;
 }
 
@@ -161,7 +167,7 @@ export function loadOperatorMode(
   environ: Record<string, string | undefined> = process.env,
   options: { command?: string } = {},
 ): OperatorModeConfig {
-  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const source = loadEnvironment(envPath, environ);
   const rawMode = source.AI_OPERATOR_MODE;
   const hasRealIntegrationConfig = [
     "GRAFANA_WEBHOOK_SECRET",
@@ -175,8 +181,8 @@ export function loadOperatorMode(
   }
 
   const mode = rawMode ? parseOperatorMode(rawMode) : "local";
-  if (mode === "execution_enabled") {
-    throw new ConfigError("AI_OPERATOR_MODE=execution_enabled is not available until durable approvals and bounded executors are implemented.");
+  if (mode === "approval" || mode === "execution_enabled") {
+    throw new ConfigError(`AI_OPERATOR_MODE=${mode} is not available until authenticated approvals and bounded executors are implemented.`);
   }
 
   return {
@@ -192,7 +198,7 @@ export function loadPersistenceConfig(
   envPath = ".env",
   environ: Record<string, string | undefined> = process.env,
 ): PersistenceConfig {
-  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const source = loadEnvironment(envPath, environ);
   const databaseUrl = source.DATABASE_URL;
   if (!databaseUrl) {
     return { redacted: {} };
@@ -214,6 +220,10 @@ export function redactSecret(text: string, config?: Pick<AppConfig, "minimaxApiK
 
 function definedValues(source: Record<string, string | undefined>): Record<string, string> {
   return Object.fromEntries(Object.entries(source).filter((entry): entry is [string, string] => entry[1] !== undefined));
+}
+
+function loadEnvironment(envPath: string, environ: Record<string, string | undefined>): Record<string, string> {
+  return { ...loadDotenv(envPath), ...definedValues(environ) };
 }
 
 function stripQuotes(value: string): string {
@@ -249,7 +259,7 @@ function isOperatorMode(value: string): value is OperatorMode {
 function capabilitiesForMode(mode: OperatorMode): OperatorModeConfig["capabilities"] {
   return {
     readOnlyTriage: true,
-    approvalStaging: mode === "local" || mode === "approval" || mode === "execution_enabled",
+    approvalStaging: mode === "local",
     execution: mode === "execution_enabled",
   };
 }

@@ -38,8 +38,40 @@ test("in-memory persistence records completed read-only run envelope and evidenc
   });
   expect(record.evidenceIds).toEqual(expect.arrayContaining(["deploy:0", "log:0", "runbook:bad-deploy"]));
   expect(record.scorecard).toBeDefined();
+  expect(record.reviewEnvelope?.decision).toMatchObject({
+    incidentClass: "bad_deploy",
+    nextAction: "request_rollback_approval",
+  });
+  expect(record.reviewEnvelope?.mitigationControl).toMatchObject({
+    status: "approval_required",
+  });
   expect(snapshot?.evidence).toHaveLength(run.evidencePackage?.evidence.length ?? 0);
   expect(snapshot?.missingContext).toEqual(run.evidencePackage?.missingContext);
+});
+
+test("in-memory persistence returns read-only review envelope with evidence snapshot", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const run = await runScenario("bad-deploy-latency", {
+    incident_class: "bad_deploy",
+    next_action: "request_rollback_approval",
+    confidence: 0.9,
+    evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
+    caveats: [],
+    verification_plan: ["Check checkout latency."],
+  });
+  await store.recordTriageRun(run, { correlationId: "trace-123" });
+
+  const review = await store.getTriageRunReview(run.runId);
+
+  expect(review?.run.reviewEnvelope?.decision).toMatchObject({
+    incidentClass: "bad_deploy",
+    nextAction: "request_rollback_approval",
+  });
+  expect(review?.evidenceSnapshot?.evidence).toEqual(expect.arrayContaining([
+    expect.objectContaining({ evidenceId: "deploy:0" }),
+  ]));
+  expect(review?.run.reviewEnvelope?.mitigationControl).not.toHaveProperty("stagedAction");
+  expect(review?.run.reviewEnvelope?.mitigationControl).not.toHaveProperty("approvalRequest");
 });
 
 test("in-memory persistence records recoverable invalid decision without approval artifacts", async () => {
@@ -80,7 +112,7 @@ test("replay key claims are atomic until TTL expiry", async () => {
   expect(afterExpiry).toMatchObject({ accepted: true, replayKey: first.replayKey });
 });
 
-test("retention cleanup removes expired evidence snapshots and replay keys", async () => {
+test("retention cleanup removes expired runs evidence snapshots and replay keys", async () => {
   const store = new InMemoryTriageRunPersistenceStore();
   const run = await runScenario("checkout-payment-timeout", {
     incident_class: "dependency_outage",
@@ -106,8 +138,8 @@ test("retention cleanup removes expired evidence snapshots and replay keys", asy
 
   const cleanup = await store.cleanupExpired(new Date("2026-08-01T12:00:02.000Z"));
 
-  expect(cleanup).toEqual({ evidenceSnapshotsDeleted: 1, replayKeysDeleted: 1 });
-  expect(store.runs.has(run.runId)).toBe(true);
+  expect(cleanup).toEqual({ incidentRunsDeleted: 1, evidenceSnapshotsDeleted: 1, replayKeysDeleted: 1 });
+  expect(store.runs.has(run.runId)).toBe(false);
   expect(store.evidenceSnapshots.has(run.runId)).toBe(false);
   expect(store.replayKeys.size).toBe(0);
 });
@@ -116,6 +148,7 @@ test("phase 1 migration owns only run evidence and replay tables", () => {
   const sql = readFileSync("src/persistence/migrations/001_phase1_read_only.sql", "utf8");
 
   expect(sql).toContain("CREATE TABLE IF NOT EXISTS incident_runs");
+  expect(sql).toContain("review_envelope JSONB");
   expect(sql).toContain("CREATE TABLE IF NOT EXISTS evidence_snapshots");
   expect(sql).toContain("CREATE TABLE IF NOT EXISTS replay_keys");
   expect(sql).not.toContain("approval_requests");
@@ -126,8 +159,11 @@ test("persistence store tracks applied migration files with checksums", () => {
   const source = readFileSync("src/persistence/index.ts", "utf8");
 
   expect(source).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
+  expect(source).toContain("pg_advisory_xact_lock");
   expect(source).toContain("Migration checksum changed after application");
   expect(source).toContain("INSERT INTO schema_migrations");
+  expect(source).toContain("statement_timeout");
+  expect(source).toContain("query_timeout");
 });
 
 async function runScenario(scenarioName: string, response: object | string) {

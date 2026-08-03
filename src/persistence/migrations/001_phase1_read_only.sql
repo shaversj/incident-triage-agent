@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS incident_runs (
   mitigation_status TEXT,
   evidence_ids JSONB NOT NULL,
   scorecard JSONB,
+  review_envelope JSONB,
   retention_class TEXT NOT NULL,
   correlation_id TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,

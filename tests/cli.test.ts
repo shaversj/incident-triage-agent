@@ -173,6 +173,26 @@ test("CLI serve read-only mode requires DATABASE_URL", async () => {
   expect(result.stderr).not.toContain("webhook-secret");
 });
 
+test("CLI serve read-only mode requires operator read token", async () => {
+  const cwd = mkdtempSync(join(tmpdir(), "incident-triage-read-only-token-"));
+  writeFileSync(
+    join(cwd, ".env"),
+    "AI_OPERATOR_MODE=read_only\nGRAFANA_WEBHOOK_SECRET=webhook-secret\nDATABASE_URL=postgres://user:secret@localhost:5432/triage\n",
+  );
+
+  const result = await runCli([
+    "serve",
+    "--mock-llm",
+    "--fixtures-dir",
+    `${process.cwd()}/fixtures`,
+  ], { cwd });
+
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain("OPERATOR_READ_TOKEN");
+  expect(result.stderr).not.toContain("webhook-secret");
+  expect(result.stderr).not.toContain("postgres://user:secret");
+});
+
 async function runCli(args: string[], options: { cwd?: string; withoutMiniMaxEnv?: boolean } = {}) {
   const env: Record<string, string> = Object.fromEntries(
     Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined),

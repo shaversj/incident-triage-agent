@@ -115,8 +115,9 @@ test("bad deploy webhook persists pending approval when approval store is config
 
 test("read-only webhook does not expose or persist approval side effects", async () => {
   const storePath = tempStorePath();
+  const body = readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8");
   const [status, response] = await handleGrafanaWebhook(
-    JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8")),
+    JSON.parse(body),
     "test-secret",
     runtime(
       RecordedLokiClient.fromFixture("bad-deploy-latency"),
@@ -124,6 +125,7 @@ test("read-only webhook does not expose or persist approval side effects", async
       storePath,
       "read_only",
     ),
+    { bodyDigest: "signed-body-digest" },
   );
 
   const mitigation = response.mitigation_control as any;
@@ -132,6 +134,7 @@ test("read-only webhook does not expose or persist approval side effects", async
   expect((response.safety as any).status).toBe("approval_required");
   expect((response.safety as any).staged_payload).toBeUndefined();
   expect(mitigation.status).toBe("approval_required");
+  expect(mitigation.dry_run).toBeUndefined();
   expect(mitigation.staged_action).toBeUndefined();
   expect(mitigation.approval_request).toBeUndefined();
   expect(getApproval(storePath, buildApprovalId("GRAFANA-checkout-bad-deploy-latency-001", "rollback-approval"))).toBeUndefined();
@@ -139,7 +142,38 @@ test("read-only webhook does not expose or persist approval side effects", async
 
 test("read-only webhook records run persistence when configured", async () => {
   const runStore = new InMemoryTriageRunPersistenceStore();
+  const body = readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8");
   const [status] = await handleGrafanaWebhook(
+    JSON.parse(body),
+    "test-secret",
+    runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      badDeployLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+    { bodyDigest: "signed-body-digest" },
+  );
+
+  const run = [...runStore.runs.values()][0];
+
+  expect(status).toBe(200);
+  expect(run).toMatchObject({
+    incidentId: "GRAFANA-checkout-bad-deploy-latency-001",
+    service: "checkout-api",
+    validationStatus: "valid",
+    safetyStatus: "approval_required",
+    mitigationStatus: "approval_required",
+    retentionClass: "read_only_triage",
+  });
+  expect([...runStore.evidenceSnapshots.keys()].some((runId) => runId.startsWith("triage-run:GRAFANA-checkout-bad-deploy-latency-001:"))).toBe(true);
+});
+
+test("read-only handler requires signed server ingestion context", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+
+  const [status, response] = await handleGrafanaWebhook(
     JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8")),
     "test-secret",
     runtime(
@@ -151,18 +185,9 @@ test("read-only webhook records run persistence when configured", async () => {
     ),
   );
 
-  const run = runStore.runs.get("triage-run:grafana-bad-deploy-latency");
-
-  expect(status).toBe(200);
-  expect(run).toMatchObject({
-    incidentId: "GRAFANA-checkout-bad-deploy-latency-001",
-    service: "checkout-api",
-    validationStatus: "valid",
-    safetyStatus: "approval_required",
-    mitigationStatus: "approval_required",
-    retentionClass: "read_only_triage",
-  });
-  expect(runStore.evidenceSnapshots.has("triage-run:grafana-bad-deploy-latency")).toBe(true);
+  expect(status).toBe(401);
+  expect(response.error).toBe("signed_ingestion_required");
+  expect(runStore.runs.size).toBe(0);
 });
 
 test("approval console serves queue and approve API records simulated execution", async () => {
@@ -322,6 +347,71 @@ test("server persists distinct same-service webhooks as separate runs", async ()
   }
 });
 
+test("server exposes persisted read-only run review by run id", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8");
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const posted = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, unixTimestamp(new Date())),
+      body: rawBody,
+    });
+    const postedBody = await posted.json() as any;
+    const unauthorized = await fetch(`${baseUrl}/api/runs/${encodeURIComponent(postedBody.run_id)}`);
+    const review = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(postedBody.run_id)}`, {
+      headers: { Authorization: "Bearer read-secret" },
+    });
+    const run = review.run as any;
+
+    expect(posted.status).toBe(200);
+    expect(unauthorized.status).toBe(401);
+    expect(run.run_id).toBe(postedBody.run_id);
+    expect((review.review as any).decision).toMatchObject({
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+    });
+    expect(run.review_envelope).toBeUndefined();
+    expect((review.evidence_snapshot as any).evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ evidenceId: "log:0" }),
+    ]));
+  } finally {
+    await server.close();
+  }
+});
+
+test("server schedules retention cleanup for run store", async () => {
+  const runStore = new CleanupCountingRunStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: {
+      ...runtime(undefined, defaultLlm(), undefined, "read_only", runStore),
+      retentionCleanupIntervalMs: 10,
+    },
+  });
+
+  await server.ready;
+  await eventually(() => expect(runStore.cleanupCalls).toBeGreaterThan(0));
+  await server.close();
+  const callsAfterClose = runStore.cleanupCalls;
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  expect(runStore.cleanupCalls).toBe(callsAfterClose);
+});
+
 test("server releases replay claim after persistence failure", async () => {
   const runStore = new FailingOnceRunStore();
   const server = startWebhookServer({
@@ -355,6 +445,77 @@ test("server releases replay claim after persistence failure", async () => {
     expect(first.status).toBe(500);
     expect(retry.status).toBe(200);
     expect(runStore.runs.size).toBe(1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("server releases replay claim after non-success webhook response", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = JSON.stringify({ status: "firing", alerts: [] });
+  const timestamp = unixTimestamp(new Date());
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const first = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+    const retry = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+
+    expect(first.status).toBe(400);
+    expect(retry.status).toBe(400);
+    expect(runStore.replayKeys.size).toBe(0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("server returns 413 for oversized webhook bodies", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = JSON.stringify({
+    status: "firing",
+    alerts: [{ annotations: { description: "x".repeat(1_000_001) } }],
+  });
+
+  await server.ready;
+  try {
+    const response = await fetch(`${serverUrl(server.server)}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, unixTimestamp(new Date())),
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(413);
+    expect((await response.json() as any).error).toBe("request_body_too_large");
   } finally {
     await server.close();
   }
@@ -473,6 +634,9 @@ function runtime(
   if (runStore) {
     runtime.runStore = runStore;
   }
+  if (mode === "read_only") {
+    runtime.operatorReadToken = "read-secret";
+  }
   if (lokiClient) {
     runtime.lokiClient = lokiClient;
   }
@@ -491,6 +655,30 @@ class FailingOnceRunStore extends InMemoryTriageRunPersistenceStore {
       throw new Error("simulated persistence failure");
     }
     return super.recordTriageRun(...args);
+  }
+}
+
+class CleanupCountingRunStore extends InMemoryTriageRunPersistenceStore {
+  cleanupCalls = 0;
+
+  override async cleanupExpired(...args: Parameters<InMemoryTriageRunPersistenceStore["cleanupExpired"]>) {
+    this.cleanupCalls += 1;
+    return super.cleanupExpired(...args);
+  }
+}
+
+async function eventually(assertion: () => void): Promise<void> {
+  const deadline = Date.now() + 500;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
   }
 }
 

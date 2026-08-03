@@ -118,6 +118,7 @@ function stripReadOnlyApprovalArtifacts(
   }
 
   const {
+    dryRun: _dryRun,
     stagedAction: _stagedAction,
     approvalRequest: _approvalRequest,
     ...safeMitigationControl

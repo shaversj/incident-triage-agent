@@ -23,6 +23,28 @@ test("loadConfig reads required MiniMax values", () => {
   expect(config.redacted.MINIMAX_API_KEY).toBe("<redacted>");
 });
 
+test("process environment overrides dotenv values", () => {
+  const envFile = writeTempEnv([
+    "MINIMAX_API_KEY=dotenv-key",
+    "MODEL_NAME=DotenvModel",
+    "AI_OPERATOR_MODE=local",
+    "DATABASE_URL=postgres://dotenv",
+  ].join("\n"));
+
+  const appConfig = loadConfig(envFile, {
+    MINIMAX_API_KEY: "process-key",
+    MODEL_NAME: "ProcessModel",
+  });
+  const operatorMode = loadOperatorMode(envFile, { AI_OPERATOR_MODE: "read_only" }, { command: "serve" });
+  const persistence = loadPersistenceConfig(envFile, { DATABASE_URL: "postgres://process" });
+
+  expect(appConfig.minimaxApiKey).toBe("process-key");
+  expect(appConfig.modelName).toBe("ProcessModel");
+  expect(operatorMode.mode).toBe("read_only");
+  expect(operatorMode.capabilities.approvalStaging).toBe(false);
+  expect(persistence.databaseUrl).toBe("postgres://process");
+});
+
 test("loadConfig reports missing names without secret values", () => {
   const envFile = writeTempEnv("MINIMAX_API_KEY=secret-key\n");
 
@@ -56,6 +78,7 @@ test("loadWebhookConfig reads secret and Loki values", () => {
       "LOKI_TIMEOUT_MS=2500",
       "LOKI_TENANT_ID=tenant-a",
       "LOKI_BEARER_TOKEN=loki-secret",
+      "OPERATOR_READ_TOKEN=read-secret",
     ].join("\n"),
   );
 
@@ -67,8 +90,10 @@ test("loadWebhookConfig reads secret and Loki values", () => {
   expect(config.lokiTimeoutMs).toBe(2500);
   expect(config.lokiTenantId).toBe("tenant-a");
   expect(config.lokiBearerToken).toBe("loki-secret");
+  expect(config.operatorReadToken).toBe("read-secret");
   expect(config.redacted.GRAFANA_WEBHOOK_SECRET).toBe("<redacted>");
   expect(config.redacted.LOKI_BEARER_TOKEN).toBe("<redacted>");
+  expect(config.redacted.OPERATOR_READ_TOKEN).toBe("<redacted>");
 });
 
 test("loadWebhookConfig requires secret without printing values", () => {
@@ -116,6 +141,12 @@ test("loadOperatorMode exposes read-only capabilities", () => {
 
 test("loadOperatorMode blocks execution-enabled mode until durable execution exists", () => {
   const envFile = writeTempEnv("AI_OPERATOR_MODE=execution_enabled\nGRAFANA_WEBHOOK_SECRET=webhook-secret\n");
+
+  expect(() => loadOperatorMode(envFile, {}, { command: "serve" })).toThrow("not available");
+});
+
+test("loadOperatorMode blocks approval mode until authenticated approvals exist", () => {
+  const envFile = writeTempEnv("AI_OPERATOR_MODE=approval\nGRAFANA_WEBHOOK_SECRET=webhook-secret\n");
 
   expect(() => loadOperatorMode(envFile, {}, { command: "serve" })).toThrow("not available");
 });

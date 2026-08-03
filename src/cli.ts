@@ -76,6 +76,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       if (operatorMode.mode === "read_only" && !persistenceConfig.databaseUrl) {
         throw new Error("DATABASE_URL is required when AI_OPERATOR_MODE=read_only.");
       }
+      if (operatorMode.mode === "read_only" && !webhookConfig.operatorReadToken) {
+        throw new Error("OPERATOR_READ_TOKEN is required when AI_OPERATOR_MODE=read_only.");
+      }
       if (persistenceConfig.databaseUrl) {
         runStore = new PostgresTriageRunPersistenceStore({ connectionString: persistenceConfig.databaseUrl });
         await runStore.migrate?.();
@@ -107,6 +110,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       lokiLimit: webhookConfig.lokiLimit,
       mode: operatorMode.mode,
     };
+    if (webhookConfig.operatorReadToken) {
+      Object.assign(runtime, { operatorReadToken: webhookConfig.operatorReadToken });
+    }
     if (operatorMode.capabilities.approvalStaging) {
       Object.assign(runtime, { approvalStorePath: parsed.approvalStorePath });
     }

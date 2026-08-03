@@ -73,7 +73,7 @@ test("recorded triage output groups input separately from run decision and safet
 });
 
 test("read-only canary verifies signed ingestion persistence replay and no approval artifacts", () => {
-  const result = spawnSync("npx", ["tsx", "scripts/run-recorded-triage.ts", "--read-only-canary", "--json"], {
+  const result = spawnSync("npm", ["run", "--silent", "triage:read-only-canary", "--", "--json"], {
     cwd: process.cwd(),
     encoding: "utf8",
   });
@@ -84,14 +84,17 @@ test("read-only canary verifies signed ingestion persistence replay and no appro
   expect(summary.canary).toMatchObject({
     passed: true,
     read_only_mode: true,
+    persistence_store: "memory",
     persisted_run: true,
     persisted_evidence_snapshot: true,
+    authenticated_review_retrieval: true,
     replay_rejected: true,
     approval_routes_disabled: true,
     approval_artifacts_absent: true,
     read_only_decision_recorded: true,
   });
   expect(summary.safety.staged_payload).toBeUndefined();
+  expect(summary.mitigation_control.dry_run).toBeUndefined();
   expect(summary.mitigation_control.staged_action).toBeUndefined();
   expect(summary.mitigation_control.approval_request).toBeUndefined();
   expect(result.stdout).not.toContain("recorded-triage-secret");

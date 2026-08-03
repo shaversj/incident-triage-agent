@@ -18,6 +18,7 @@ export interface LokiClientOptions {
   tenantId?: string;
   bearerToken?: string;
   redactPatterns?: RegExp[];
+  maxResponseBytes?: number;
 }
 
 export class LokiClient {
@@ -25,6 +26,7 @@ export class LokiClient {
   private readonly tenantId: string | undefined;
   private readonly bearerToken: string | undefined;
   private readonly redactPatterns: readonly RegExp[];
+  private readonly maxResponseBytes: number;
 
   constructor(
     private readonly baseUrl: string,
@@ -36,6 +38,7 @@ export class LokiClient {
     this.tenantId = options.tenantId;
     this.bearerToken = options.bearerToken;
     this.redactPatterns = options.redactPatterns ?? defaultRedactPatterns;
+    this.maxResponseBytes = options.maxResponseBytes ?? 1_000_000;
   }
 
   async queryRange(
@@ -63,7 +66,8 @@ export class LokiClient {
       if (!response.ok) {
         throw new LokiClientError(`Loki HTTP error: ${response.status}.`);
       }
-      return entriesFromPayload(await response.json(), limit)
+      const payload = await readJsonWithLimit(response, this.maxResponseBytes, () => controller.abort());
+      return entriesFromPayload(payload, limit)
         .map((entry) => ({ ...entry, line: this.redact(entry.line) }));
     } catch (error) {
       if (error instanceof LokiClientError) {
@@ -81,7 +85,7 @@ export class LokiClient {
       source: "log",
       sourceTier: "operational_context",
       summary: entry.line,
-      detail: `${entry.timestampNs} ${Object.entries(entry.labels).sort().map(([key, value]) => `${key}=${value}`).join(", ")}`.trim(),
+      detail: `${entry.timestampNs} ${Object.entries(entry.labels).sort().map(([key, value]) => `${key}=${redactDefault(value)}`).join(", ")}`.trim(),
     }));
   }
 
@@ -101,14 +105,72 @@ export class LokiClient {
   }
 
   private redact(value: string): string {
-    return this.redactPatterns.reduce((text, pattern) => text.replace(pattern, "<redacted>"), value);
+    return redactValue(value, this.redactPatterns);
   }
 }
 
 const defaultRedactPatterns = [
   /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g,
+  /\b(?:authorization:\s*)?(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]+\b/gi,
   /\b(?:api[_-]?key|token|secret|password)=\S+/gi,
 ] as const;
+
+function redactDefault(value: string): string {
+  return redactValue(value, defaultRedactPatterns);
+}
+
+function redactValue(value: string, patterns: readonly RegExp[]): string {
+  return patterns.reduce((text, pattern) => text.replace(pattern, "<redacted>"), value);
+}
+
+async function readJsonWithLimit(response: Response, maxBytes: number, abort: () => void): Promise<unknown> {
+  const text = await readTextWithLimit(response, maxBytes, abort);
+  return JSON.parse(text) as unknown;
+}
+
+async function readTextWithLimit(response: Response, maxBytes: number, abort: () => void): Promise<string> {
+  if (!response.body) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > maxBytes) {
+      throw new LokiClientError(`Loki response exceeded ${maxBytes} bytes.`);
+    }
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        abort();
+        throw new LokiClientError(`Loki response exceeded ${maxBytes} bytes.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(concatChunks(chunks, totalBytes));
+}
+
+function concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined;
+}
 
 function selector(labels: Record<string, string>): string {
   const entries = Object.entries(labels);
