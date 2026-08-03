@@ -22,10 +22,41 @@ export interface WebhookConfig {
   grafanaWebhookSecret: string;
   lokiBaseUrl: string;
   lokiLimit: number;
+  lokiTimeoutMs: number;
+  lokiTenantId?: string;
+  lokiBearerToken?: string;
+  operatorReadToken?: string;
   redacted: {
     GRAFANA_WEBHOOK_SECRET: "<redacted>";
     LOKI_BASE_URL: string;
     LOKI_LIMIT: string;
+    LOKI_TIMEOUT_MS: string;
+    LOKI_TENANT_ID?: string;
+    LOKI_BEARER_TOKEN?: "<redacted>";
+    OPERATOR_READ_TOKEN?: "<redacted>";
+  };
+}
+
+export const operatorModes = ["local", "read_only", "approval", "execution_enabled"] as const;
+
+export type OperatorMode = (typeof operatorModes)[number];
+
+export interface OperatorModeConfig {
+  mode: OperatorMode;
+  capabilities: {
+    readOnlyTriage: boolean;
+    approvalStaging: boolean;
+    execution: boolean;
+  };
+  redacted: {
+    AI_OPERATOR_MODE: OperatorMode;
+  };
+}
+
+export interface PersistenceConfig {
+  databaseUrl?: string;
+  redacted: {
+    DATABASE_URL?: "<redacted>";
   };
 }
 
@@ -59,7 +90,7 @@ export function loadConfig(
   envPath = ".env",
   environ: Record<string, string | undefined> = process.env,
 ): AppConfig {
-  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const source = loadEnvironment(envPath, environ);
   const missing = ["MINIMAX_API_KEY", "MODEL_NAME"].filter((name) => !source[name]);
   if (missing.length > 0) {
     throw new ConfigError(`Missing required configuration: ${missing.join(", ")}.`);
@@ -87,7 +118,7 @@ export function loadWebhookConfig(
   envPath = ".env",
   environ: Record<string, string | undefined> = process.env,
 ): WebhookConfig {
-  const source = { ...definedValues(environ), ...loadDotenv(envPath) };
+  const source = loadEnvironment(envPath, environ);
   const secret = source.GRAFANA_WEBHOOK_SECRET;
   if (!secret) {
     throw new ConfigError("Missing required configuration: GRAFANA_WEBHOOK_SECRET.");
@@ -103,14 +134,79 @@ export function loadWebhookConfig(
   }
 
   const lokiBaseUrl = source.LOKI_BASE_URL ?? "http://localhost:3100";
-  return {
+  const lokiTimeoutMs = parsePositiveInteger(source.LOKI_TIMEOUT_MS ?? "10000", "LOKI_TIMEOUT_MS");
+  const config: WebhookConfig = {
     grafanaWebhookSecret: secret,
     lokiBaseUrl,
     lokiLimit,
+    lokiTimeoutMs,
     redacted: {
       GRAFANA_WEBHOOK_SECRET: "<redacted>",
       LOKI_BASE_URL: lokiBaseUrl,
       LOKI_LIMIT: `${lokiLimit}`,
+      LOKI_TIMEOUT_MS: `${lokiTimeoutMs}`,
+    },
+  };
+  if (source.LOKI_TENANT_ID) {
+    config.lokiTenantId = source.LOKI_TENANT_ID;
+    config.redacted.LOKI_TENANT_ID = source.LOKI_TENANT_ID;
+  }
+  if (source.LOKI_BEARER_TOKEN) {
+    config.lokiBearerToken = source.LOKI_BEARER_TOKEN;
+    config.redacted.LOKI_BEARER_TOKEN = "<redacted>";
+  }
+  if (source.OPERATOR_READ_TOKEN) {
+    config.operatorReadToken = source.OPERATOR_READ_TOKEN;
+    config.redacted.OPERATOR_READ_TOKEN = "<redacted>";
+  }
+  return config;
+}
+
+export function loadOperatorMode(
+  envPath = ".env",
+  environ: Record<string, string | undefined> = process.env,
+  options: { command?: string } = {},
+): OperatorModeConfig {
+  const source = loadEnvironment(envPath, environ);
+  const rawMode = source.AI_OPERATOR_MODE;
+  const hasRealIntegrationConfig = [
+    "GRAFANA_WEBHOOK_SECRET",
+    "LOKI_BASE_URL",
+    "MINIMAX_API_KEY",
+    "DATABASE_URL",
+  ].some((name) => Boolean(source[name]));
+
+  if (!rawMode && options.command === "serve" && hasRealIntegrationConfig) {
+    throw new ConfigError("AI_OPERATOR_MODE must be set explicitly for serve when real integration configuration is present.");
+  }
+
+  const mode = rawMode ? parseOperatorMode(rawMode) : "local";
+  if (mode === "approval" || mode === "execution_enabled") {
+    throw new ConfigError(`AI_OPERATOR_MODE=${mode} is not available until authenticated approvals and bounded executors are implemented.`);
+  }
+
+  return {
+    mode,
+    capabilities: capabilitiesForMode(mode),
+    redacted: {
+      AI_OPERATOR_MODE: mode,
+    },
+  };
+}
+
+export function loadPersistenceConfig(
+  envPath = ".env",
+  environ: Record<string, string | undefined> = process.env,
+): PersistenceConfig {
+  const source = loadEnvironment(envPath, environ);
+  const databaseUrl = source.DATABASE_URL;
+  if (!databaseUrl) {
+    return { redacted: {} };
+  }
+  return {
+    databaseUrl,
+    redacted: {
+      DATABASE_URL: "<redacted>",
     },
   };
 }
@@ -126,6 +222,10 @@ function definedValues(source: Record<string, string | undefined>): Record<strin
   return Object.fromEntries(Object.entries(source).filter((entry): entry is [string, string] => entry[1] !== undefined));
 }
 
+function loadEnvironment(envPath: string, environ: Record<string, string | undefined>): Record<string, string> {
+  return { ...loadDotenv(envPath), ...definedValues(environ) };
+}
+
 function stripQuotes(value: string): string {
   if (
     (value.startsWith("\"") && value.endsWith("\"")) ||
@@ -134,4 +234,32 @@ function stripQuotes(value: string): string {
     return value.slice(1, -1);
   }
   return value;
+}
+
+function parseOperatorMode(value: string): OperatorMode {
+  const normalized = value.trim();
+  if (isOperatorMode(normalized)) {
+    return normalized;
+  }
+  throw new ConfigError(`AI_OPERATOR_MODE must be one of ${operatorModes.join(", ")}.`);
+}
+
+function parsePositiveInteger(value: string, label: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isInteger(parsed) || `${parsed}` !== value.trim() || parsed <= 0) {
+    throw new ConfigError(`${label} must be a positive integer.`);
+  }
+  return parsed;
+}
+
+function isOperatorMode(value: string): value is OperatorMode {
+  return (operatorModes as readonly string[]).includes(value);
+}
+
+function capabilitiesForMode(mode: OperatorMode): OperatorModeConfig["capabilities"] {
+  return {
+    readOnlyTriage: true,
+    approvalStaging: mode === "local",
+    execution: mode === "execution_enabled",
+  };
 }

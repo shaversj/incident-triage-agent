@@ -20,13 +20,14 @@ The `incident-triage` skill should make its bounded judgment by following a huma
 Primary TypeScript code lives in `src/`:
 
 - `cli.ts`: command-line interface.
-- `config.ts`: `.env` loading for MiniMax and webhook config.
+- `config.ts`: `.env` loading for MiniMax, webhook config, and operator capability mode.
 - `domain.ts`: taxonomy, fixture loading, and raw incident validation.
 - `evidence.ts`: deterministic SRE context tools and evidence package construction.
 - `grafana.ts`: Grafana webhook payload normalization into raw incidents.
 - `loki.ts`: bounded Loki query client and log evidence conversion.
 - `llm.ts`: Flue-backed MiniMax decision adapter and decision validation.
 - `mitigation-control.ts`: catalog-backed mitigation governance, dry-run, staged action, audit, and verification simulation.
+- `persistence/`: Phase 1 run/evidence/replay persistence interfaces, in-memory test store, Postgres store, and SQL migrations.
 - `policy.ts`: safety compatibility gate derived from mitigation governance.
 - `recorded-observability.ts`: recorded Loki-shaped log replay for recorded triage runs and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
@@ -57,7 +58,7 @@ npm run triage -- run checkout-payment-timeout --trace
 Run the webhook server locally with mock LLM output:
 
 ```bash
-npm run serve -- --mock-llm
+AI_OPERATOR_MODE=local npm run serve -- --mock-llm
 ```
 
 Run the recorded observability triage path:
@@ -72,6 +73,7 @@ Useful verification before handing off changes:
 
 ```bash
 npm test
+npm run triage:read-only-canary -- --json
 npm run evals
 npm run typecheck
 git diff --check
@@ -86,6 +88,7 @@ git diff --check
 - Keep bad-deploy webhook evidence raw. Deployment facts belong in deploy evidence fixtures or real deploy sources, not rollback hints inside Grafana annotations.
 - Keep Loki lookup bounded by service labels, time window, and result limit before prompt assembly.
 - Keep webhook secrets out of output and logs. Use `X-Webhook-Secret` only as an auth boundary, never as evidence.
+- Production-shaped Grafana webhook handling must use HMAC over the raw request body with timestamp freshness and replay protection.
 - Do not let LLM output drive workflow state until local validation passes.
 - Treat workflow-authored investigation steps as factual trace data. Do not let the LLM claim it called tools or gathered evidence.
 - Treat LLM-authored hypotheses, finding summaries, and recommendation rationales as non-authoritative explanation. They can be dropped or degraded without blocking a valid bounded decision.
@@ -94,12 +97,16 @@ git diff --check
 - Keep the incident class taxonomy bounded to `dependency_outage`, `bad_deploy`, `capacity_saturation`, `noisy_alert`, `insufficient_context`, and `unknown`.
 - Keep the next action taxonomy bounded to `escalate_owner`, `request_rollback_approval`, `apply_runbook_step_with_approval`, `continue_monitoring`, `ask_human`, and `gather_more_context`.
 - Approval-sensitive actions must be staged and audited, not executed.
+- `AI_OPERATOR_MODE=read_only` must not emit approval requests, staged actions, simulated action state, or approval-store writes.
+- `serve` with real integration configuration must require an explicit `AI_OPERATOR_MODE`; do not let missing mode fall back into local approval behavior.
+- `DATABASE_URL` enables Phase 1 Postgres persistence; default tests must keep using mocked or in-memory stores and must not require Docker.
 - Mitigation Control Plane outputs must keep simulated dry-run, staged action, and audit records at `executed: false`.
 - The scorecard must remain deterministic. Do not use the LLM to grade its own run.
 - Outcome tests should assert the operator-facing contract: bounded decisions, evidence citations, investigation envelope, explanation validation, provenance support, mitigation governance, safety behavior, and recoverable failure handling.
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Recorded observability tests should replay Grafana webhook payloads and Loki-shaped logs through real handler and workflow code.
+- The Phase 1 read-only canary must keep signed webhook ingestion, run persistence, evidence snapshot persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts intact.
 - The default suite must not start Docker, Grafana, Loki, or a synthetic service.
 - Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
 - Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.

@@ -12,6 +12,12 @@ Run deterministic evals:
 npm run evals
 ```
 
+Run the Phase 1 read-only canary:
+
+```bash
+npm run triage:read-only-canary -- --json
+```
+
 Write a JSON report:
 
 ```bash
@@ -31,6 +37,8 @@ RUN_LIVE_FLUE_EVALS=1 npm run evals
 ```
 
 Live evals require `.env` values for `MINIMAX_API_KEY` and `MODEL_NAME`.
+
+The read-only canary also supports `--live`; it still uses recorded Grafana and Loki-shaped inputs, and it keeps production mutation paths disabled.
 
 ## Eval Layers
 

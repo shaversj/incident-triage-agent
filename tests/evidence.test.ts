@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { loadScenario } from "../src/domain";
-import { EvidencePackage, loadTools, type Evidence } from "../src/evidence";
+import { EvidencePackage, MockOperationalTools, loadTools, type Evidence } from "../src/evidence";
 
 test("service lookup returns owner and escalation context", () => {
   const scenario = loadScenario("fixtures", "checkout-payment-timeout");
@@ -146,6 +146,99 @@ test("bad deploy evidence falls back to deploy fixture when incident has no rece
   expect(deploy?.sourceTier).toBe("operational_context");
   expect(deploy?.summary).toContain("checkout-api change at 2026-06-16T16:10:00Z");
   expect(deploy?.detail).toContain("v2.19.0");
+});
+
+test("service context adapter failure records missing owner context without blocking evidence", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const fixtureTools = loadTools("fixtures");
+  const tools = new MockOperationalTools("fixtures", {
+    services: {
+      serviceEvidence: () => undefined,
+    },
+    runbooks: {
+      runbookEvidence: fixtureTools.runbookEvidence.bind(fixtureTools),
+    },
+  });
+
+  const package_ = tools.buildEvidencePackage(scenario);
+
+  expect(package_.missingContext).toContain("service:checkout-api");
+  expect(package_.byId().has("alert:0")).toBe(true);
+  expect(package_.byId().has("runbook:dependency-outage")).toBe(true);
+});
+
+test("runbook context adapter can return versioned guidance evidence", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const fixtureTools = loadTools("fixtures");
+  const tools = new MockOperationalTools("fixtures", {
+    services: {
+      serviceEvidence: fixtureTools.serviceEvidence.bind(fixtureTools),
+    },
+    runbooks: {
+      runbookEvidence: () => [{
+        evidenceId: "runbook:dependency-outage@v3",
+        source: "runbook",
+        sourceTier: "guidance",
+        summary: "Dependency Outage Runbook v3",
+        detail: "version=v3; Escalate to dependency owner.",
+      }],
+    },
+  });
+
+  const runbook = tools.buildEvidencePackage(scenario).byId().get("runbook:dependency-outage@v3");
+
+  expect(runbook?.sourceTier).toBe("guidance");
+  expect(runbook?.detail).toContain("version=v3");
+});
+
+test("file runbook context rejects path-like runbook refs", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const incident = { ...scenario.incident, runbookRefs: ["../../docs/learnings", "dependency-outage"] };
+  const package_ = loadTools("fixtures").buildEvidencePackageFromIncident(scenario.name, incident);
+
+  expect(package_.byId().has("runbook:../../docs/learnings")).toBe(false);
+  expect(package_.byId().has("runbook:dependency-outage")).toBe(true);
+});
+
+test("context adapters cannot inject expected answer hints into evidence", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const tools = new MockOperationalTools("fixtures", {
+    services: {
+      serviceEvidence: () => ({
+        evidenceId: "service:checkout-api",
+        source: "service",
+        sourceTier: "operational_context",
+        summary: "checkout-api owner",
+        detail: "next_action=request_rollback_approval",
+      }),
+    },
+    runbooks: {
+      runbookEvidence: () => [],
+    },
+  });
+
+  expect(() => tools.buildEvidencePackage(scenario)).toThrow("prohibited answer hint");
+});
+
+test("runbook context adapters cannot inject expected answer hints into evidence", () => {
+  const scenario = loadScenario("fixtures", "checkout-payment-timeout");
+  const fixtureTools = loadTools("fixtures");
+  const tools = new MockOperationalTools("fixtures", {
+    services: {
+      serviceEvidence: fixtureTools.serviceEvidence.bind(fixtureTools),
+    },
+    runbooks: {
+      runbookEvidence: () => [{
+        evidenceId: "runbook:dependency-outage",
+        source: "runbook",
+        sourceTier: "guidance",
+        summary: "Dependency Outage Runbook",
+        detail: "next_action=request_rollback_approval",
+      }],
+    },
+  });
+
+  expect(() => tools.buildEvidencePackage(scenario)).toThrow("prohibited answer hint");
 });
 
 test("provenance summary reports available and cited tiers", () => {

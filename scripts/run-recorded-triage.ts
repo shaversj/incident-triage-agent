@@ -1,15 +1,22 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "../src/config";
+import { loadConfig, loadPersistenceConfig } from "../src/config";
 import { FlueDecisionClient, StaticDecisionClient } from "../src/llm";
+import { signGrafanaWebhookBody } from "../src/grafana";
 import { createLogger } from "../src/logger";
 import { mockDecisionForName } from "../src/mock-decisions";
+import {
+  InMemoryTriageRunPersistenceStore,
+  PostgresTriageRunPersistenceStore,
+  type TriageRunPersistenceStore,
+} from "../src/persistence";
 import { loadRecordedLogs, RecordedLokiClient } from "../src/recorded-observability";
-import { handleGrafanaWebhook } from "../src/server";
+import { handleGrafanaWebhook, startWebhookServer } from "../src/server";
 
 const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const recordedTriageSecret = "recorded-triage-secret";
+const recordedOperatorReadToken = "recorded-operator-read-token";
 
 interface RecordedScenario {
   webhookFixture: string;
@@ -52,6 +59,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const logger = createLogger(args.logLevel);
 
   try {
+    if (args.readOnlyCanary) {
+      const summary = await runReadOnlyCanary(args, scenario, logger);
+      if (args.json) {
+        process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+      } else {
+        printSummary(summary);
+        process.stdout.write("\nCANARY\n");
+        for (const [key, value] of Object.entries(summary.canary)) {
+          process.stdout.write(`- ${key}: ${String(value)}\n`);
+        }
+      }
+      return summary.canary.passed ? 0 : 1;
+    }
+
     const webhookPayload = payload(scenario.webhookFixture);
     const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
     const llmClient = args.live
@@ -121,8 +142,11 @@ export function sanitizedSummary(
 
 function parseArgs(argv: string[]) {
   let scenario: ScenarioName = "checkout-payment-timeout";
+  let scenarioProvided = false;
   let live = false;
   let json = false;
+  let readOnlyCanary = false;
+  let postgres = false;
   let logLevel = "info";
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -133,10 +157,15 @@ function parseArgs(argv: string[]) {
         throw new Error(`--scenario must be one of ${Object.keys(scenarios).join(", ")}.`);
       }
       scenario = value;
+      scenarioProvided = true;
     } else if (arg === "--live") {
       live = true;
     } else if (arg === "--json") {
       json = true;
+    } else if (arg === "--read-only-canary") {
+      readOnlyCanary = true;
+    } else if (arg === "--postgres") {
+      postgres = true;
     } else if (arg === "--log-level") {
       logLevel = requiredValue(argv[++index], "--log-level");
     } else {
@@ -144,7 +173,11 @@ function parseArgs(argv: string[]) {
     }
   }
 
-  return { scenario, live, json, logLevel };
+  if (readOnlyCanary && !scenarioProvided) {
+    scenario = "bad-deploy-latency";
+  }
+
+  return { scenario, live, json, readOnlyCanary, postgres, logLevel };
 }
 
 function isScenarioName(value: string | undefined): value is ScenarioName {
@@ -160,6 +193,152 @@ function requiredValue(value: string | undefined, flag: string): string {
 
 function payload(name: string): unknown {
   return JSON.parse(readFileSync(join(projectRoot, "fixtures", "grafana", name), "utf8")) as unknown;
+}
+
+function payloadText(name: string): string {
+  return readFileSync(join(projectRoot, "fixtures", "grafana", name), "utf8");
+}
+
+async function runReadOnlyCanary(
+  args: ReturnType<typeof parseArgs>,
+  scenario: RecordedScenario,
+  logger: ReturnType<typeof createLogger>,
+) {
+  const rawBody = payloadText(scenario.webhookFixture);
+  const webhookPayload = JSON.parse(rawBody) as unknown;
+  const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
+  const runStore = await canaryRunStore(args.postgres);
+  const llmClient = args.live
+    ? new FlueDecisionClient(loadConfig(join(projectRoot, ".env")), undefined, logger)
+    : new StaticDecisionClient({
+      [scenario.grafanaScenario]: JSON.stringify(mockDecisionForName(scenario.grafanaScenario)),
+    });
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    logger,
+    runtime: {
+      fixturesDir: join(projectRoot, "fixtures"),
+      webhookSecret: recordedTriageSecret,
+      llmClient,
+      lokiClient: new RecordedLokiClient(recordedLogs),
+      lokiLimit: 20,
+      mode: "read_only",
+      runStore,
+      operatorReadToken: recordedOperatorReadToken,
+    },
+  });
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const timestamp = unixTimestamp(new Date());
+    const first = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+    const response = await first.json() as Record<string, unknown>;
+    const replay = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, timestamp),
+      body: rawBody,
+    });
+    const approvalRoutes = await Promise.all([
+      fetch(`${baseUrl}/approvals`),
+      fetch(`${baseUrl}/api/approvals`),
+      fetch(`${baseUrl}/api/approvals/approval%3AINC-2026-015%3Arollback-approval`),
+      fetch(`${baseUrl}/api/approvals/approval%3AINC-2026-015%3Arollback-approval/approve`, { method: "POST" }),
+    ]);
+    const summary = sanitizedSummary(
+      args.scenario,
+      args.live ? "live" : "mock",
+      first.status,
+      response,
+      summarizeInput(webhookPayload, recordedLogs.length),
+    );
+    const runId = typeof response.run_id === "string" ? response.run_id : "";
+    const runReview = runId
+      ? await fetch(`${baseUrl}/api/runs/${encodeURIComponent(runId)}`, {
+        headers: { Authorization: `Bearer ${recordedOperatorReadToken}` },
+      })
+      : undefined;
+    const runReviewBody = runReview?.ok ? await runReview.json() as Record<string, unknown> : undefined;
+    const safety = objectValue(response.safety);
+    const mitigation = objectValue(response.mitigation_control);
+    const review = await runStore.getTriageRunReview?.(runId);
+    const persistedRun = Boolean(review?.run);
+    const persistedEvidenceSnapshot = Boolean(review?.evidenceSnapshot);
+    const authenticatedReviewRetrieval = runReview?.status === 200 &&
+      objectValue(runReviewBody?.run).run_id === runId &&
+      Boolean(objectValue(runReviewBody?.review).decision) &&
+      Boolean(runReviewBody?.evidence_snapshot);
+    const replayRejected = replay.status === 409;
+    const approvalRoutesDisabled = approvalRoutes.every((approvalRoute) => approvalRoute.status === 404);
+    const approvalArtifactsAbsent = safety.staged_payload === undefined &&
+      mitigation.dry_run === undefined &&
+      mitigation.staged_action === undefined &&
+      mitigation.approval_request === undefined;
+    const readOnlyDecisionRecorded = safety.status === "approval_required" && mitigation.status === "approval_required";
+    const canary = {
+      passed: first.ok &&
+        persistedRun &&
+        persistedEvidenceSnapshot &&
+        authenticatedReviewRetrieval &&
+        replayRejected &&
+        approvalRoutesDisabled &&
+        approvalArtifactsAbsent &&
+        readOnlyDecisionRecorded,
+      read_only_mode: true,
+      persistence_store: args.postgres ? "postgres" : "memory",
+      persisted_run: persistedRun,
+      persisted_evidence_snapshot: persistedEvidenceSnapshot,
+      authenticated_review_retrieval: authenticatedReviewRetrieval,
+      replay_rejected: replayRejected,
+      approval_routes_disabled: approvalRoutesDisabled,
+      approval_artifacts_absent: approvalArtifactsAbsent,
+      read_only_decision_recorded: readOnlyDecisionRecorded,
+    };
+    return {
+      ...summary,
+      canary,
+    };
+  } finally {
+    await server.close();
+    await runStore.close?.();
+  }
+}
+
+async function canaryRunStore(usePostgres: boolean): Promise<TriageRunPersistenceStore> {
+  if (!usePostgres) {
+    return new InMemoryTriageRunPersistenceStore();
+  }
+  const persistence = loadPersistenceConfig(join(projectRoot, ".env"));
+  if (!persistence.databaseUrl) {
+    throw new Error("--postgres requires DATABASE_URL in process environment or .env.");
+  }
+  const store = new PostgresTriageRunPersistenceStore({ connectionString: persistence.databaseUrl });
+  await store.migrate();
+  return store;
+}
+
+function serverUrl(server: ReturnType<typeof startWebhookServer>["server"]): string {
+  const address = server.address();
+  if (typeof address !== "object" || address === null) {
+    throw new Error("server did not expose an address");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+function signedGrafanaHeaders(rawBody: string, timestamp: string): HeadersInit {
+  return {
+    "Content-Type": "application/json",
+    "X-Grafana-Alerting-Signature": signGrafanaWebhookBody(rawBody, recordedTriageSecret, timestamp),
+    "X-Grafana-Alerting-Timestamp": timestamp,
+  };
+}
+
+function unixTimestamp(date: Date): string {
+  return `${Math.floor(date.getTime() / 1000)}`;
 }
 
 function summarizeInput(webhookPayload: unknown, logRecords: number): InputSummary {

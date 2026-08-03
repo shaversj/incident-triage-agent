@@ -1,4 +1,4 @@
-import { loadConfig, loadWebhookConfig } from "./config";
+import { loadConfig, loadOperatorMode, loadPersistenceConfig, loadWebhookConfig } from "./config";
 import { defaultApprovalStorePath } from "./approval-store";
 import { type Scenario, listScenarios, loadScenario } from "./domain";
 import { loadTools } from "./evidence";
@@ -6,6 +6,7 @@ import { FlueDecisionClient, StaticDecisionClient } from "./llm";
 import { createLogger, type TriageLogger } from "./logger";
 import { mockDecisionForScenario, mockDecisionResponses } from "./mock-decisions";
 import { LokiClient } from "./loki";
+import { PostgresTriageRunPersistenceStore, type TriageRunPersistenceStore } from "./persistence";
 import { startWebhookServer } from "./server";
 import type { SafetyResult } from "./policy";
 import type { MitigationControlResult } from "./mitigation-control";
@@ -66,38 +67,78 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.command === "serve") {
     let llmClient;
     let webhookConfig;
+    let operatorMode;
+    let runStore: TriageRunPersistenceStore | undefined;
     try {
+      operatorMode = loadOperatorMode(".env", process.env, { command: "serve" });
       webhookConfig = loadWebhookConfig(".env");
+      const persistenceConfig = loadPersistenceConfig(".env");
+      if (operatorMode.mode === "read_only" && !persistenceConfig.databaseUrl) {
+        throw new Error("DATABASE_URL is required when AI_OPERATOR_MODE=read_only.");
+      }
+      if (operatorMode.mode === "read_only" && !webhookConfig.operatorReadToken) {
+        throw new Error("OPERATOR_READ_TOKEN is required when AI_OPERATOR_MODE=read_only.");
+      }
+      if (persistenceConfig.databaseUrl) {
+        runStore = new PostgresTriageRunPersistenceStore({ connectionString: persistenceConfig.databaseUrl });
+        await runStore.migrate?.();
+      }
       llmClient = parsed.mockLlm
         ? new StaticDecisionClient(mockDecisionResponses())
         : await liveDecisionClient(logger);
     } catch (error) {
+      await runStore?.close?.();
       console.error(`Runtime error: ${error instanceof Error ? error.message : String(error)}`);
       return 2;
+    }
+
+    const lokiOptions = {
+      timeoutMs: webhookConfig.lokiTimeoutMs,
+    };
+    if (webhookConfig.lokiTenantId) {
+      Object.assign(lokiOptions, { tenantId: webhookConfig.lokiTenantId });
+    }
+    if (webhookConfig.lokiBearerToken) {
+      Object.assign(lokiOptions, { bearerToken: webhookConfig.lokiBearerToken });
+    }
+
+    const runtime = {
+      fixturesDir: parsed.fixturesDir,
+      webhookSecret: webhookConfig.grafanaWebhookSecret,
+      llmClient,
+      lokiClient: new LokiClient(webhookConfig.lokiBaseUrl, lokiOptions),
+      lokiLimit: webhookConfig.lokiLimit,
+      mode: operatorMode.mode,
+    };
+    if (webhookConfig.operatorReadToken) {
+      Object.assign(runtime, { operatorReadToken: webhookConfig.operatorReadToken });
+    }
+    if (operatorMode.capabilities.approvalStaging) {
+      Object.assign(runtime, { approvalStorePath: parsed.approvalStorePath });
+    }
+    if (runStore) {
+      Object.assign(runtime, { runStore });
     }
 
     const server = startWebhookServer({
       host: parsed.host,
       port: parsed.port,
       logger,
-      runtime: {
-        fixturesDir: parsed.fixturesDir,
-        webhookSecret: webhookConfig.grafanaWebhookSecret,
-        llmClient,
-        lokiClient: new LokiClient(webhookConfig.lokiBaseUrl),
-        lokiLimit: webhookConfig.lokiLimit,
-        approvalStorePath: parsed.approvalStorePath,
-      },
+      runtime,
     });
     logger.info({
       component: "cli",
       host: parsed.host,
       port: parsed.port,
       mockLlm: parsed.mockLlm,
+      mode: operatorMode.mode,
+      approvalStaging: operatorMode.capabilities.approvalStaging,
+      execution: operatorMode.capabilities.execution,
     }, "Starting webhook server");
     await server.ready;
     logger.info({ component: "cli", host: parsed.host, port: parsed.port }, "Webhook server ready");
     await server.closed;
+    await runStore?.close?.();
     return 0;
   }
 

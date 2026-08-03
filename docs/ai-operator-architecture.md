@@ -47,12 +47,27 @@ flowchart LR
 
 The key design choice is the authority split. The LLM can explain and classify, but it cannot create catalog entries, approve actions, execute mitigations, score itself, or decide that production mutation happened.
 
+## Phase 1 Production Read-Only Mode
+
+`AI_OPERATOR_MODE=read_only` is the first productionization boundary.
+
+In this mode, the server can accept real production-shaped signals while removing approval and actuation authority:
+
+- Grafana webhooks require HMAC over the raw request body with timestamp freshness.
+- Duplicate signed webhook payloads are rejected through replay-key persistence when a run store is configured.
+- Loki queries are bounded by service label, alert start/end window, limit, direction, timeout, optional tenant, and optional bearer auth.
+- Service ownership and runbooks are loaded through context-source adapter interfaces.
+- Run envelopes, evidence snapshots, scorecards, retention class, expiry, and correlation IDs can be persisted to Postgres.
+- Approval requests, staged actions, approval-store writes, approval UI/API routes, and executor behavior are disabled.
+
+The review path for a Phase 1 incident is the persisted run envelope plus evidence snapshot, not an approval queue.
+
 ## Trust Boundaries
 
 | Boundary | Owned by | Trusted for | Not trusted for |
 | --- | --- | --- | --- |
-| Grafana webhook normalization | deterministic code | Raw alert facts and incident envelope | Root cause or mitigation recommendation |
-| Loki-shaped log replay/query | deterministic code | Operational log evidence | Expected answer or hidden labels |
+| Grafana webhook normalization | deterministic code | Signed raw alert facts and incident envelope | Root cause or mitigation recommendation |
+| Loki-shaped log replay/query | deterministic code | Bounded, redacted operational log evidence | Expected answer or hidden labels |
 | Evidence package | deterministic code | Prompt input, source tiers, stable evidence IDs | Freeform model claims |
 | Flue/MiniMax decision | LLM through adapter | Explanation and bounded judgment candidate | Workflow state, action safety, approval, execution |
 | Local validation | deterministic code | Whether model output is admissible | Semantic truth beyond available evidence |
@@ -83,8 +98,8 @@ Deterministic code owns the harness:
 - Validates the LLM response before the workflow trusts it.
 - Computes provenance from cited evidence.
 - Applies mitigation governance through `fixtures/mitigations/catalog.json`.
-- Persists approvals in `.triage/approvals.json`.
-- Serves the approval console at `/approvals`.
+- Persists approvals in `.triage/approvals.json` for local/approval modes only.
+- Serves the approval console at `/approvals` outside read-only mode.
 - Records simulated executor output with `executed: false`.
 - Computes deterministic scorecards and eval gates.
 
@@ -171,6 +186,14 @@ Use this to inspect the operator-facing text path:
 npm run triage:recorded -- --scenario bad-deploy-latency
 ```
 
+### Phase 1 Read-Only Canary
+
+Use this to prove signed read-only ingestion, persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts:
+
+```bash
+npm run triage:read-only-canary -- --json
+```
+
 ### Scriptable Verification
 
 Use this in automation or review:
@@ -204,9 +227,11 @@ The scorecard is computed by code. The model never grades its own run.
 | Capability | Current state | Production integration point |
 | --- | --- | --- |
 | Alert ingestion | Grafana-shaped webhook fixtures and local webhook handler | Real Grafana alerts into the same handler |
-| Logs | Recorded Loki-shaped logs or bounded Loki client | Real Loki query with production auth and rate limits |
+| Alert authentication | HMAC raw-body verification with timestamp freshness and replay claims | Same mechanism with production Grafana contact point |
+| Logs | Recorded Loki-shaped logs or bounded Loki client | Real Loki query with production auth, tenant, timeouts, and rate limits |
 | LLM | MiniMax through Flue or deterministic mock client | Same adapter boundary, with model monitoring |
-| Runbooks | Local fixture-backed runbook evidence | Versioned runbook source of truth |
+| Run persistence | In-memory store or Postgres-backed Phase 1 run store | Managed Postgres with retention and audit review process |
+| Runbooks | Context-source-backed runbook evidence | Versioned runbook source of truth |
 | Mitigation catalog | Local JSON catalog | Change-controlled mitigation catalog with owners |
 | Approval | Local JSON store plus console | Authenticated approval workflow with audit storage |
 | Executor | Simulated record only | Bounded executors with policy, dry-run, rollback, and post-checks |

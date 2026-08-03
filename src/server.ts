@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createHash } from "node:crypto";
+import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import {
   approvalRecordToJson,
   defaultApprovalStorePath,
@@ -7,13 +8,23 @@ import {
   listApprovals,
   requestApproval,
 } from "./approval-store";
+import { approvalConsoleHtml } from "./approval-console";
+import type { OperatorMode } from "./config";
 import { type Scenario } from "./domain";
 import { PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
-import { GrafanaPayloadError, normalizeGrafanaPayload } from "./grafana";
+import {
+  GrafanaPayloadError,
+  defaultGrafanaSignatureHeader,
+  defaultGrafanaTimestampHeader,
+  defaultGrafanaTimestampToleranceMs,
+  normalizeGrafanaPayload,
+  verifyGrafanaWebhookHmac,
+} from "./grafana";
 import type { LLMDecisionClient } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
+import type { TriageRunPersistenceStore, TriageRunReviewRecord } from "./persistence";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
 export interface WebhookRuntime {
@@ -22,6 +33,12 @@ export interface WebhookRuntime {
   llmClient: LLMDecisionClient;
   lokiClient?: LokiClientLike;
   lokiLimit: number;
+  mode?: OperatorMode;
+  runStore?: TriageRunPersistenceStore;
+  operatorReadToken?: string;
+  hmacToleranceMs?: number;
+  replayTtlMs?: number;
+  retentionCleanupIntervalMs?: number;
   approvalStorePath?: string;
 }
 
@@ -55,11 +72,19 @@ interface LokiLogEntryLike {
   labels: Record<string, string>;
 }
 
+interface HandleGrafanaWebhookOptions {
+  bodyDigest?: string;
+}
+
 export async function handleGrafanaWebhook(
   payload: unknown,
   providedSecret: string | undefined,
   runtime: WebhookRuntime,
+  options: HandleGrafanaWebhookOptions = {},
 ): Promise<[number, Record<string, unknown>]> {
+  if (runtimeMode(runtime) === "read_only" && !options.bodyDigest) {
+    return [401, { status: "error", error: "signed_ingestion_required" }];
+  }
   if (runtime.webhookSecret && providedSecret !== runtime.webhookSecret) {
     return [401, { status: "error", error: "unauthorized" }];
   }
@@ -113,14 +138,26 @@ export async function handleGrafanaWebhook(
     name: normalized.scenarioName,
     incident: normalized.incident,
   };
-  const workflow = new TriageWorkflow(new PrebuiltOperationalTools(package_), runtime.llmClient);
+  const workflowOptions = { mode: runtimeMode(runtime) };
+  const runId = runIdForWebhook(normalized.incident.incidentId, options.bodyDigest);
+  if (runId) {
+    Object.assign(workflowOptions, { runId });
+  }
+  const workflow = new TriageWorkflow(
+    new PrebuiltOperationalTools(package_),
+    runtime.llmClient,
+    undefined,
+    workflowOptions,
+  );
   const run = await workflow.run(scenario);
+  await persistTriageRun(run, runtime);
   persistApprovalRequest(run, runtime);
   return [200, runToResponse(run)];
 }
 
 export function startWebhookServer(options: WebhookServerOptions): RunningWebhookServer {
   const logger = options.logger ?? noopLogger;
+  const retentionCleanup = startRetentionCleanup(options.runtime, logger);
   const server = createServer(async (request, response) => {
     try {
       await routeRequest(request, response, options.runtime, logger);
@@ -140,6 +177,7 @@ export function startWebhookServer(options: WebhookServerOptions): RunningWebhoo
   const closed = new Promise<void>((resolve) => server.once("close", resolve));
 
   const shutdown = () => {
+    retentionCleanup.stop();
     void closeServer(server);
   };
   process.once("SIGINT", shutdown);
@@ -152,8 +190,31 @@ export function startWebhookServer(options: WebhookServerOptions): RunningWebhoo
     close: async () => {
       process.off("SIGINT", shutdown);
       process.off("SIGTERM", shutdown);
+      retentionCleanup.stop();
       await closeServer(server);
     },
+  };
+}
+
+function startRetentionCleanup(runtime: WebhookRuntime, logger: TriageLogger): { stop(): void } {
+  const cleanupExpired = runtime.runStore?.cleanupExpired.bind(runtime.runStore);
+  if (!cleanupExpired) {
+    return { stop: () => undefined };
+  }
+  const cleanup = () => {
+    void cleanupExpired()
+      .catch((error) => {
+        logger.warn({
+          component: "server",
+          error: error instanceof Error ? error.message : String(error),
+        }, "Failed to clean expired triage persistence rows");
+      });
+  };
+  cleanup();
+  const interval = setInterval(cleanup, runtime.retentionCleanupIntervalMs ?? 60 * 60 * 1000);
+  interval.unref?.();
+  return {
+    stop: () => clearInterval(interval),
   };
 }
 
@@ -169,6 +230,11 @@ async function routeRequest(
   }
 
   const url = new URL(request.url ?? "/", "http://localhost");
+  if (approvalSurfaceDisabled(runtime, request.method, url.pathname)) {
+    writeJson(response, 404, { status: "error", error: "approval_routes_disabled" });
+    return;
+  }
+
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/approvals")) {
     writeHtml(response, 200, approvalConsoleHtml());
     return;
@@ -188,39 +254,187 @@ async function routeRequest(
     return;
   }
 
+  if (url.pathname.startsWith("/api/runs/")) {
+    await routeRunReviewApi(request, response, runtime, url.pathname);
+    return;
+  }
+
   if (request.method !== "POST" || request.url !== "/webhooks/grafana") {
     writeJson(response, 404, { status: "error", error: "not_found" });
     return;
   }
 
+  let rawBody: string;
+  try {
+    rawBody = await readRequestBody(request);
+  } catch {
+    writeJson(response, 413, { status: "error", error: "request_body_too_large" });
+    return;
+  }
+
+  const auth = await authenticateGrafanaRequest(rawBody, request.headers, runtime);
+  if (!auth.accepted) {
+    writeJson(response, auth.status, { status: "error", error: auth.error });
+    return;
+  }
+
+  const bodyDigest = createHash("sha256").update(rawBody).digest("hex");
   let payload: unknown;
   try {
-    payload = JSON.parse(await readRequestBody(request));
+    payload = JSON.parse(rawBody);
   } catch {
     writeJson(response, 400, { status: "error", error: "invalid_json" });
     return;
   }
 
-  const secret = request.headers["x-webhook-secret"];
-  const providedSecret = Array.isArray(secret) ? secret[0] : secret;
+  const replayClaim = await claimGrafanaReplay(bodyDigest, auth, runtime);
+  if (!replayClaim.accepted) {
+    writeJson(response, replayClaim.status, { status: "error", error: replayClaim.error });
+    return;
+  }
+
   logger.info({ component: "server" }, "Grafana webhook received");
-  const [status, body] = await handleGrafanaWebhook(payload, providedSecret, runtime);
-  writeJson(response, status, body);
+  try {
+    const [status, body] = await handleGrafanaWebhook(payload, runtime.webhookSecret, runtime, { bodyDigest });
+    writeJson(response, status, body);
+    if ((status < 200 || status >= 300) && replayClaim.replayKey) {
+      await releaseGrafanaReplay(replayClaim.replayKey, runtime, logger);
+    }
+  } catch (error) {
+    if (replayClaim.replayKey) {
+      await releaseGrafanaReplay(replayClaim.replayKey, runtime, logger);
+    }
+    throw error;
+  }
+}
+
+async function authenticateGrafanaRequest(
+  rawBody: string,
+  headers: IncomingHttpHeaders,
+  runtime: WebhookRuntime,
+): Promise<
+  | { accepted: true; signature?: string; timestamp?: string }
+  | { accepted: false; status: number; error: string }
+> {
+  const signature = firstHeader(headers[defaultGrafanaSignatureHeader]);
+  const timestamp = firstHeader(headers[defaultGrafanaTimestampHeader]);
+  const legacySecret = firstHeader(headers["x-webhook-secret"]);
+  const requiresHmac = runtimeMode(runtime) === "read_only";
+
+  if (signature || requiresHmac) {
+    if (requiresHmac && !timestamp) {
+      return { accepted: false, status: 401, error: "missing_hmac_timestamp" };
+    }
+    try {
+      const hmacOptions = {
+        rawBody,
+        secret: runtime.webhookSecret,
+        signature,
+      };
+      if (timestamp) {
+        Object.assign(hmacOptions, { timestamp });
+      }
+      if (runtime.hmacToleranceMs !== undefined) {
+        Object.assign(hmacOptions, { toleranceMs: runtime.hmacToleranceMs });
+      }
+      verifyGrafanaWebhookHmac(hmacOptions);
+    } catch (error) {
+      return {
+        accepted: false,
+        status: 401,
+        error: error instanceof GrafanaPayloadError ? hmacErrorCode(error) : "invalid_hmac_signature",
+      };
+    }
+    const accepted: { accepted: true; signature?: string; timestamp?: string } = { accepted: true };
+    if (signature) {
+      accepted.signature = signature;
+    }
+    if (timestamp) {
+      accepted.timestamp = timestamp;
+    }
+    return accepted;
+  }
+
+  if (runtime.webhookSecret && legacySecret !== runtime.webhookSecret) {
+    return { accepted: false, status: 401, error: "unauthorized" };
+  }
+  return { accepted: true };
+}
+
+async function claimGrafanaReplay(
+  bodyDigest: string,
+  auth: { accepted: true; signature?: string; timestamp?: string },
+  runtime: WebhookRuntime,
+): Promise<{ accepted: true; replayKey?: string } | { accepted: false; status: number; error: string }> {
+  if (!auth.timestamp) {
+    return { accepted: true };
+  }
+  if (!runtime.runStore) {
+    if (runtimeMode(runtime) === "read_only") {
+      return { accepted: false, status: 503, error: "replay_store_unavailable" };
+    }
+    return { accepted: true };
+  }
+  const replayClaim = await runtime.runStore.claimReplayKey({
+    sender: "grafana",
+    signature: (auth.signature ?? "").toLowerCase(),
+    timestamp: auth.timestamp,
+    bodyDigest,
+    ttlMs: runtime.replayTtlMs ?? runtime.hmacToleranceMs ?? defaultGrafanaTimestampToleranceMs,
+  });
+  if (!replayClaim.accepted) {
+    return { accepted: false, status: 409, error: "replayed_webhook" };
+  }
+  return { accepted: true, replayKey: replayClaim.replayKey };
+}
+
+async function releaseGrafanaReplay(replayKey: string, runtime: WebhookRuntime, logger: TriageLogger): Promise<void> {
+  try {
+    await runtime.runStore?.releaseReplayKey?.(replayKey);
+  } catch (error) {
+    logger.warn({ component: "server", error: error instanceof Error ? error.message : String(error) }, "Failed to release replay key");
+  }
+}
+
+function firstHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function hmacErrorCode(error: GrafanaPayloadError): string {
+  if (error.message.includes("timestamp")) {
+    return "invalid_hmac_timestamp";
+  }
+  return "invalid_hmac_signature";
 }
 
 function readRequestBody(request: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = "";
-    request.setEncoding("utf8");
-    request.on("data", (chunk: string) => {
-      body += chunk;
-      if (body.length > 1_000_000) {
-        reject(new Error("request body too large"));
-        request.destroy();
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    let rejected = false;
+    request.on("data", (chunk: Buffer | string) => {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      totalBytes += buffer.byteLength;
+      if (totalBytes > 1_000_000) {
+        if (!rejected) {
+          rejected = true;
+          reject(new Error("request body too large"));
+        }
+        return;
+      }
+      chunks.push(buffer);
+    });
+    request.on("end", () => {
+      if (!rejected) {
+        resolve(Buffer.concat(chunks, totalBytes).toString("utf8"));
       }
     });
-    request.on("end", () => resolve(body));
-    request.on("error", reject);
+    request.on("error", (error) => {
+      if (!rejected) {
+        rejected = true;
+        reject(error);
+      }
+    });
   });
 }
 
@@ -308,6 +522,198 @@ async function routeApprovalApi(
   writeJson(response, 404, { status: "error", error: "not_found" });
 }
 
+async function routeRunReviewApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  runtime: WebhookRuntime,
+  pathname: string,
+): Promise<void> {
+  if (request.method !== "GET") {
+    writeJson(response, 405, { status: "error", error: "method_not_allowed" });
+    return;
+  }
+  if (!operatorReadAuthorized(request.headers, runtime)) {
+    writeJson(response, 401, { status: "error", error: "unauthorized" });
+    return;
+  }
+  if (!runtime.runStore?.getTriageRunReview) {
+    writeJson(response, 404, { status: "error", error: "run_review_unavailable" });
+    return;
+  }
+  const parts = pathname.split("/").filter(Boolean);
+  if (parts.length !== 3 || parts[0] !== "api" || parts[1] !== "runs") {
+    writeJson(response, 404, { status: "error", error: "not_found" });
+    return;
+  }
+  const runId = decodeURIComponent(parts[2] ?? "");
+  const review = await runtime.runStore.getTriageRunReview(runId);
+  if (!review) {
+    writeJson(response, 404, { status: "error", error: "run_not_found" });
+    return;
+  }
+  writeJson(response, 200, runReviewToResponse(review));
+}
+
+function operatorReadAuthorized(headers: IncomingHttpHeaders, runtime: WebhookRuntime): boolean {
+  if (!runtime.operatorReadToken) {
+    return runtimeMode(runtime) === "local";
+  }
+  return firstHeader(headers.authorization) === `Bearer ${runtime.operatorReadToken}`;
+}
+
+function runReviewToResponse(review: TriageRunReviewRecord): Record<string, unknown> {
+  const response: Record<string, unknown> = {
+    status: "ok",
+    run: {
+      run_id: review.run.runId,
+      incident_id: review.run.incidentId,
+      scenario_name: review.run.scenarioName,
+      service: review.run.service,
+      run_status: review.run.runStatus,
+      validation_status: review.run.validationStatus,
+      safety_status: review.run.safetyStatus,
+      mitigation_status: review.run.mitigationStatus,
+      evidence_ids: review.run.evidenceIds,
+      scorecard: review.run.scorecard,
+      retention_class: review.run.retentionClass,
+      correlation_id: review.run.correlationId,
+      created_at: review.run.createdAt,
+      expires_at: review.run.expiresAt,
+    },
+  };
+  const normalizedReview = reviewEnvelopeToResponse(review.run.reviewEnvelope);
+  if (normalizedReview) {
+    response.review = normalizedReview;
+  }
+  if (review.evidenceSnapshot) {
+    response.evidence_snapshot = {
+      run_id: review.evidenceSnapshot.runId,
+      incident_id: review.evidenceSnapshot.incidentId,
+      evidence: review.evidenceSnapshot.evidence,
+      missing_context: review.evidenceSnapshot.missingContext,
+      retention_class: review.evidenceSnapshot.retentionClass,
+      created_at: review.evidenceSnapshot.createdAt,
+      expires_at: review.evidenceSnapshot.expiresAt,
+    };
+  }
+  return response;
+}
+
+function reviewEnvelopeToResponse(envelope: unknown): Record<string, unknown> | undefined {
+  const source = objectValue(envelope);
+  const response: Record<string, unknown> = {};
+  if (source.investigation) {
+    response.investigation = investigationToResponse(source.investigation);
+  }
+  if (source.validation) {
+    response.validation = source.validation;
+  }
+  if (source.explanation) {
+    response.explanation = explanationToResponse(source.explanation);
+  }
+  if (source.explanationValidation) {
+    response.explanation_validation = source.explanationValidation;
+  }
+  if (source.decision) {
+    response.decision = decisionToResponse(source.decision);
+  }
+  if (source.safety) {
+    response.safety = safetyToResponse(source.safety);
+  }
+  if (source.mitigationControl) {
+    response.mitigation_control = mitigationControlToResponse(source.mitigationControl as MitigationControlResult);
+  }
+  if (source.provenance) {
+    response.provenance = provenanceToResponse(source.provenance);
+  }
+  return Object.keys(response).length > 0 ? response : undefined;
+}
+
+function investigationToResponse(investigation: unknown): Record<string, unknown> {
+  const source = objectValue(investigation);
+  return {
+    summary: source.summary,
+    steps: arrayValue(source.steps).map((step) => {
+      const item = objectValue(step);
+      return {
+        id: item.id,
+        kind: item.kind,
+        status: item.status,
+        purpose: item.purpose,
+        evidence_ids: item.evidenceIds,
+      };
+    }),
+  };
+}
+
+function explanationToResponse(explanation: unknown): Record<string, unknown> {
+  const source = objectValue(explanation);
+  const response: Record<string, unknown> = {};
+  if (source.hypotheses) {
+    response.hypotheses = arrayValue(source.hypotheses).map((hypothesis) => {
+      const item = objectValue(hypothesis);
+      return {
+        label: item.label,
+        status: item.status,
+        supporting_evidence_ids: item.supportingEvidenceIds,
+        contradicting_evidence_ids: item.contradictingEvidenceIds,
+      };
+    });
+  }
+  if (source.findingSummary) {
+    response.finding_summary = source.findingSummary;
+  }
+  if (source.recommendation) {
+    const recommendation = objectValue(source.recommendation);
+    response.recommendation = {
+      rationale: recommendation.rationale,
+      evidence_ids: recommendation.evidenceIds,
+    };
+  }
+  return response;
+}
+
+function decisionToResponse(decision: unknown): Record<string, unknown> {
+  const source = objectValue(decision);
+  return {
+    incident_class: source.incidentClass,
+    next_action: source.nextAction,
+    confidence: source.confidence,
+    evidence_ids: source.evidenceIds,
+    caveats: source.caveats,
+    verification_plan: source.verificationPlan,
+  };
+}
+
+function safetyToResponse(safety: unknown): Record<string, unknown> {
+  const source = objectValue(safety);
+  return {
+    status: source.status,
+    approval_required: source.approvalRequired,
+    reason: source.reason,
+  };
+}
+
+function provenanceToResponse(provenance: unknown): Record<string, unknown> {
+  const source = objectValue(provenance);
+  return {
+    available_tiers: source.availableTiers,
+    cited_tiers: source.citedTiers,
+    cited_sources: source.citedSources,
+    cited_evidence_ids: source.citedEvidenceIds,
+    missing_context: source.missingContext,
+    support: source.historicalOnly ? "historical_only" : source.hasCurrentOrOperationalSupport ? "current_or_operational" : "none",
+  };
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+}
+
+function arrayValue(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
 function approvalsListResponse(runtime: WebhookRuntime): Record<string, unknown> {
   const approvals = listApprovals(approvalStorePath(runtime)).map(approvalRecordToJson);
   const pending = approvals.filter((approval) => approval.status === "pending_human_approval").length;
@@ -324,7 +730,7 @@ function approvalsListResponse(runtime: WebhookRuntime): Record<string, unknown>
 
 function persistApprovalRequest(run: TriageRun, runtime: WebhookRuntime): void {
   const approvalRequest = run.mitigationControl?.approvalRequest;
-  if (!approvalRequest || !runtime.approvalStorePath) {
+  if (!approvalRequest || !runtime.approvalStorePath || !approvalRoutesEnabled(runtime)) {
     return;
   }
   const catalogEntry = loadMitigationCatalog(runtime.fixturesDir)
@@ -338,329 +744,43 @@ function persistApprovalRequest(run: TriageRun, runtime: WebhookRuntime): void {
   });
 }
 
+async function persistTriageRun(run: TriageRun, runtime: WebhookRuntime): Promise<void> {
+  if (!runtime.runStore) {
+    return;
+  }
+  await runtime.runStore.recordTriageRun(run, {
+    correlationId: run.runId,
+    retentionClass: runtimeMode(runtime) === "read_only" ? "read_only_triage" : "ephemeral",
+  });
+}
+
+function runIdForWebhook(incidentId: string, bodyDigest?: string): string | undefined {
+  if (!bodyDigest) {
+    return undefined;
+  }
+  return `triage-run:${incidentId}:${bodyDigest.slice(0, 16)}`;
+}
+
 function approvalStorePath(runtime: WebhookRuntime): string {
   return runtime.approvalStorePath ?? defaultApprovalStorePath;
 }
 
-function approvalConsoleHtml(): string {
-  return `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Incident Approval Console</title>
-  <style>
-    :root {
-      color-scheme: light;
-      --bg: #f7f8fb;
-      --panel: #ffffff;
-      --ink: #172033;
-      --muted: #647086;
-      --line: #d9dee8;
-      --teal: #0f766e;
-      --amber: #b45309;
-      --red: #b42318;
-      --green: #15803d;
-      --blue: #1d4ed8;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--bg);
-      color: var(--ink);
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 15px;
-    }
-    header {
-      border-bottom: 1px solid var(--line);
-      background: #101828;
-      color: #f8fafc;
-    }
-    .topbar {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 18px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-    }
-    h1 {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 720;
-      letter-spacing: 0;
-    }
-    .banner {
-      border: 1px solid #f7d394;
-      background: #fff7ed;
-      color: #7c2d12;
-      padding: 9px 12px;
-      border-radius: 6px;
-      font-weight: 650;
-      white-space: nowrap;
-    }
-    main {
-      max-width: 1180px;
-      margin: 0 auto;
-      padding: 22px 24px 36px;
-      display: grid;
-      grid-template-columns: minmax(320px, 0.95fr) minmax(360px, 1.25fr);
-      gap: 18px;
-    }
-    section {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      min-width: 0;
-    }
-    .section-head {
-      min-height: 58px;
-      padding: 14px 16px;
-      border-bottom: 1px solid var(--line);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-    }
-    h2 {
-      margin: 0;
-      font-size: 16px;
-      letter-spacing: 0;
-    }
-    .count {
-      color: var(--muted);
-      font-size: 13px;
-    }
-    .queue {
-      display: grid;
-      gap: 0;
-    }
-    .row {
-      width: 100%;
-      border: 0;
-      border-bottom: 1px solid var(--line);
-      background: transparent;
-      padding: 14px 16px;
-      text-align: left;
-      cursor: pointer;
-      display: grid;
-      gap: 8px;
-      color: inherit;
-      font: inherit;
-    }
-    .row:hover, .row.active { background: #eef6ff; }
-    .row:last-child { border-bottom: 0; }
-    .row-title {
-      display: flex;
-      justify-content: space-between;
-      gap: 10px;
-      align-items: center;
-      font-weight: 700;
-    }
-    .meta {
-      color: var(--muted);
-      font-size: 13px;
-      overflow-wrap: anywhere;
-    }
-    .status {
-      border-radius: 999px;
-      padding: 4px 8px;
-      font-size: 12px;
-      font-weight: 750;
-      white-space: nowrap;
-    }
-    .pending_human_approval { background: #fff7ed; color: var(--amber); }
-    .human_approved { background: #ecfdf3; color: var(--green); }
-    .human_rejected { background: #fef3f2; color: var(--red); }
-    .detail {
-      padding: 16px;
-      display: grid;
-      gap: 16px;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-    }
-    .field {
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 10px;
-      min-width: 0;
-    }
-    .label {
-      color: var(--muted);
-      display: block;
-      font-size: 12px;
-      font-weight: 700;
-      margin-bottom: 5px;
-      text-transform: uppercase;
-    }
-    .value {
-      overflow-wrap: anywhere;
-      line-height: 1.35;
-    }
-    .actions {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-    }
-    button.action {
-      border: 1px solid transparent;
-      border-radius: 6px;
-      padding: 10px 12px;
-      color: #ffffff;
-      font-weight: 750;
-      cursor: pointer;
-    }
-    button.action:disabled {
-      cursor: not-allowed;
-      opacity: 0.45;
-    }
-    .approve { background: var(--teal); }
-    .reject { background: var(--red); }
-    .refresh { background: var(--blue); }
-    pre {
-      margin: 0;
-      padding: 12px;
-      border-radius: 6px;
-      background: #111827;
-      color: #d1fae5;
-      overflow-x: auto;
-      font-size: 12px;
-      line-height: 1.45;
-    }
-    .empty {
-      padding: 28px 16px;
-      color: var(--muted);
-    }
-    @media (max-width: 820px) {
-      .topbar { align-items: flex-start; flex-direction: column; }
-      .banner { white-space: normal; }
-      main { grid-template-columns: 1fr; padding: 16px; }
-      .grid { grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <div class="topbar">
-      <h1>Incident Approval Console</h1>
-      <div class="banner">Simulation only: approvals never execute production actions</div>
-    </div>
-  </header>
-  <main>
-    <section>
-      <div class="section-head">
-        <h2>Approval Queue</h2>
-        <button class="action refresh" type="button" id="refresh">Refresh</button>
-      </div>
-      <div id="queue" class="queue"><div class="empty">Loading approvals...</div></div>
-    </section>
-    <section>
-      <div class="section-head">
-        <h2>Approval Detail</h2>
-        <span class="count" id="summary"></span>
-      </div>
-      <div id="detail" class="detail"><div class="empty">Select an approval to review.</div></div>
-    </section>
-  </main>
-  <script>
-    let approvals = [];
-    let selectedId = "";
+function approvalRoutesEnabled(runtime: WebhookRuntime): boolean {
+  return runtimeMode(runtime) !== "read_only";
+}
 
-    const queue = document.getElementById("queue");
-    const detail = document.getElementById("detail");
-    const summary = document.getElementById("summary");
-    document.getElementById("refresh").addEventListener("click", loadApprovals);
+function approvalSurfaceDisabled(runtime: WebhookRuntime, method: string | undefined, pathname: string): boolean {
+  if (approvalRoutesEnabled(runtime)) {
+    return false;
+  }
+  if (method === "GET" && (pathname === "/" || pathname === "/approvals")) {
+    return true;
+  }
+  return pathname === "/api/approvals" || pathname.startsWith("/api/approvals/");
+}
 
-    function escapeHtml(value) {
-      return String(value ?? "").replace(/[&<>"']/g, (char) => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-      })[char]);
-    }
-
-    async function loadApprovals() {
-      const response = await fetch("/api/approvals");
-      const data = await response.json();
-      approvals = data.approvals ?? [];
-      summary.textContent = data.summary ? data.summary.pending + " pending / " + data.summary.total + " total" : "";
-      if (!selectedId && approvals.length > 0) {
-        selectedId = approvals[0].approval_id;
-      }
-      renderQueue();
-      renderDetail();
-    }
-
-    function renderQueue() {
-      if (approvals.length === 0) {
-        queue.innerHTML = '<div class="empty">No approval records yet.</div>';
-        return;
-      }
-      queue.innerHTML = approvals.map((approval) => {
-        const active = approval.approval_id === selectedId ? " active" : "";
-        return '<button class="row' + active + '" type="button" data-id="' + escapeHtml(approval.approval_id) + '">' +
-          '<div class="row-title"><span>' + escapeHtml(approval.service) + '</span><span class="status ' + escapeHtml(approval.status) + '">' + escapeHtml(approval.status) + '</span></div>' +
-          '<div class="meta">' + escapeHtml(approval.incident_id) + ' / ' + escapeHtml(approval.runbook_id) + '</div>' +
-          '<div class="meta">' + escapeHtml(approval.action_intent) + '</div>' +
-        '</button>';
-      }).join("");
-      for (const row of queue.querySelectorAll(".row")) {
-        row.addEventListener("click", () => {
-          selectedId = row.getAttribute("data-id") ?? "";
-          renderQueue();
-          renderDetail();
-        });
-      }
-    }
-
-    function renderDetail() {
-      const approval = approvals.find((item) => item.approval_id === selectedId);
-      if (!approval) {
-        detail.innerHTML = '<div class="empty">Select an approval to review.</div>';
-        return;
-      }
-      const disabled = approval.status !== "pending_human_approval" ? " disabled" : "";
-      detail.innerHTML =
-        '<div class="grid">' +
-          field("Approval ID", approval.approval_id) +
-          field("Status", approval.status) +
-          field("Incident", approval.incident_id) +
-          field("Service", approval.service) +
-          field("Catalog", approval.catalog_id) +
-          field("Runbook", approval.runbook_id) +
-          field("Requested", approval.requested_at) +
-          field("Executed", String(approval.executed)) +
-        '</div>' +
-        '<div class="field"><span class="label">Action Intent</span><div class="value">' + escapeHtml(approval.action_intent) + '</div></div>' +
-        '<div class="actions">' +
-          '<button class="action approve" type="button" id="approve"' + disabled + '>Approve</button>' +
-          '<button class="action reject" type="button" id="reject"' + disabled + '>Reject</button>' +
-        '</div>' +
-        '<pre>' + escapeHtml(JSON.stringify(approval, null, 2)) + '</pre>';
-      document.getElementById("approve").addEventListener("click", () => decide("approve"));
-      document.getElementById("reject").addEventListener("click", () => decide("reject"));
-    }
-
-    function field(label, value) {
-      return '<div class="field"><span class="label">' + escapeHtml(label) + '</span><div class="value">' + escapeHtml(value) + '</div></div>';
-    }
-
-    async function decide(decision) {
-      await fetch("/api/approvals/" + encodeURIComponent(selectedId) + "/" + decision, { method: "POST" });
-      await loadApprovals();
-    }
-
-    loadApprovals().catch((error) => {
-      queue.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
-    });
-  </script>
-</body>
-</html>`;
+function runtimeMode(runtime: WebhookRuntime): OperatorMode {
+  return runtime.mode ?? "local";
 }
 
 export function runToResponse(run: TriageRun): Record<string, unknown> {

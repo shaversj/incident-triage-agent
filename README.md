@@ -53,6 +53,17 @@ The workflow owns control flow, factual investigation steps, validation, provena
 
 The Mitigation Control Plane is the action-control layer of the prototype: the place an AI Operator-style system would prove a proposed mitigation is cataloged, bounded, approval-aware, and observable. It sits after local decision validation and deterministically decides whether the proposed action is recommendation-only, catalog-approved but approval-required, or blocked/escalated. It records evidence checks, simulated dry-run output, staged action state, audit data, and recorded verification outcomes without granting production mutation authority.
 
+`AI_OPERATOR_MODE` controls which authority the server is allowed to exercise:
+
+| Mode | Intended use | Approval staging | Execution |
+| --- | --- | --- | --- |
+| `local` | Fixture demos and local approval simulation | Enabled | Disabled |
+| `read_only` | Phase 1 production triage against real alerts/logs | Disabled | Disabled |
+| `approval` | Future durable approval workflow | Blocked until auth exists | Disabled |
+| `execution_enabled` | Future bounded executor mode | Blocked until implemented | Blocked until implemented |
+
+When `serve` sees real integration configuration such as Grafana, Loki, MiniMax, or database settings, `AI_OPERATOR_MODE` must be set explicitly. In `read_only`, the webhook path can return a safety decision that says approval would be required, but it does not emit approval requests, staged actions, simulated action states, or approval-store writes.
+
 ## Scenarios
 
 | Scenario | Incident type | Expected action | Shows |
@@ -175,6 +186,32 @@ For scriptable verification without starting the server:
 npm run approval-demo -- --once --json
 ```
 
+## Phase 1 Read-Only Canary
+
+Run the signed read-only webhook canary against recorded Grafana and Loki-shaped inputs:
+
+```bash
+npm run --silent triage:read-only-canary -- --json
+```
+
+The canary starts the local server in `AI_OPERATOR_MODE=read_only`, posts a signed Grafana webhook, verifies the run and evidence snapshot were persisted in the in-memory store, verifies duplicate replay is rejected, verifies approval routes are disabled, and verifies no approval request or staged action appears in the response.
+
+Run the same canary against local Postgres:
+
+```bash
+docker compose up -d postgres
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage \
+npm run --silent triage:read-only-canary -- --postgres --json
+```
+
+Use the live LLM boundary with the same recorded observability inputs:
+
+```bash
+npm run --silent triage:read-only-canary -- --live --json
+```
+
+Live canary mode requires `.env` values for `MINIMAX_API_KEY` and `MODEL_NAME`. It still uses recorded Grafana and Loki-shaped inputs and does not execute production actions.
+
 ## Live Provider Path
 
 Create `.env` from `.env.example`:
@@ -183,9 +220,15 @@ Create `.env` from `.env.example`:
 MINIMAX_API_KEY=replace-with-your-minimax-api-key
 MODEL_NAME=MiniMax-M2.7
 MINIMAX_BASE_URL=https://api.minimax.io
+AI_OPERATOR_MODE=read_only
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
+OPERATOR_READ_TOKEN=replace-with-a-local-read-token
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
+LOKI_TIMEOUT_MS=10000
+LOKI_TENANT_ID=
+LOKI_BEARER_TOKEN=
 ```
 
 Run with live MiniMax through Flue:
@@ -202,14 +245,33 @@ The real `.env` is ignored by git.
 Run the local webhook server with mock LLM output:
 
 ```bash
-npm run serve -- --mock-llm
+AI_OPERATOR_MODE=local npm run serve -- --mock-llm
 ```
 
 Without a local `.env`, provide a throwaway webhook secret:
 
 ```bash
-GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
+AI_OPERATOR_MODE=local GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
 ```
+
+For Phase 1 read-only triage, start Postgres and provide `DATABASE_URL`:
+
+```bash
+docker compose up -d postgres
+AI_OPERATOR_MODE=read_only \
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage \
+GRAFANA_WEBHOOK_SECRET=local-secret \
+OPERATOR_READ_TOKEN=local-read-token \
+npm run serve -- --mock-llm
+```
+
+Read-only mode requires Grafana HMAC headers on webhook requests. Configure Grafana with the shared secret from `GRAFANA_WEBHOOK_SECRET`, the default signature header `X-Grafana-Alerting-Signature`, and timestamp header `X-Grafana-Alerting-Timestamp`. The server verifies `HMAC(timestamp + ":" + raw_body)`, rejects stale timestamps, and rejects duplicate signed payloads when persistence is configured.
+
+Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation. The older `X-Webhook-Secret` header remains for local/demo mode only.
+
+The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Persisted read-only review data can be fetched from `GET /api/runs/:run_id` with `Authorization: Bearer $OPERATOR_READ_TOKEN`; it returns the run envelope and evidence snapshot without exposing approval mutation routes.
+
+For production-shaped Loki access, the client sends bounded `query_range` requests using service labels, alert start/end timestamps, limit, direction, timeout, optional `X-Scope-OrgID` tenant header, and optional bearer auth. Returned log lines are redacted for common token/email patterns before they become evidence.
 
 Open the approval console:
 
@@ -234,11 +296,19 @@ Run the full local verification path:
 
 ```bash
 npm test
+npm run --silent triage:read-only-canary -- --json
 npm run typecheck
 npm run evals
 ```
 
 Default tests avoid real MiniMax calls, Docker, and networked Loki. They exercise parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki-shaped log replay, webhook, and outcome code paths with fixture payloads and mock external transports.
+
+Postgres integration tests are opt-in:
+
+```bash
+docker compose up -d postgres
+POSTGRES_TEST_DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage npm run test:postgres
+```
 
 Deterministic evals cover scenario contracts, evidence citations, provenance, safety behavior, mitigation governance, and recorded-triage readability. Live evals are opt-in:
 
@@ -247,6 +317,12 @@ RUN_LIVE_FLUE_EVALS=1 npm run evals
 ```
 
 ## Docker
+
+Start local Postgres for persistence development:
+
+```bash
+docker compose up -d postgres
+```
 
 Build the local image:
 

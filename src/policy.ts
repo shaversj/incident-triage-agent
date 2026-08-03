@@ -1,3 +1,4 @@
+import type { OperatorMode } from "./config";
 import type { NextAction } from "./domain";
 import type { EvidencePackage } from "./evidence";
 import type { TriageDecision } from "./llm";
@@ -38,13 +39,24 @@ export interface SafetyResult {
   mitigationControl: MitigationControlResult;
 }
 
+export interface SafetyEvaluationOptions {
+  mode?: OperatorMode;
+}
+
 export const approvalRequiredActions = new Set<NextAction>([
   "request_rollback_approval",
   "apply_runbook_step_with_approval",
 ]);
 
-export function evaluateSafety(decision: TriageDecision, evidencePackage: EvidencePackage): SafetyResult {
-  const mitigationControl = evaluateMitigationControl(decision, evidencePackage);
+export function evaluateSafety(
+  decision: TriageDecision,
+  evidencePackage: EvidencePackage,
+  options: SafetyEvaluationOptions = {},
+): SafetyResult {
+  const mitigationControl = stripReadOnlyApprovalArtifacts(
+    evaluateMitigationControl(decision, evidencePackage),
+    options.mode,
+  );
 
   if (mitigationControl.status === "blocked") {
     return {
@@ -56,6 +68,14 @@ export function evaluateSafety(decision: TriageDecision, evidencePackage: Eviden
   }
 
   if (mitigationControl.status === "approval_required") {
+    if (options.mode === "read_only") {
+      return {
+        status: "approval_required",
+        approvalRequired: true,
+        reason: `${mitigationControl.reason} Read-only mode did not stage approval or action artifacts.`,
+        mitigationControl,
+      };
+    }
     const stagedPayload = buildStagedPayload(decision, evidencePackage);
     return {
       status: "approval_required",
@@ -86,6 +106,26 @@ export function evaluateSafety(decision: TriageDecision, evidencePackage: Eviden
     approvalRequired: false,
     reason: mitigationControl.reason,
     mitigationControl,
+  };
+}
+
+function stripReadOnlyApprovalArtifacts(
+  mitigationControl: MitigationControlResult,
+  mode: OperatorMode | undefined,
+): MitigationControlResult {
+  if (mode !== "read_only" || mitigationControl.status !== "approval_required") {
+    return mitigationControl;
+  }
+
+  const {
+    dryRun: _dryRun,
+    stagedAction: _stagedAction,
+    approvalRequest: _approvalRequest,
+    ...safeMitigationControl
+  } = mitigationControl;
+  return {
+    ...safeMitigationControl,
+    reason: `${mitigationControl.reason} Read-only mode suppressed approval request and staged action output.`,
   };
 }
 
