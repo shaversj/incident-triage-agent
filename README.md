@@ -269,7 +269,15 @@ Read-only mode requires Grafana HMAC headers on webhook requests. Configure Graf
 
 Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation. The older `X-Webhook-Secret` header remains for local/demo mode only.
 
-The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Persisted read-only review data can be fetched from `GET /api/runs/:run_id` with `Authorization: Bearer $OPERATOR_READ_TOKEN`; it returns the run envelope and evidence snapshot without exposing approval mutation routes.
+The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Persisted read-only review data can be fetched from `GET /api/runs` and `GET /api/runs/:run_id` with `Authorization: Bearer $OPERATOR_READ_TOKEN`; the detail response returns the run envelope and evidence snapshot without exposing approval mutation routes.
+
+Open the read-only operator review console:
+
+```text
+http://127.0.0.1:8080/runs
+```
+
+The console prompts for `OPERATOR_READ_TOKEN`, stores it in browser session storage, lists retained runs, and loads the selected run review through the authenticated API.
 
 For production-shaped Loki access, the client sends bounded `query_range` requests using service labels, alert start/end timestamps, limit, direction, timeout, optional `X-Scope-OrgID` tenant header, and optional bearer auth. Returned log lines are redacted for common token/email patterns before they become evidence.
 

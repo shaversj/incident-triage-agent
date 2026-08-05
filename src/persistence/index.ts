@@ -18,6 +18,10 @@ export interface PersistTriageRunOptions {
 export interface TriageRunRecord {
   runId: string;
   incidentId: string;
+  incidentTitle: string;
+  severity: string;
+  incidentStatus: string;
+  startedAt: string;
   scenarioName: string;
   service: string;
   runStatus: string;
@@ -77,6 +81,7 @@ export interface ReplayKeyClaim {
 export interface TriageRunPersistenceStore {
   migrate?(): Promise<void>;
   recordTriageRun(run: TriageRun, options?: PersistTriageRunOptions): Promise<TriageRunRecord>;
+  listTriageRuns?(options?: { limit?: number }): Promise<TriageRunRecord[]>;
   getTriageRunReview?(runId: string): Promise<TriageRunReviewRecord | undefined>;
   claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim>;
   releaseReplayKey?(replayKey: string): Promise<void>;
@@ -106,6 +111,12 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     }
     const evidenceSnapshot = this.evidenceSnapshots.get(runId);
     return evidenceSnapshot ? { run, evidenceSnapshot } : { run };
+  }
+
+  async listTriageRuns(options: { limit?: number } = {}): Promise<TriageRunRecord[]> {
+    return [...this.runs.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, boundedLimit(options.limit));
   }
 
   async claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim> {
@@ -203,22 +214,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
   }
 
   async getTriageRunReview(runId: string): Promise<TriageRunReviewRecord | undefined> {
-    const result = await this.pool.query<{
-      run_id: string;
-      incident_id: string;
-      scenario_name: string;
-      service: string;
-      run_status: string;
-      validation_status: "valid" | "invalid" | "not_available";
-      safety_status: string | null;
-      mitigation_status: string | null;
-      evidence_ids: unknown;
-      scorecard: unknown;
-      review_envelope: TriageRunReviewEnvelope | null;
-      retention_class: RetentionClass;
-      correlation_id: string;
-      created_at: Date | string;
-      expires_at: Date | string;
+    const result = await this.pool.query<RunRecordRow & {
       snapshot_evidence: unknown[] | null;
       snapshot_missing_context: string[] | null;
       snapshot_retention_class: RetentionClass | null;
@@ -227,6 +223,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     }>(
       `SELECT
         runs.run_id, runs.incident_id, runs.scenario_name, runs.service, runs.run_status,
+        runs.incident_title, runs.severity, runs.incident_status, runs.started_at,
         runs.validation_status, runs.safety_status, runs.mitigation_status, runs.evidence_ids,
         runs.scorecard, runs.review_envelope, runs.retention_class, runs.correlation_id,
         runs.created_at, runs.expires_at,
@@ -244,31 +241,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     if (!row) {
       return undefined;
     }
-    const run: TriageRunRecord = {
-      runId: row.run_id,
-      incidentId: row.incident_id,
-      scenarioName: row.scenario_name,
-      service: row.service,
-      runStatus: row.run_status,
-      validationStatus: row.validation_status,
-      evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
-      retentionClass: row.retention_class,
-      correlationId: row.correlation_id,
-      createdAt: isoValue(row.created_at),
-      expiresAt: isoValue(row.expires_at),
-    };
-    if (row.safety_status) {
-      run.safetyStatus = row.safety_status;
-    }
-    if (row.mitigation_status) {
-      run.mitigationStatus = row.mitigation_status;
-    }
-    if (row.scorecard !== null) {
-      run.scorecard = row.scorecard;
-    }
-    if (row.review_envelope) {
-      run.reviewEnvelope = row.review_envelope;
-    }
+    const run = runRecordFromRow(row);
     if (!row.snapshot_evidence) {
       return { run };
     }
@@ -284,6 +257,21 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
         expiresAt: row.snapshot_expires_at ? isoValue(row.snapshot_expires_at) : run.expiresAt,
       },
     };
+  }
+
+  async listTriageRuns(options: { limit?: number } = {}): Promise<TriageRunRecord[]> {
+    const result = await this.pool.query<RunRecordRow>(
+      `SELECT
+        run_id, incident_id, incident_title, severity, incident_status, started_at,
+        scenario_name, service, run_status, validation_status, safety_status,
+        mitigation_status, evidence_ids, scorecard, review_envelope, retention_class,
+        correlation_id, created_at, expires_at
+       FROM incident_runs
+       ORDER BY created_at DESC
+       LIMIT $1`,
+      [boundedLimit(options.limit)],
+    );
+    return result.rows.map(runRecordFromRow);
   }
 
   async claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim> {
@@ -345,6 +333,61 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
   }
 }
 
+interface RunRecordRow {
+  run_id: string;
+  incident_id: string;
+  incident_title: string | null;
+  severity: string | null;
+  incident_status: string | null;
+  started_at: Date | string | null;
+  scenario_name: string;
+  service: string;
+  run_status: string;
+  validation_status: "valid" | "invalid" | "not_available";
+  safety_status: string | null;
+  mitigation_status: string | null;
+  evidence_ids: unknown;
+  scorecard: unknown;
+  review_envelope: TriageRunReviewEnvelope | null;
+  retention_class: RetentionClass;
+  correlation_id: string;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+function runRecordFromRow(row: RunRecordRow): TriageRunRecord {
+  const record: TriageRunRecord = {
+    runId: row.run_id,
+    incidentId: row.incident_id,
+    incidentTitle: row.incident_title ?? row.incident_id,
+    severity: row.severity ?? "unknown",
+    incidentStatus: row.incident_status ?? "unknown",
+    startedAt: row.started_at ? isoValue(row.started_at) : isoValue(row.created_at),
+    scenarioName: row.scenario_name,
+    service: row.service,
+    runStatus: row.run_status,
+    validationStatus: row.validation_status,
+    evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
+    retentionClass: row.retention_class,
+    correlationId: row.correlation_id,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+  if (row.safety_status) {
+    record.safetyStatus = row.safety_status;
+  }
+  if (row.mitigation_status) {
+    record.mitigationStatus = row.mitigation_status;
+  }
+  if (row.scorecard !== null) {
+    record.scorecard = row.scorecard;
+  }
+  if (row.review_envelope) {
+    record.reviewEnvelope = row.review_envelope;
+  }
+  return record;
+}
+
 export function buildReplayKey(input: ReplayKeyInput): string {
   const digest = createHash("sha256")
     .update(input.sender)
@@ -367,6 +410,10 @@ function buildRunRecord(run: TriageRun, options: PersistTriageRunOptions): Triag
   const record: TriageRunRecord = {
     runId: run.runId,
     incidentId: run.scenario.incident.incidentId,
+    incidentTitle: run.scenario.incident.title,
+    severity: run.scenario.incident.severity,
+    incidentStatus: run.scenario.incident.status,
+    startedAt: run.scenario.incident.startedAt,
     scenarioName: run.scenario.name,
     service: run.scenario.incident.service,
     runStatus: run.runStatus,
@@ -441,13 +488,25 @@ function buildEvidenceSnapshot(
   };
 }
 
+function boundedLimit(limit: number | undefined): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return 50;
+  }
+  return Math.max(1, Math.min(100, Math.trunc(limit)));
+}
+
 async function upsertRunRecord(client: PoolClient, record: TriageRunRecord): Promise<void> {
   await client.query(
     `INSERT INTO incident_runs (
-      run_id, incident_id, scenario_name, service, run_status, validation_status, safety_status,
-      mitigation_status, evidence_ids, scorecard, review_envelope, retention_class, correlation_id, created_at, expires_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11::jsonb, $12, $13, $14, $15)
+      run_id, incident_id, incident_title, severity, incident_status, started_at, scenario_name, service,
+      run_status, validation_status, safety_status, mitigation_status, evidence_ids, scorecard,
+      review_envelope, retention_class, correlation_id, created_at, expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16, $17, $18, $19)
     ON CONFLICT (run_id) DO UPDATE SET
+      incident_title = EXCLUDED.incident_title,
+      severity = EXCLUDED.severity,
+      incident_status = EXCLUDED.incident_status,
+      started_at = EXCLUDED.started_at,
       run_status = EXCLUDED.run_status,
       validation_status = EXCLUDED.validation_status,
       safety_status = EXCLUDED.safety_status,
@@ -461,6 +520,10 @@ async function upsertRunRecord(client: PoolClient, record: TriageRunRecord): Pro
     [
       record.runId,
       record.incidentId,
+      record.incidentTitle,
+      record.severity,
+      record.incidentStatus,
+      record.startedAt,
       record.scenarioName,
       record.service,
       record.runStatus,

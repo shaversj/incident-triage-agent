@@ -24,7 +24,8 @@ import type { LLMDecisionClient } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
-import type { TriageRunPersistenceStore, TriageRunReviewRecord } from "./persistence";
+import type { TriageRunPersistenceStore, TriageRunRecord, TriageRunReviewRecord } from "./persistence";
+import { runReviewConsoleHtml } from "./run-review-console";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
 export interface WebhookRuntime {
@@ -240,6 +241,11 @@ async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/runs") {
+    writeHtml(response, 200, runReviewConsoleHtml());
+    return;
+  }
+
   if (url.pathname === "/api/approvals") {
     if (request.method !== "GET") {
       writeJson(response, 405, { status: "error", error: "method_not_allowed" });
@@ -254,8 +260,8 @@ async function routeRequest(
     return;
   }
 
-  if (url.pathname.startsWith("/api/runs/")) {
-    await routeRunReviewApi(request, response, runtime, url.pathname);
+  if (url.pathname === "/api/runs" || url.pathname.startsWith("/api/runs/")) {
+    await routeRunReviewApi(request, response, runtime, url);
     return;
   }
 
@@ -443,6 +449,7 @@ function writeJson(response: ServerResponse, status: number, body: Record<string
   response.writeHead(status, {
     "Content-Type": "application/json",
     "Content-Length": Buffer.byteLength(encoded),
+    "Cache-Control": "no-store",
   });
   response.end(encoded);
 }
@@ -526,7 +533,7 @@ async function routeRunReviewApi(
   request: IncomingMessage,
   response: ServerResponse,
   runtime: WebhookRuntime,
-  pathname: string,
+  url: URL,
 ): Promise<void> {
   if (request.method !== "GET") {
     writeJson(response, 405, { status: "error", error: "method_not_allowed" });
@@ -536,11 +543,22 @@ async function routeRunReviewApi(
     writeJson(response, 401, { status: "error", error: "unauthorized" });
     return;
   }
+  if (url.pathname === "/api/runs") {
+    if (!runtime.runStore?.listTriageRuns) {
+      writeJson(response, 404, { status: "error", error: "run_list_unavailable" });
+      return;
+    }
+    const limit = numberQueryParam(url.searchParams.get("limit"));
+    const runs = await runtime.runStore.listTriageRuns(limit === undefined ? {} : { limit });
+    writeJson(response, 200, runListToResponse(runs));
+    return;
+  }
+
   if (!runtime.runStore?.getTriageRunReview) {
     writeJson(response, 404, { status: "error", error: "run_review_unavailable" });
     return;
   }
-  const parts = pathname.split("/").filter(Boolean);
+  const parts = url.pathname.split("/").filter(Boolean);
   if (parts.length !== 3 || parts[0] !== "api" || parts[1] !== "runs") {
     writeJson(response, 404, { status: "error", error: "not_found" });
     return;
@@ -554,6 +572,14 @@ async function routeRunReviewApi(
   writeJson(response, 200, runReviewToResponse(review));
 }
 
+function numberQueryParam(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function operatorReadAuthorized(headers: IncomingHttpHeaders, runtime: WebhookRuntime): boolean {
   if (!runtime.operatorReadToken) {
     return runtimeMode(runtime) === "local";
@@ -561,25 +587,49 @@ function operatorReadAuthorized(headers: IncomingHttpHeaders, runtime: WebhookRu
   return firstHeader(headers.authorization) === `Bearer ${runtime.operatorReadToken}`;
 }
 
+function runListToResponse(runs: TriageRunRecord[]): Record<string, unknown> {
+  const bySafety = new Map<string, number>();
+  for (const run of runs) {
+    const key = run.safetyStatus ?? "not_available";
+    bySafety.set(key, (bySafety.get(key) ?? 0) + 1);
+  }
+  return {
+    status: "ok",
+    runs: runs.map(runRecordToResponse),
+    summary: {
+      total: runs.length,
+      by_safety_status: Object.fromEntries(bySafety.entries()),
+    },
+  };
+}
+
+function runRecordToResponse(run: TriageRunRecord): Record<string, unknown> {
+  return {
+    run_id: run.runId,
+    incident_id: run.incidentId,
+    incident_title: run.incidentTitle,
+    severity: run.severity,
+    incident_status: run.incidentStatus,
+    started_at: run.startedAt,
+    scenario_name: run.scenarioName,
+    service: run.service,
+    run_status: run.runStatus,
+    validation_status: run.validationStatus,
+    safety_status: run.safetyStatus,
+    mitigation_status: run.mitigationStatus,
+    evidence_ids: run.evidenceIds,
+    scorecard: run.scorecard,
+    retention_class: run.retentionClass,
+    correlation_id: run.correlationId,
+    created_at: run.createdAt,
+    expires_at: run.expiresAt,
+  };
+}
+
 function runReviewToResponse(review: TriageRunReviewRecord): Record<string, unknown> {
   const response: Record<string, unknown> = {
     status: "ok",
-    run: {
-      run_id: review.run.runId,
-      incident_id: review.run.incidentId,
-      scenario_name: review.run.scenarioName,
-      service: review.run.service,
-      run_status: review.run.runStatus,
-      validation_status: review.run.validationStatus,
-      safety_status: review.run.safetyStatus,
-      mitigation_status: review.run.mitigationStatus,
-      evidence_ids: review.run.evidenceIds,
-      scorecard: review.run.scorecard,
-      retention_class: review.run.retentionClass,
-      correlation_id: review.run.correlationId,
-      created_at: review.run.createdAt,
-      expires_at: review.run.expiresAt,
-    },
+    run: runRecordToResponse(review.run),
   };
   const normalizedReview = reviewEnvelopeToResponse(review.run.reviewEnvelope);
   if (normalizedReview) {
