@@ -74,6 +74,39 @@ test("in-memory persistence returns read-only review envelope with evidence snap
   expect(review?.run.reviewEnvelope?.mitigationControl).not.toHaveProperty("approvalRequest");
 });
 
+test("in-memory persistence lists run summaries newest first", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const first = await runScenario("checkout-payment-timeout", {
+    incident_class: "dependency_outage",
+    next_action: "escalate_owner",
+    confidence: 0.87,
+    evidence_ids: ["alert:0", "log:0", "runbook:dependency-outage"],
+    caveats: [],
+    verification_plan: ["Watch payment timeout rate."],
+  });
+  const second = await runScenario("bad-deploy-latency", {
+    incident_class: "bad_deploy",
+    next_action: "request_rollback_approval",
+    confidence: 0.9,
+    evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
+    caveats: [],
+    verification_plan: ["Check checkout latency."],
+  });
+
+  await store.recordTriageRun(first, { now: new Date("2026-08-01T12:00:00.000Z") });
+  await store.recordTriageRun(second, { now: new Date("2026-08-01T12:01:00.000Z") });
+
+  const runs = await store.listTriageRuns();
+
+  expect(runs.map((run) => run.runId)).toEqual([second.runId, first.runId]);
+  expect(runs[0]).toMatchObject({
+    incidentTitle: "Checkout API latency after retry rollout",
+    severity: "SEV2",
+    startedAt: "2026-06-14T16:21:00Z",
+    safetyStatus: "approval_required",
+  });
+});
+
 test("in-memory persistence records recoverable invalid decision without approval artifacts", async () => {
   const store = new InMemoryTriageRunPersistenceStore();
   const run = await runScenario("checkout-payment-timeout", "{not json");

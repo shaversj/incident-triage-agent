@@ -19,6 +19,7 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
       ttlMs: 1_000,
     });
     const review = await store.getTriageRunReview(recorded.runId);
+    const listed = await store.listTriageRuns({ limit: 5 });
     const replayInput = {
       sender: "grafana",
       signature: "sig",
@@ -35,6 +36,13 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
       incidentClass: "bad_deploy",
       nextAction: "request_rollback_approval",
     });
+    expect(listed).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        runId: recorded.runId,
+        incidentTitle: "Checkout API latency after retry rollout",
+        severity: "SEV2",
+      }),
+    ]));
     expect(review?.evidenceSnapshot?.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ evidenceId: "deploy:0" }),
     ]));

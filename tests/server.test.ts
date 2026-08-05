@@ -393,6 +393,55 @@ test("server exposes persisted read-only run review by run id", async () => {
   }
 });
 
+test("server exposes authenticated read-only run list and review console", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      badDeployLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8");
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const posted = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, unixTimestamp(new Date())),
+      body: rawBody,
+    });
+    const html = await fetchText(`${baseUrl}/runs`);
+    const unauthorized = await fetch(`${baseUrl}/api/runs`);
+    const list = await fetchJson(`${baseUrl}/api/runs`, {
+      headers: { Authorization: "Bearer read-secret" },
+    });
+    const run = (list.runs as any[])[0];
+
+    expect(posted.status).toBe(200);
+    expect(html).toContain("Operator Run Review");
+    expect(html).toContain("/api/runs");
+    expect(unauthorized.status).toBe(401);
+    expect(list.summary).toMatchObject({ total: 1 });
+    expect(run).toMatchObject({
+      incident_id: "GRAFANA-checkout-bad-deploy-latency-001",
+      incident_title: "Checkout API latency regression",
+      severity: "SEV2",
+      service: "checkout-api",
+      safety_status: "approval_required",
+      mitigation_status: "approval_required",
+    });
+    expect(run.review_envelope).toBeUndefined();
+  } finally {
+    await server.close();
+  }
+});
+
 test("server schedules retention cleanup for run store", async () => {
   const runStore = new CleanupCountingRunStore();
   const server = startWebhookServer({
