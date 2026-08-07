@@ -54,7 +54,18 @@ export function runReviewConsoleHtml(): string {
       gap: 8px;
       min-width: min(520px, 100%);
     }
-    input {
+    .actions {
+      display: grid;
+      gap: 8px;
+      min-width: min(640px, 100%);
+    }
+    .demo {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+    input, select {
       width: 100%;
       min-width: 180px;
       border: 1px solid #475467;
@@ -102,6 +113,11 @@ export function runReviewConsoleHtml(): string {
       margin: 0;
       font-size: 15px;
       letter-spacing: 0;
+    }
+    .status {
+      color: #d0d5dd;
+      font-size: 12px;
+      text-align: right;
     }
     .muted { color: var(--muted); }
     .count { color: var(--muted); font-size: 13px; }
@@ -228,6 +244,9 @@ export function runReviewConsoleHtml(): string {
     }
     @media (max-width: 900px) {
       .topbar { flex-direction: column; align-items: flex-start; }
+      .actions, .demo, .token { width: 100%; }
+      .demo, .token { flex-wrap: wrap; justify-content: flex-start; }
+      .demo select, .token input { flex: 1 1 220px; }
       main { grid-template-columns: 1fr; padding: 14px; }
       .grid { grid-template-columns: 1fr; }
       .queue { max-height: none; }
@@ -238,10 +257,17 @@ export function runReviewConsoleHtml(): string {
   <header>
     <div class="topbar">
       <h1>Operator Run Review</h1>
-      <div class="token">
-        <input id="token" type="password" autocomplete="off" placeholder="OPERATOR_READ_TOKEN">
-        <button id="save" class="primary" type="button">Load</button>
-        <button id="clear" class="secondary" type="button">Clear</button>
+      <div class="actions">
+        <div class="demo" id="demoControls" hidden>
+          <select id="demoScenario" aria-label="Demo scenario"></select>
+          <button id="runDemo" class="primary" type="button">Run Scenario</button>
+        </div>
+        <div class="token">
+          <input id="token" type="password" autocomplete="off" placeholder="OPERATOR_READ_TOKEN">
+          <button id="save" class="primary" type="button">Load</button>
+          <button id="clear" class="secondary" type="button">Clear</button>
+        </div>
+        <div class="status" id="demoStatus"></div>
       </div>
     </div>
   </header>
@@ -263,6 +289,10 @@ export function runReviewConsoleHtml(): string {
   </main>
   <script>
     const tokenInput = document.getElementById("token");
+    const demoControls = document.getElementById("demoControls");
+    const demoScenario = document.getElementById("demoScenario");
+    const demoStatus = document.getElementById("demoStatus");
+    const runDemoButton = document.getElementById("runDemo");
     const runsEl = document.getElementById("runs");
     const detailEl = document.getElementById("detail");
     const summaryEl = document.getElementById("summary");
@@ -283,6 +313,7 @@ export function runReviewConsoleHtml(): string {
       detailEl.innerHTML = '<div class="empty">Select a run.</div>';
     });
     document.getElementById("refresh").addEventListener("click", loadRuns);
+    runDemoButton.addEventListener("click", runDemoScenario);
 
     function escapeHtml(value) {
       return String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -317,6 +348,46 @@ export function runReviewConsoleHtml(): string {
       if (selectedRunId) {
         await loadReview(selectedRunId);
       }
+    }
+
+    async function loadDemoScenarios() {
+      const response = await fetch("/api/demo/scenarios");
+      if (!response.ok) {
+        demoControls.hidden = true;
+        return;
+      }
+      const data = await response.json();
+      const scenarios = data.scenarios || [];
+      if (scenarios.length === 0) {
+        demoControls.hidden = true;
+        return;
+      }
+      demoScenario.innerHTML = scenarios.map((scenario) =>
+        '<option value="' + escapeHtml(scenario.id) + '">' + escapeHtml(scenario.label) + '</option>'
+      ).join("");
+      demoControls.hidden = false;
+      if (!tokenInput.value) {
+        await loadRuns();
+      }
+    }
+
+    async function runDemoScenario() {
+      const scenarioId = demoScenario.value;
+      if (!scenarioId) {
+        return;
+      }
+      demoStatus.textContent = "Running scenario...";
+      runDemoButton.disabled = true;
+      const response = await fetch("/api/demo/scenarios/" + encodeURIComponent(scenarioId), { method: "POST" });
+      const data = await response.json().catch(() => ({}));
+      runDemoButton.disabled = false;
+      if (!response.ok) {
+        demoStatus.textContent = "Scenario failed: " + (data.error || response.status);
+        return;
+      }
+      selectedRunId = data.run_id || "";
+      await loadRuns();
+      demoStatus.textContent = "Scenario recorded.";
     }
 
     function renderRuns() {
@@ -418,6 +489,7 @@ export function runReviewConsoleHtml(): string {
         items.map((item) => '<li>' + escapeHtml(item) + '</li>').join("") + '</ul></div>';
     }
 
+    loadDemoScenarios();
     if (tokenInput.value) {
       loadRuns();
     }

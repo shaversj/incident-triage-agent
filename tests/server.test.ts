@@ -442,6 +442,73 @@ test("server exposes authenticated read-only run list and review console", async
   }
 });
 
+test("server triggers a local demo scenario into persisted run review data", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      undefined,
+      badDeployLlm(),
+      undefined,
+      "local",
+      runStore,
+    ),
+  });
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const scenarios = await fetchJson(`${baseUrl}/api/demo/scenarios`);
+    const triggered = await fetchJson(`${baseUrl}/api/demo/scenarios/bad-deploy-latency`, { method: "POST" });
+    const list = await fetchJson(`${baseUrl}/api/runs`);
+    const run = (list.runs as any[])[0];
+
+    expect((scenarios.scenarios as any[]).map((scenario) => scenario.id)).toContain("bad-deploy-latency");
+    expect(triggered).toMatchObject({
+      status: "ok",
+      demo_scenario: "bad-deploy-latency",
+      scenario: "grafana-bad-deploy-latency",
+    });
+    expect(run).toMatchObject({
+      run_id: triggered.run_id,
+      incident_id: "GRAFANA-checkout-bad-deploy-latency-001",
+      incident_title: "Checkout API latency regression",
+      safety_status: "approval_required",
+    });
+    expect(runStore.runs.size).toBe(1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("server blocks demo scenario triggers outside local mode", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      undefined,
+      badDeployLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+
+  await server.ready;
+  try {
+    const response = await fetch(`${serverUrl(server.server)}/api/demo/scenarios/bad-deploy-latency`, { method: "POST" });
+    const body = await response.json() as any;
+
+    expect(response.status).toBe(403);
+    expect(body.error).toBe("demo_scenarios_local_only");
+    expect(runStore.runs.size).toBe(0);
+  } finally {
+    await server.close();
+  }
+});
+
 test("server schedules retention cleanup for run store", async () => {
   const runStore = new CleanupCountingRunStore();
   const server = startWebhookServer({

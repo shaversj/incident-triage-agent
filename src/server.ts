@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import {
   approvalRecordToJson,
   defaultApprovalStorePath,
@@ -25,6 +27,7 @@ import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
 import type { TriageRunPersistenceStore, TriageRunRecord, TriageRunReviewRecord } from "./persistence";
+import { RecordedLokiClient } from "./recorded-observability";
 import { runReviewConsoleHtml } from "./run-review-console";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
@@ -76,6 +79,34 @@ interface LokiLogEntryLike {
 interface HandleGrafanaWebhookOptions {
   bodyDigest?: string;
 }
+
+interface DemoScenarioDescriptor {
+  id: string;
+  label: string;
+  grafanaFixture: string;
+  logFixture: string;
+}
+
+const demoScenarios: DemoScenarioDescriptor[] = [
+  {
+    id: "bad-deploy-latency",
+    label: "Bad deploy latency",
+    grafanaFixture: "bad-deploy-latency-webhook.json",
+    logFixture: "bad-deploy-latency",
+  },
+  {
+    id: "capacity-saturation",
+    label: "Capacity saturation",
+    grafanaFixture: "capacity-saturation-webhook.json",
+    logFixture: "capacity-saturation",
+  },
+  {
+    id: "checkout-payment-timeout",
+    label: "Checkout payment timeout",
+    grafanaFixture: "checkout-payment-timeout-webhook.json",
+    logFixture: "checkout-payment-timeout",
+  },
+];
 
 export async function handleGrafanaWebhook(
   payload: unknown,
@@ -257,6 +288,11 @@ async function routeRequest(
 
   if (url.pathname.startsWith("/api/approvals/")) {
     await routeApprovalApi(request, response, runtime, url.pathname);
+    return;
+  }
+
+  if (url.pathname === "/api/demo/scenarios" || url.pathname.startsWith("/api/demo/scenarios/")) {
+    await routeDemoScenarioApi(request, response, runtime, url);
     return;
   }
 
@@ -570,6 +606,71 @@ async function routeRunReviewApi(
     return;
   }
   writeJson(response, 200, runReviewToResponse(review));
+}
+
+async function routeDemoScenarioApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  runtime: WebhookRuntime,
+  url: URL,
+): Promise<void> {
+  if (runtimeMode(runtime) !== "local") {
+    writeJson(response, 403, { status: "error", error: "demo_scenarios_local_only" });
+    return;
+  }
+
+  if (url.pathname === "/api/demo/scenarios") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { status: "error", error: "method_not_allowed" });
+      return;
+    }
+    writeJson(response, 200, {
+      status: "ok",
+      scenarios: demoScenarios.map(({ id, label }) => ({ id, label })),
+    });
+    return;
+  }
+
+  if (request.method !== "POST") {
+    writeJson(response, 405, { status: "error", error: "method_not_allowed" });
+    return;
+  }
+  if (!runtime.runStore) {
+    writeJson(response, 503, { status: "error", error: "run_store_unavailable" });
+    return;
+  }
+
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 4 || parts[0] !== "api" || parts[1] !== "demo" || parts[2] !== "scenarios") {
+    writeJson(response, 404, { status: "error", error: "not_found" });
+    return;
+  }
+  const scenarioId = decodeURIComponent(parts[3] ?? "");
+  const scenario = demoScenarios.find((item) => item.id === scenarioId);
+  if (!scenario) {
+    writeJson(response, 404, { status: "error", error: "demo_scenario_not_found" });
+    return;
+  }
+
+  const rawBody = readFileSync(join(runtime.fixturesDir, "grafana", scenario.grafanaFixture), "utf8");
+  const payload = JSON.parse(rawBody) as unknown;
+  const demoRuntime: WebhookRuntime = {
+    ...runtime,
+    mode: "read_only",
+    lokiClient: RecordedLokiClient.fromFixture(scenario.logFixture, runtime.fixturesDir),
+  };
+  const bodyDigest = createHash("sha256")
+    .update(rawBody)
+    .update(":demo:")
+    .update(String(Date.now()))
+    .update(":")
+    .update(String(process.hrtime.bigint()))
+    .digest("hex");
+  const [status, body] = await handleGrafanaWebhook(payload, runtime.webhookSecret, demoRuntime, { bodyDigest });
+  writeJson(response, status, {
+    ...body,
+    demo_scenario: scenario.id,
+  });
 }
 
 function numberQueryParam(value: string | null): number | undefined {
