@@ -254,6 +254,18 @@ Without a local `.env`, provide a throwaway webhook secret:
 AI_OPERATOR_MODE=local GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
 ```
 
+Run the local operator review demo with persisted recorded scenarios:
+
+```bash
+docker compose up -d postgres
+AI_OPERATOR_MODE=local \
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage \
+GRAFANA_WEBHOOK_SECRET=local-secret \
+npm run serve -- --mock-llm
+```
+
+Then open `http://127.0.0.1:8080/runs` and use **Run Scenario** to replay a recorded Grafana payload plus Loki-shaped logs through the real webhook workflow. The demo trigger is local-mode only and runs with read-only workflow semantics so it does not stage approval or execution side effects.
+
 For Phase 1 read-only triage, start Postgres and provide `DATABASE_URL`:
 
 ```bash
