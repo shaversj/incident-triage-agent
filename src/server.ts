@@ -605,7 +605,7 @@ async function routeRunReviewApi(
     writeJson(response, 404, { status: "error", error: "run_not_found" });
     return;
   }
-  writeJson(response, 200, runReviewToResponse(review));
+  writeJson(response, 200, runReviewToResponse(review, runtime));
 }
 
 async function routeDemoScenarioApi(
@@ -727,7 +727,7 @@ function runRecordToResponse(run: TriageRunRecord): Record<string, unknown> {
   };
 }
 
-function runReviewToResponse(review: TriageRunReviewRecord): Record<string, unknown> {
+function runReviewToResponse(review: TriageRunReviewRecord, runtime: WebhookRuntime): Record<string, unknown> {
   const response: Record<string, unknown> = {
     status: "ok",
     run: runRecordToResponse(review.run),
@@ -747,7 +747,38 @@ function runReviewToResponse(review: TriageRunReviewRecord): Record<string, unkn
       expires_at: review.evidenceSnapshot.expiresAt,
     };
   }
+  response.approval = runApprovalToResponse(review, runtime);
   return response;
+}
+
+function runApprovalToResponse(review: TriageRunReviewRecord, runtime: WebhookRuntime): Record<string, unknown> {
+  const approvalId = linkedApprovalId(review);
+  const enabled = approvalRoutesEnabled(runtime);
+  const response: Record<string, unknown> = {
+    enabled,
+  };
+  if (!approvalId) {
+    return response;
+  }
+  response.approval_id = approvalId;
+  if (!enabled) {
+    return response;
+  }
+  const approval = getApproval(approvalStorePath(runtime), approvalId);
+  if (approval) {
+    response.record = approvalRecordToJson(approval);
+  }
+  return response;
+}
+
+function linkedApprovalId(review: TriageRunReviewRecord): string | undefined {
+  const envelope = objectValue(review.run.reviewEnvelope);
+  const mitigation = objectValue(envelope.mitigationControl);
+  const approvalRequest = objectValue(mitigation.approvalRequest);
+  if (typeof approvalRequest.approvalId === "string" && approvalRequest.approvalId.length > 0) {
+    return approvalRequest.approvalId;
+  }
+  return undefined;
 }
 
 function reviewEnvelopeToResponse(envelope: unknown): Record<string, unknown> | undefined {

@@ -14,6 +14,7 @@
     "triage:approval": "tsx src/approval-cli.ts",
     "approval-demo": "tsx scripts/run-approval-demo.ts",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:postgres": "vitest run tests/postgres-persistence.test.ts",
     "evals": "vitest run --config evals/vitest.evals.config.ts",
     "evals:json": "mkdir -p eval-results && vitest run --config evals/vitest.evals.config.ts --reporter=vitest-evals/reporter --reporter=json --outputFile.json=eval-results/vitest-results.json",
@@ -31,6 +32,7 @@
   },
   "devDependencies": {
     "@flue/cli": "^1.0.0-beta.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^25.9.3",
     "@types/pg": "^8.20.3",
     "tsx": "^4.22.4",

@@ -422,10 +422,17 @@ test("server exposes authenticated read-only run list and review console", async
       headers: { Authorization: "Bearer read-secret" },
     });
     const run = (list.runs as any[])[0];
+    const review = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(run.run_id)}`, {
+      headers: { Authorization: "Bearer read-secret" },
+    });
 
     expect(posted.status).toBe(200);
     expect(html).toContain("Operator Run Review");
     expect(html).toContain("/api/runs");
+    expect(html).toContain("Approval Gate");
+    expect(html).toContain("data-approval-decision=\"approve\"");
+    expect(html).toContain("data-approval-decision=\"reject\"");
+    expect(html).toContain("/api/approvals/");
     expect(unauthorized.status).toBe(401);
     expect(list.summary).toMatchObject({ total: 1 });
     expect(run).toMatchObject({
@@ -437,6 +444,65 @@ test("server exposes authenticated read-only run list and review console", async
       mitigation_status: "approval_required",
     });
     expect(run.review_envelope).toBeUndefined();
+    expect(review.approval).toEqual({ enabled: false });
+  } finally {
+    await server.close();
+  }
+});
+
+test("server links local run reviews to approval decisions", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const storePath = tempStorePath();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("bad-deploy-latency"),
+      badDeployLlm(),
+      storePath,
+      "local",
+      runStore,
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8");
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const posted = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Webhook-Secret": "test-secret",
+      },
+      body: rawBody,
+    });
+    const postedBody = await posted.json() as any;
+    const review = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(postedBody.run_id)}`);
+    const approval = review.approval as any;
+    const approved = await fetchJson(`${baseUrl}/api/approvals/${encodeURIComponent(approval.approval_id)}/approve`, {
+      method: "POST",
+    });
+    const refreshed = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(postedBody.run_id)}`);
+
+    expect(posted.status).toBe(200);
+    expect(approval).toMatchObject({
+      enabled: true,
+      approval_id: "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval",
+      record: {
+        status: "pending_human_approval",
+        catalog_id: "rollback-approval",
+        runbook_id: "bad-deploy",
+      },
+    });
+    expect((approved.approval as any).status).toBe("human_approved");
+    expect((refreshed.approval as any).record).toMatchObject({
+      status: "human_approved",
+      execution: {
+        status: "simulated_not_executed",
+        dry_run: true,
+      },
+    });
   } finally {
     await server.close();
   }
