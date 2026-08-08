@@ -73,6 +73,7 @@ Useful verification before handing off changes:
 
 ```bash
 npm test
+npm run test:e2e
 npm run triage:read-only-canary -- --json
 npm run evals
 npm run typecheck
@@ -117,6 +118,7 @@ git diff --check
 - Judge-based evals may score explanation quality, but schema validity, citation validity, provenance, mitigation governance, and safety gates must remain deterministic assertions.
 - Recorded log fixtures may contain timestamps, labels, and raw log lines, but must not contain expected classes, next actions, rollback hints, or eval expectations.
 - Use `npm test`, `npm run typecheck`, and `npm run triage -- ...` for local verification.
+- Use `npm run test:e2e` for browser-visible operator-console behavior. The Playwright suite lives in `tests/e2e/` and should exercise real pages, DOM events, and network calls against a locally started test server.
 - Use Docker only for local image packaging unless a future plan reintroduces a connector smoke test.
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, mitigation governance, safety gating, and scorecard results.
@@ -133,6 +135,8 @@ git diff --check
 - Do not add tests that only instantiate local objects and assert the values they were constructed with.
 - Avoid brittle hardcoded string checks unless the string is a public contract, a stable evidence ID, a safety/security guarantee, or a required operator-facing message.
 - Live-provider tests must remain opt-in, but when enabled they should fail or skip explicitly instead of silently passing without exercising a scenario.
+- Browser UI regressions belong in Playwright, not static HTML assertions alone. Prefer starting the server in-process with in-memory stores or temp files so E2E tests remain deterministic and do not require Docker, Postgres, MiniMax credentials, Grafana, or Loki.
+- Keep Playwright tests focused on user-observable workflows such as loading `/runs`, clicking approval controls, verifying refreshed statuses, and checking console-visible failure states. Do not use Playwright for contracts that a faster HTTP or workflow integration test can prove.
 - More tests are not automatically better. Bias toward fewer tests that prove meaningful behavior across real code paths.
 
 ## Topic Docs

@@ -86,6 +86,11 @@ export function runReviewConsoleHtml(): string {
     }
     button.primary { background: var(--blue); color: #ffffff; }
     button.secondary { background: #e6edf7; color: #1d2939; border-color: #c6d3e1; }
+    button.danger { background: var(--red); color: #ffffff; }
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
     main {
       max-width: 1280px;
       margin: 0 auto;
@@ -158,6 +163,11 @@ export function runReviewConsoleHtml(): string {
       gap: 6px;
       flex-wrap: wrap;
     }
+    .approval-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .chip {
       display: inline-flex;
       align-items: center;
@@ -175,6 +185,9 @@ export function runReviewConsoleHtml(): string {
     .chip.approval_required { background: #fff7ed; color: var(--amber); }
     .chip.blocked, .chip.unsafe { background: #fef3f2; color: var(--red); }
     .chip.completed, .chip.valid { background: #ecfdf3; color: var(--green); }
+    .chip.pending_human_approval { background: #fff7ed; color: var(--amber); }
+    .chip.human_approved { background: #ecfdf3; color: var(--green); }
+    .chip.human_rejected { background: #fef3f2; color: var(--red); }
     .detail {
       padding: 15px;
       display: grid;
@@ -433,6 +446,7 @@ export function runReviewConsoleHtml(): string {
       const review = data.review || {};
       const decision = review.decision || {};
       const mitigation = review.mitigation_control || {};
+      const approval = data.approval || {};
       const evidence = (data.evidence_snapshot && data.evidence_snapshot.evidence) || [];
       detailEl.innerHTML =
         '<div class="grid">' +
@@ -446,8 +460,10 @@ export function runReviewConsoleHtml(): string {
         panel("RCA Hypothesis", renderHypotheses(review.explanation)) +
         panel("Decision", '<div class="chips">' + chip(decision.incident_class) + chip(decision.next_action) + chip("confidence " + (decision.confidence ?? "n/a")) + '</div>' + list("Verification", decision.verification_plan)) +
         panel("Mitigation", '<div class="chips">' + chip(mitigation.status) + chip(mitigation.approval_required ? "approval required" : "no approval") + '</div>' + field("Reason", mitigation.reason)) +
+        panel("Approval Gate", renderApproval(approval)) +
         panel("Evidence", evidence.slice(0, 8).map(renderEvidence).join("") || '<div class="muted">No evidence snapshot.</div>') +
         panel("Raw Review", '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>');
+      attachApprovalHandlers();
     }
 
     function renderHypotheses(explanation) {
@@ -465,6 +481,65 @@ export function runReviewConsoleHtml(): string {
       return '<div class="field"><span class="label">' + escapeHtml(item.evidenceId || item.evidence_id) + '</span>' +
         '<div class="value">' + escapeHtml(item.summary) + '</div>' +
         '<div class="meta">' + escapeHtml(item.source) + ' / ' + escapeHtml(item.sourceTier || item.source_tier) + '</div></div>';
+    }
+
+    function renderApproval(approval) {
+      if (!approval.enabled) {
+        return '<div class="muted">Approval decisions are unavailable in this runtime.</div>' +
+          (approval.approval_id ? field("Approval ID", approval.approval_id) : "");
+      }
+      if (!approval.approval_id) {
+        return '<div class="muted">No approval is linked to this run.</div>';
+      }
+      const record = approval.record;
+      if (!record) {
+        return field("Approval ID", approval.approval_id) +
+          '<div class="muted">No approval record has been staged for this run.</div>';
+      }
+      const disabled = record.status !== "pending_human_approval" ? " disabled" : "";
+      const execution = record.execution
+        ? field("Execution", record.execution.status + " / dry run: " + String(record.execution.dry_run))
+        : "";
+      return '<div class="chips">' + chip(record.status) + chip(record.catalog_id) + chip(record.runbook_id) + '</div>' +
+        '<div class="grid">' +
+          field("Approval ID", record.approval_id) +
+          field("Service", record.service) +
+          field("Requested", record.requested_at) +
+          field("Executed", String(record.executed)) +
+        '</div>' +
+        field("Action Intent", record.action_intent) +
+        execution +
+        '<div class="approval-actions">' +
+          '<button class="primary" type="button" data-approval-decision="approve" data-approval-id="' + escapeHtml(record.approval_id) + '"' + disabled + '>Approve</button>' +
+          '<button class="danger" type="button" data-approval-decision="reject" data-approval-id="' + escapeHtml(record.approval_id) + '"' + disabled + '>Reject</button>' +
+        '</div>';
+    }
+
+    function attachApprovalHandlers() {
+      for (const button of detailEl.querySelectorAll("[data-approval-decision]")) {
+        button.addEventListener("click", async () => {
+          const approvalId = button.getAttribute("data-approval-id") || "";
+          const decision = button.getAttribute("data-approval-decision") || "";
+          await decideApprovalAction(approvalId, decision);
+        });
+      }
+    }
+
+    async function decideApprovalAction(approvalId, decision) {
+      if (!approvalId || !decision) {
+        return;
+      }
+      demoStatus.textContent = decision === "approve" ? "Approving mitigation..." : "Rejecting mitigation...";
+      const response = await fetch("/api/approvals/" + encodeURIComponent(approvalId) + "/" + decision, { method: "POST" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        demoStatus.textContent = "Approval decision failed: " + (body.error || response.status);
+        return;
+      }
+      if (selectedRunId) {
+        await loadReview(selectedRunId);
+      }
+      demoStatus.textContent = "Approval decision recorded.";
     }
 
     function field(label, value) {
