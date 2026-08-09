@@ -1,5 +1,5 @@
 .env
-.compound-engineering/*.local.yaml
+.compound-engineering/
 .venv/
 __pycache__/
 *.py[cod]
