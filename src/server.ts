@@ -656,7 +656,6 @@ async function routeDemoScenarioApi(
   const payload = JSON.parse(rawBody) as unknown;
   const demoRuntime: WebhookRuntime = {
     ...runtime,
-    mode: "read_only",
     lokiClient: RecordedLokiClient.fromFixture(scenario.logFixture, runtime.fixturesDir),
   };
   const bodyDigest = createHash("sha256")

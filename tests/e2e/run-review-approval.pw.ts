@@ -14,11 +14,11 @@ test("approves a staged mitigation from the run review console", async ({ page }
     await postBadDeployWebhook(harness.baseUrl);
     const gate = await openApprovalGate(page, harness.baseUrl);
 
-    await expect(gate.getByText("pending_human_approval")).toBeVisible();
+    await expect(gate.getByText("pending_human_approval", { exact: true })).toBeVisible();
     await gate.getByRole("button", { name: "Approve" }).click();
 
-    await expect(gate.getByText("human_approved")).toBeVisible();
-    await expect(gate.getByText("simulated_not_executed")).toBeVisible();
+    await expect(gate.getByText("human_approved", { exact: true })).toBeVisible();
+    await expect(gate.locator(".field").filter({ hasText: "Execution" }).getByText("simulated_not_executed / dry run: true", { exact: true })).toBeVisible();
     await expect(page.getByText("Approval decision recorded.")).toBeVisible();
   } finally {
     await harness.server.close();
@@ -31,10 +31,10 @@ test("rejects a staged mitigation from the run review console", async ({ page })
     await postBadDeployWebhook(harness.baseUrl);
     const gate = await openApprovalGate(page, harness.baseUrl);
 
-    await expect(gate.getByText("pending_human_approval")).toBeVisible();
+    await expect(gate.getByText("pending_human_approval", { exact: true })).toBeVisible();
     await gate.getByRole("button", { name: "Reject" }).click();
 
-    await expect(gate.getByText("human_rejected")).toBeVisible();
+    await expect(gate.getByText("human_rejected", { exact: true })).toBeVisible();
     await expect(gate.getByRole("button", { name: "Approve" })).toBeDisabled();
     await expect(gate.getByRole("button", { name: "Reject" })).toBeDisabled();
   } finally {
@@ -58,9 +58,35 @@ test("shows an operator-visible error when an approval decision fails", async ({
     await gate.getByRole("button", { name: "Approve" }).click();
 
     await expect(page.getByText("Approval decision failed: approval_store_unavailable")).toBeVisible();
-    await expect(gate.getByText("pending_human_approval")).toBeVisible();
+    await expect(gate.getByText("pending_human_approval", { exact: true })).toBeVisible();
     await expect(gate.getByRole("button", { name: "Approve" })).toBeEnabled();
     await expect(gate.getByRole("button", { name: "Reject" })).toBeEnabled();
+  } finally {
+    await harness.server.close();
+  }
+});
+
+test("runs an approval scenario from the review console launcher", async ({ page }) => {
+  const harness = await startApprovalHarness();
+  try {
+    await page.goto(`${harness.baseUrl}/runs`);
+    await expect(page.getByRole("heading", { name: "Operator Run Review" })).toBeVisible();
+    await page.getByLabel("Demo scenario").selectOption("bad-deploy-latency");
+    await page.getByRole("button", { name: "Run Scenario" }).click();
+
+    const gate = page.locator(".panel").filter({ hasText: "Approval Gate" });
+    await expect(page.getByText("Scenario recorded.")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Checkout API latency regression/ })).toBeVisible();
+    await expect(gate.getByText("pending_human_approval", { exact: true })).toBeVisible();
+    await expect(gate.getByText("Approval requested")).toBeVisible();
+    await expect(gate.getByText(/actor: local_operator/)).toBeVisible();
+
+    await gate.getByRole("button", { name: "Approve" }).click();
+
+    await expect(gate.getByText("human_approved", { exact: true })).toBeVisible();
+    await expect(gate.getByText("Decision recorded")).toBeVisible();
+    await expect(gate.getByText("Simulated executor")).toBeVisible();
+    await expect(gate.locator(".timeline-item").filter({ hasText: "Simulated executor" }).getByText(/dry run: true/)).toBeVisible();
   } finally {
     await harness.server.close();
   }

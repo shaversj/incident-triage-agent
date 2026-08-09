@@ -510,13 +510,14 @@ test("server links local run reviews to approval decisions", async () => {
 
 test("server triggers a local demo scenario into persisted run review data", async () => {
   const runStore = new InMemoryTriageRunPersistenceStore();
+  const storePath = tempStorePath();
   const server = startWebhookServer({
     host: "127.0.0.1",
     port: 0,
     runtime: runtime(
       undefined,
       badDeployLlm(),
-      undefined,
+      storePath,
       "local",
       runStore,
     ),
@@ -529,6 +530,7 @@ test("server triggers a local demo scenario into persisted run review data", asy
     const triggered = await fetchJson(`${baseUrl}/api/demo/scenarios/bad-deploy-latency`, { method: "POST" });
     const list = await fetchJson(`${baseUrl}/api/runs`);
     const run = (list.runs as any[])[0];
+    const review = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(triggered.run_id as string)}`);
 
     expect((scenarios.scenarios as any[]).map((scenario) => scenario.id)).toContain("bad-deploy-latency");
     expect(triggered).toMatchObject({
@@ -541,6 +543,14 @@ test("server triggers a local demo scenario into persisted run review data", asy
       incident_id: "GRAFANA-checkout-bad-deploy-latency-001",
       incident_title: "Checkout API latency regression",
       safety_status: "approval_required",
+    });
+    expect(review.approval).toMatchObject({
+      enabled: true,
+      approval_id: "approval:GRAFANA-checkout-bad-deploy-latency-001:rollback-approval",
+      record: {
+        status: "pending_human_approval",
+        requested_at: expect.any(String),
+      },
     });
     expect(runStore.runs.size).toBe(1);
   } finally {

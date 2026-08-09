@@ -168,6 +168,20 @@ export function runReviewConsoleHtml(): string {
       gap: 8px;
       flex-wrap: wrap;
     }
+    .timeline {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .timeline-item {
+      border-left: 3px solid #c6d3e1;
+      padding-left: 10px;
+    }
+    .timeline-title {
+      font-weight: 800;
+      font-size: 13px;
+      color: var(--text);
+    }
     .chip {
       display: inline-flex;
       align-items: center;
@@ -509,10 +523,29 @@ export function runReviewConsoleHtml(): string {
         '</div>' +
         field("Action Intent", record.action_intent) +
         execution +
+        renderApprovalTimeline(record) +
         '<div class="approval-actions">' +
           '<button class="primary" type="button" data-approval-decision="approve" data-approval-id="' + escapeHtml(record.approval_id) + '"' + disabled + '>Approve</button>' +
           '<button class="danger" type="button" data-approval-decision="reject" data-approval-id="' + escapeHtml(record.approval_id) + '"' + disabled + '>Reject</button>' +
         '</div>';
+    }
+
+    function renderApprovalTimeline(record) {
+      const decided = record.decided_at
+        ? timelineItem("Decision recorded", record.decided_at + " / actor: local_operator / status: " + record.status)
+        : timelineItem("Awaiting decision", "actor: local_operator / status: pending_human_approval");
+      const execution = record.execution
+        ? timelineItem("Simulated executor", record.execution.status + " / dry run: " + String(record.execution.dry_run) + " / executed: " + String(record.execution.executed))
+        : "";
+      return '<div class="timeline" aria-label="Approval audit timeline">' +
+        timelineItem("Approval requested", record.requested_at + " / catalog: " + record.catalog_id) +
+        decided +
+        execution +
+      '</div>';
+    }
+
+    function timelineItem(title, body) {
+      return '<div class="timeline-item"><div class="timeline-title">' + escapeHtml(title) + '</div><div class="meta">' + escapeHtml(body) + '</div></div>';
     }
 
     function attachApprovalHandlers() {
