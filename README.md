@@ -264,7 +264,15 @@ GRAFANA_WEBHOOK_SECRET=local-secret \
 npm run serve -- --mock-llm
 ```
 
-Then open `http://127.0.0.1:8080/runs` and use **Run Scenario** to replay a recorded Grafana payload plus Loki-shaped logs through the real webhook workflow. The demo trigger is local-mode only and runs with read-only workflow semantics so it does not stage approval or execution side effects.
+Then open:
+
+```text
+http://127.0.0.1:8080/runs
+```
+
+Use **Run Scenario** with `bad-deploy-latency` to replay a recorded Grafana payload plus Loki-shaped logs through the real webhook workflow. The resulting run opens in the review console with an approval gate. Click **Approve** to record a local human approval, keep execution simulated, and refresh the approval audit timeline with the decision and dry-run executor result.
+
+The demo trigger is local-mode only. It can stage local approval records in `.triage/approvals.json`, but it does not call rollback, scaling, throttling, ticketing, chat, or production APIs.
 
 For Phase 1 read-only triage, start Postgres and provide `DATABASE_URL`:
 

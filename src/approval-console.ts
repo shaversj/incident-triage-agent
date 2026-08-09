@@ -161,6 +161,19 @@ export function approvalConsoleHtml(): string {
       gap: 10px;
       flex-wrap: wrap;
     }
+    .timeline {
+      display: grid;
+      gap: 8px;
+    }
+    .timeline-item {
+      border-left: 3px solid var(--line);
+      padding-left: 10px;
+    }
+    .timeline-title {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 800;
+    }
     button.action {
       border: 1px solid transparent;
       border-radius: 6px;
@@ -293,6 +306,7 @@ export function approvalConsoleHtml(): string {
           field("Executed", String(approval.executed)) +
         '</div>' +
         '<div class="field"><span class="label">Action Intent</span><div class="value">' + escapeHtml(approval.action_intent) + '</div></div>' +
+        renderTimeline(approval) +
         '<div class="actions">' +
           '<button class="action approve" type="button" id="approve"' + disabled + '>Approve</button>' +
           '<button class="action reject" type="button" id="reject"' + disabled + '>Reject</button>' +
@@ -304,6 +318,24 @@ export function approvalConsoleHtml(): string {
 
     function field(label, value) {
       return '<div class="field"><span class="label">' + escapeHtml(label) + '</span><div class="value">' + escapeHtml(value) + '</div></div>';
+    }
+
+    function renderTimeline(approval) {
+      const decided = approval.decided_at
+        ? timelineItem("Decision recorded", approval.decided_at + " / actor: local_operator / status: " + approval.status)
+        : timelineItem("Awaiting decision", "actor: local_operator / status: pending_human_approval");
+      const execution = approval.execution
+        ? timelineItem("Simulated executor", approval.execution.status + " / dry run: " + String(approval.execution.dry_run) + " / executed: " + String(approval.execution.executed))
+        : "";
+      return '<div class="timeline" aria-label="Approval audit timeline">' +
+        timelineItem("Approval requested", approval.requested_at + " / catalog: " + approval.catalog_id) +
+        decided +
+        execution +
+      '</div>';
+    }
+
+    function timelineItem(title, body) {
+      return '<div class="timeline-item"><div class="timeline-title">' + escapeHtml(title) + '</div><div class="meta">' + escapeHtml(body) + '</div></div>';
     }
 
     async function decide(decision) {
