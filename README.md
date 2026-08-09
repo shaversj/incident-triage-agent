@@ -5,15 +5,61 @@
 ![Node](https://img.shields.io/badge/Node.js-22-green)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A portfolio prototype for bounded, evidence-grounded SRE incident triage.
+A TypeScript prototype of an AI-assisted SRE operator. It takes incident signals, gathers evidence, asks an LLM for one bounded judgment, validates that judgment locally, and routes risky mitigations through deterministic safety and approval controls.
 
-The project demonstrates an agentic incident workflow where the system owns state, evidence, validation, provenance, mitigation governance, safety gates, and scoring. The LLM owns one constrained judgment: explain the incident evidence and choose from a bounded operational taxonomy.
+This is not an incident chatbot. The project is about control: the workflow owns state, evidence, validation, provenance, mitigation policy, approval staging, audit output, persistence, and scoring. The LLM is limited to explaining the evidence and choosing from a fixed operational taxonomy.
 
-The goal is not to build an incident chatbot. The goal is to show how an AI-assisted SRE workflow can remain inspectable, auditable, and safe.
+## What The Project Does
 
-## Try It
+- Ingests recorded incident scenarios or Grafana-shaped webhook payloads.
+- Builds an evidence package from incident facts, runbooks, deploy data, service metadata, prior incidents, and Loki-shaped logs.
+- Calls either a mock decision client or MiniMax through the Flue-backed adapter.
+- Validates the LLM result before it can affect workflow state.
+- Maps approval-sensitive actions through a mitigation catalog.
+- Stages human approvals and records simulated executor output without touching production systems.
+- Persists run reviews and evidence snapshots in memory or Postgres.
+- Exposes browser consoles for run review and approval decisions.
+- Runs deterministic tests and evals for schema, evidence grounding, safety, mitigation governance, and readability.
 
-Run the deterministic demo path with no provider credentials:
+## Main Demo
+
+Use this path to see the full operator loop: recorded alert -> evidence -> bounded decision -> approval gate -> simulated execution audit.
+
+```bash
+npm install
+cp .env.example .env # if you do not already have one
+docker compose up -d postgres
+
+AI_OPERATOR_MODE=local \
+GRAFANA_WEBHOOK_SECRET=local-secret \
+OPERATOR_READ_TOKEN= \
+npm run serve -- --mock-llm
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8080/runs
+```
+
+In the UI:
+
+1. Select `bad-deploy-latency`.
+2. Click **Run Scenario**.
+3. Review the generated incident, evidence, RCA hypothesis, decision, mitigation status, and approval gate.
+4. Click **Approve**.
+5. Confirm the approval audit timeline shows the decision and a `dry_run: true` simulated executor result.
+
+If Docker maps Postgres to a different host port, keep `.env` consistent:
+
+```text
+POSTGRES_HOST_PORT=5433
+DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5433/incident_triage
+```
+
+## Fast CLI Demo
+
+Run a deterministic triage report with no provider credentials and no Docker:
 
 ```bash
 npm install
@@ -24,14 +70,42 @@ The run emits structured logs to stderr and the operator-facing triage report to
 
 Sample output: [docs/examples/checkout-payment-timeout-trace.txt](docs/examples/checkout-payment-timeout-trace.txt)
 
-## What To Notice
+## Scenarios
 
-- The workflow gathers evidence before asking the LLM for judgment.
-- Raw incident fixtures do not contain expected causes or actions.
-- The LLM result must pass local schema, taxonomy, confidence, and evidence-citation validation.
-- The Mitigation Control Plane maps mutating intents to an approved catalog, simulates dry-run and verification, and stages approval-sensitive actions instead of executing them.
-- The scorecard is deterministic; the model does not grade itself.
-- Recorded Grafana and Loki-shaped inputs exercise the real webhook and workflow path.
+| Scenario | Incident type | Expected action | Shows |
+| --- | --- | --- | --- |
+| `checkout-payment-timeout` | Dependency outage | Escalate owner | Evidence grounding and dependency-vs-local reasoning |
+| `bad-deploy-latency` | Bad deploy | Request rollback approval | Approval gate for risky remediation |
+| `capacity-saturation` | Capacity saturation | Apply runbook step with approval | Runbook-guided next action |
+| `noisy-alert` | Noisy alert | Continue monitoring | Restraint when evidence is weak |
+
+List scenarios:
+
+```bash
+npm run list
+```
+
+Run a different CLI scenario:
+
+```bash
+npm run triage -- run bad-deploy-latency --mock-llm --trace
+```
+
+## What To Look At
+
+Start with these files if you want to understand the implementation:
+
+| File | Why it matters |
+| --- | --- |
+| [src/workflow.ts](src/workflow.ts) | Incident lifecycle and state machine. |
+| [src/evidence.ts](src/evidence.ts) | Deterministic evidence gathering and provenance. |
+| [src/llm.ts](src/llm.ts) | Mock and live LLM boundary plus response validation. |
+| [src/mitigation-control.ts](src/mitigation-control.ts) | Catalog-backed mitigation governance, dry-run, audit, and approval staging. |
+| [src/policy.ts](src/policy.ts) | Safety compatibility gate derived from mitigation governance. |
+| [src/server.ts](src/server.ts) | Webhook handling, run review API, demo launcher, and approval API. |
+| [src/run-review-console.ts](src/run-review-console.ts) | Browser UI for reviewing runs and approving staged mitigations. |
+| [tests/e2e/run-review-approval.pw.ts](tests/e2e/run-review-approval.pw.ts) | Browser coverage for the approval workflow. |
+| [docs/ai-operator-architecture.md](docs/ai-operator-architecture.md) | Architecture, trust boundaries, demo paths, and production integration points. |
 
 ## Architecture
 
@@ -63,40 +137,6 @@ The Mitigation Control Plane is the action-control layer of the prototype: the p
 | `execution_enabled` | Future bounded executor mode | Blocked until implemented | Blocked until implemented |
 
 When `serve` sees real integration configuration such as Grafana, Loki, MiniMax, or database settings, `AI_OPERATOR_MODE` must be set explicitly. In `read_only`, the webhook path can return a safety decision that says approval would be required, but it does not emit approval requests, staged actions, simulated action states, or approval-store writes.
-
-## Scenarios
-
-| Scenario | Incident type | Expected action | Shows |
-| --- | --- | --- | --- |
-| `checkout-payment-timeout` | Dependency outage | Escalate owner | Evidence grounding and dependency-vs-local reasoning |
-| `bad-deploy-latency` | Bad deploy | Request rollback approval | Approval gate for risky remediation |
-| `capacity-saturation` | Capacity saturation | Apply runbook step with approval | Runbook-guided next action |
-| `noisy-alert` | Noisy alert | Continue monitoring | Restraint when evidence is weak |
-
-List scenarios:
-
-```bash
-npm run list
-```
-
-Run a different scenario:
-
-```bash
-npm run triage -- run bad-deploy-latency --mock-llm --trace
-```
-
-## What To Review
-
-- [src/workflow.ts](src/workflow.ts): the incident triage state machine.
-- [src/evidence.ts](src/evidence.ts): deterministic evidence gathering and provenance.
-- [src/llm.ts](src/llm.ts): Flue-backed MiniMax adapter and response validation.
-- [src/mitigation-control.ts](src/mitigation-control.ts): catalog-backed mitigation governance, dry-run, audit, and verification simulation.
-- [src/policy.ts](src/policy.ts): safety compatibility gate derived from mitigation governance.
-- [src/scoring.ts](src/scoring.ts): deterministic scorecard.
-- [evals/recorded-triage-quality.eval.ts](evals/recorded-triage-quality.eval.ts): deterministic quality gates.
-- [.agents/skills/incident-triage/SKILL.md](.agents/skills/incident-triage/SKILL.md): local skill boundary used for bounded SRE judgment.
-- [docs/ai-operator-architecture.md](docs/ai-operator-architecture.md): architecture, trust boundaries, demo paths, and production integration points.
-- [docs/ai-operator-architecture.html](docs/ai-operator-architecture.html): single-page visual companion for portfolio review.
 
 ## Decision Contract
 
@@ -254,25 +294,7 @@ Without a local `.env`, provide a throwaway webhook secret:
 AI_OPERATOR_MODE=local GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mock-llm
 ```
 
-Run the local operator review demo with persisted recorded scenarios:
-
-```bash
-docker compose up -d postgres
-AI_OPERATOR_MODE=local \
-DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage \
-GRAFANA_WEBHOOK_SECRET=local-secret \
-npm run serve -- --mock-llm
-```
-
-Then open:
-
-```text
-http://127.0.0.1:8080/runs
-```
-
-Use **Run Scenario** with `bad-deploy-latency` to replay a recorded Grafana payload plus Loki-shaped logs through the real webhook workflow. The resulting run opens in the review console with an approval gate. Click **Approve** to record a local human approval, keep execution simulated, and refresh the approval audit timeline with the decision and dry-run executor result.
-
-The demo trigger is local-mode only. It can stage local approval records in `.triage/approvals.json`, but it does not call rollback, scaling, throttling, ticketing, chat, or production APIs.
+For the persisted browser demo, use the [Main Demo](#main-demo) path above. It starts Postgres, opens `/runs`, launches `bad-deploy-latency`, and records a simulated approval audit from the review console.
 
 For Phase 1 read-only triage, start Postgres and provide `DATABASE_URL`:
 
@@ -324,9 +346,12 @@ Run the full local verification path:
 
 ```bash
 npm test
+npm run test:e2e
 npm run --silent triage:read-only-canary -- --json
 npm run typecheck
+npm run build
 npm run evals
+git diff --check
 ```
 
 Default tests avoid real MiniMax calls, Docker, and networked Loki. They exercise parser, evidence, workflow, policy, scoring, CLI, Grafana, Loki-shaped log replay, webhook, and outcome code paths with fixture payloads and mock external transports.
