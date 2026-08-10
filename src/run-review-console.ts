@@ -361,7 +361,7 @@ export function runReviewConsoleHtml(): string {
       runsEl.innerHTML = '<div class="empty">Loading runs...</div>';
       const response = await fetch("/api/runs?limit=50", { headers: authHeaders() });
       if (!response.ok) {
-        runsEl.innerHTML = '<div class="empty error">Unable to load runs: ' + response.status + '</div>';
+        runsEl.innerHTML = '<div class="empty error">' + escapeHtml(runLoadError(response.status)) + '</div>';
         summaryEl.textContent = "";
         return;
       }
@@ -375,6 +375,13 @@ export function runReviewConsoleHtml(): string {
       if (selectedRunId) {
         await loadReview(selectedRunId);
       }
+    }
+
+    function runLoadError(status) {
+      if (status === 401) {
+        return "Unable to load runs: 401. Enter OPERATOR_READ_TOKEN and click Load, or clear OPERATOR_READ_TOKEN for local demo mode.";
+      }
+      return "Unable to load runs: " + status;
     }
 
     async function loadDemoScenarios() {

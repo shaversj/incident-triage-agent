@@ -12,6 +12,7 @@
     "triage:recorded": "tsx scripts/run-recorded-triage.ts",
     "triage:read-only-canary": "tsx scripts/run-recorded-triage.ts --read-only-canary",
     "triage:approval": "tsx src/approval-cli.ts",
+    "demo:operator": "tsx scripts/run-operator-demo.ts",
     "approval-demo": "tsx scripts/run-approval-demo.ts",
     "test": "vitest run",
     "test:e2e": "playwright test",
