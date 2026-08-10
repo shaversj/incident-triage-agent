@@ -29,12 +29,10 @@ Use this path to see the full operator loop: recorded alert -> evidence -> bound
 npm install
 cp .env.example .env # if you do not already have one
 docker compose up -d postgres
-
-AI_OPERATOR_MODE=local \
-GRAFANA_WEBHOOK_SECRET=local-secret \
-OPERATOR_READ_TOKEN= \
-npm run serve -- --mock-llm
+npm run demo:operator
 ```
+
+`demo:operator` starts the server in local mode with the mock LLM, uses `.env` for persistence settings such as `DATABASE_URL`, and clears `OPERATOR_READ_TOKEN` for the demo process so `/runs` loads without an auth prompt.
 
 Then open:
 
@@ -295,6 +293,8 @@ AI_OPERATOR_MODE=local GRAFANA_WEBHOOK_SECRET=local-secret npm run serve -- --mo
 ```
 
 For the persisted browser demo, use the [Main Demo](#main-demo) path above. It starts Postgres, opens `/runs`, launches `bad-deploy-latency`, and records a simulated approval audit from the review console.
+
+If `OPERATOR_READ_TOKEN` is set while using `/runs`, enter that value in the console and click **Load**. For the local demo script, the token is cleared for the server process so this step is normally unnecessary.
 
 For Phase 1 read-only triage, start Postgres and provide `DATABASE_URL`:
 

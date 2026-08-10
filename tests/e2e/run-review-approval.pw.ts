@@ -92,6 +92,23 @@ test("runs an approval scenario from the review console launcher", async ({ page
   }
 });
 
+test("guides operators when run review requires a read token", async ({ page }) => {
+  const harness = await startApprovalHarness({ operatorReadToken: "local-read-token" });
+  try {
+    await postBadDeployWebhook(harness.baseUrl);
+    await page.goto(`${harness.baseUrl}/runs`);
+
+    await expect(page.getByText(/Enter OPERATOR_READ_TOKEN and click Load/)).toBeVisible();
+    await page.getByPlaceholder("OPERATOR_READ_TOKEN").fill("local-read-token");
+    await page.getByRole("button", { name: "Load" }).click();
+
+    await expect(page.getByRole("button", { name: /Checkout API latency regression/ })).toBeVisible();
+    await expect(page.locator(".panel").filter({ hasText: "Approval Gate" })).toBeVisible();
+  } finally {
+    await harness.server.close();
+  }
+});
+
 async function openApprovalGate(page: Page, baseUrl: string) {
   await page.goto(`${baseUrl}/runs`);
   await expect(page.getByRole("heading", { name: "Operator Run Review" })).toBeVisible();
@@ -102,7 +119,7 @@ async function openApprovalGate(page: Page, baseUrl: string) {
   return gate;
 }
 
-async function startApprovalHarness(): Promise<{ server: RunningWebhookServer; baseUrl: string }> {
+async function startApprovalHarness(options: { operatorReadToken?: string } = {}): Promise<{ server: RunningWebhookServer; baseUrl: string }> {
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",
@@ -113,6 +130,9 @@ async function startApprovalHarness(): Promise<{ server: RunningWebhookServer; b
     runStore: new InMemoryTriageRunPersistenceStore(),
     approvalStorePath: join(mkdtempSync(join(tmpdir(), "incident-triage-e2e-")), "approvals.json"),
   };
+  if (options.operatorReadToken) {
+    runtime.operatorReadToken = options.operatorReadToken;
+  }
   const server = startWebhookServer({
     host: "127.0.0.1",
     port: 0,
