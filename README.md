@@ -34,6 +34,8 @@ npm run demo:operator
 
 `demo:operator` starts the server in local mode with the mock LLM, uses `.env` for persistence settings such as `DATABASE_URL`, and clears `OPERATOR_READ_TOKEN` for the demo process so `/runs` loads without an auth prompt.
 
+Before starting the server, the script checks that `.env` exists, `DATABASE_URL` is set, and Postgres accepts a short connection. If the check fails, it prints the exact `docker compose up -d postgres` and `DATABASE_URL` guidance to fix the local setup.
+
 Then open:
 
 ```text
