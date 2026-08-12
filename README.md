@@ -25,6 +25,8 @@ This is not an incident chatbot. The project is about control: the workflow owns
 
 Use this path to see the full operator loop: recorded alert -> evidence -> bounded decision -> approval gate -> simulated execution audit.
 
+![Operator demo walkthrough](docs/assets/operator-demo-walkthrough.gif)
+
 ```bash
 npm install
 cp .env.example .env # if you do not already have one
