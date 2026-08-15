@@ -273,7 +273,7 @@ async function routeRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/runs") {
-    writeHtml(response, 200, runReviewConsoleHtml());
+    writeHtml(response, 200, runReviewConsoleHtml({ mode: runtimeMode(runtime) }));
     return;
   }
 
