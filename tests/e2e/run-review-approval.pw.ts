@@ -8,6 +8,40 @@ import { InMemoryTriageRunPersistenceStore } from "../../src/persistence";
 import { RecordedLokiClient } from "../../src/recorded-observability";
 import { startWebhookServer, type RunningWebhookServer, type WebhookRuntime } from "../../src/server";
 
+test("shows local mode, simulation badge, and first-run guidance", async ({ page }) => {
+  const harness = await startApprovalHarness();
+  try {
+    await page.goto(`${harness.baseUrl}/runs`);
+
+    await expect(page.getByRole("heading", { name: "Operator Run Review" })).toBeVisible();
+    await expect(page.getByText("Mode: local", { exact: true })).toBeVisible();
+    await expect(page.getByText("Simulation only", { exact: true })).toBeVisible();
+    await expect(page.getByText("No runs yet.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Run a demo scenario above to create the first operator review.")).toBeVisible();
+    await expect(page.getByText("No run selected.", { exact: true })).toBeVisible();
+  } finally {
+    await harness.server.close();
+  }
+});
+
+test("shows read-only mode and token-gated empty run guidance", async ({ page }) => {
+  const harness = await startApprovalHarness({ operatorReadToken: "local-read-token", mode: "read_only" });
+  try {
+    await page.goto(`${harness.baseUrl}/runs`);
+
+    await expect(page.getByText("Mode: read_only", { exact: true })).toBeVisible();
+    await expect(page.getByText("Simulation only", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Run Scenario" })).toBeHidden();
+    await page.getByPlaceholder("OPERATOR_READ_TOKEN").fill("local-read-token");
+    await page.getByRole("button", { name: "Load" }).click();
+
+    await expect(page.getByText("No retained runs.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Waiting for signed Grafana webhook runs. Enter the read token, then refresh after ingestion.")).toBeVisible();
+  } finally {
+    await harness.server.close();
+  }
+});
+
 test("approves a staged mitigation from the run review console", async ({ page }) => {
   const harness = await startApprovalHarness();
   try {
@@ -18,8 +52,8 @@ test("approves a staged mitigation from the run review console", async ({ page }
     await gate.getByRole("button", { name: "Approve" }).click();
 
     await expect(gate.getByText("human_approved", { exact: true })).toBeVisible();
+    await expect(gate.locator(".notice.success")).toContainText("Approval decision recorded.");
     await expect(gate.locator(".field").filter({ hasText: "Execution" }).getByText("simulated_not_executed / dry run: true", { exact: true })).toBeVisible();
-    await expect(page.getByText("Approval decision recorded.")).toBeVisible();
   } finally {
     await harness.server.close();
   }
@@ -57,7 +91,7 @@ test("shows an operator-visible error when an approval decision fails", async ({
 
     await gate.getByRole("button", { name: "Approve" }).click();
 
-    await expect(page.getByText("Approval decision failed: approval_store_unavailable")).toBeVisible();
+    await expect(gate.locator(".notice.error")).toHaveText("Approval decision failed: approval_store_unavailable");
     await expect(gate.getByText("pending_human_approval", { exact: true })).toBeVisible();
     await expect(gate.getByRole("button", { name: "Approve" })).toBeEnabled();
     await expect(gate.getByRole("button", { name: "Reject" })).toBeEnabled();
@@ -77,6 +111,7 @@ test("runs an approval scenario from the review console launcher", async ({ page
     const gate = page.locator(".panel").filter({ hasText: "Approval Gate" });
     await expect(page.getByText("Scenario recorded.")).toBeVisible();
     await expect(page.getByRole("button", { name: /Checkout API latency regression/ })).toBeVisible();
+    await expect(gate.getByText("Simulation only: approval decisions and executor results do not change production state.")).toBeVisible();
     await expect(gate.getByText("pending_human_approval", { exact: true })).toBeVisible();
     await expect(gate.getByText("Approval requested")).toBeVisible();
     await expect(gate.getByText(/actor: local_operator/)).toBeVisible();
@@ -84,8 +119,9 @@ test("runs an approval scenario from the review console launcher", async ({ page
     await gate.getByRole("button", { name: "Approve" }).click();
 
     await expect(gate.getByText("human_approved", { exact: true })).toBeVisible();
-    await expect(gate.getByText("Decision recorded")).toBeVisible();
-    await expect(gate.getByText("Simulated executor")).toBeVisible();
+    await expect(gate.locator(".notice.success")).toContainText("Simulated executor state refreshed below.");
+    await expect(gate.getByText("Decision recorded", { exact: true })).toBeVisible();
+    await expect(gate.getByText("Simulated executor", { exact: true })).toBeVisible();
     await expect(gate.locator(".timeline-item").filter({ hasText: "Simulated executor" }).getByText(/dry run: true/)).toBeVisible();
   } finally {
     await harness.server.close();
@@ -119,14 +155,14 @@ async function openApprovalGate(page: Page, baseUrl: string) {
   return gate;
 }
 
-async function startApprovalHarness(options: { operatorReadToken?: string } = {}): Promise<{ server: RunningWebhookServer; baseUrl: string }> {
+async function startApprovalHarness(options: { operatorReadToken?: string; mode?: WebhookRuntime["mode"] } = {}): Promise<{ server: RunningWebhookServer; baseUrl: string }> {
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",
     llmClient: badDeployLlm(),
     lokiClient: RecordedLokiClient.fromFixture("bad-deploy-latency"),
     lokiLimit: 20,
-    mode: "local",
+    mode: options.mode ?? "local",
     runStore: new InMemoryTriageRunPersistenceStore(),
     approvalStorePath: join(mkdtempSync(join(tmpdir(), "incident-triage-e2e-")), "approvals.json"),
   };

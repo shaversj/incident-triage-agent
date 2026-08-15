@@ -1,4 +1,7 @@
-export function runReviewConsoleHtml(): string {
+import type { OperatorMode } from "./config";
+
+export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
+  const mode = options.mode;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -21,6 +24,7 @@ export function runReviewConsoleHtml(): string {
       --slate: #344054;
     }
     * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
     body {
       margin: 0;
       background: var(--bg);
@@ -47,6 +51,42 @@ export function runReviewConsoleHtml(): string {
       font-size: 21px;
       font-weight: 730;
       letter-spacing: 0;
+    }
+    .title {
+      display: grid;
+      gap: 8px;
+    }
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border: 1px solid #475467;
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: #e4e7ec;
+      font-size: 12px;
+      font-weight: 760;
+      white-space: nowrap;
+    }
+    .badge.mode-local {
+      border-color: #84caff;
+      background: #1849a9;
+      color: #eff8ff;
+    }
+    .badge.mode-read_only {
+      border-color: #fdb022;
+      background: #93370d;
+      color: #fff7ed;
+    }
+    .badge.simulation {
+      border-color: #c7b9f6;
+      background: #42307d;
+      color: #f4f3ff;
     }
     .token {
       display: flex;
@@ -177,6 +217,8 @@ export function runReviewConsoleHtml(): string {
       border-left: 3px solid #c6d3e1;
       padding-left: 10px;
     }
+    .timeline-item.success { border-left-color: var(--green); }
+    .timeline-item.warning { border-left-color: var(--amber); }
     .timeline-title {
       font-weight: 800;
       font-size: 13px;
@@ -234,6 +276,9 @@ export function runReviewConsoleHtml(): string {
       border-radius: 8px;
       overflow: hidden;
     }
+    .panel.approval-panel.pending_human_approval { border-color: #fedf89; }
+    .panel.approval-panel.human_approved { border-color: #abefc6; }
+    .panel.approval-panel.human_rejected { border-color: #fecdca; }
     .panel-title {
       padding: 10px 12px;
       background: #f8fafc;
@@ -265,6 +310,40 @@ export function runReviewConsoleHtml(): string {
       padding: 28px 15px;
       color: var(--muted);
     }
+    .empty-state {
+      display: grid;
+      gap: 7px;
+    }
+    .empty-state strong {
+      color: var(--ink);
+      font-size: 15px;
+    }
+    .empty-state p {
+      margin: 0;
+      line-height: 1.45;
+    }
+    .notice {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 11px;
+      font-weight: 700;
+      line-height: 1.4;
+    }
+    .notice.info {
+      background: #eef6ff;
+      border-color: #b2ddff;
+      color: var(--blue);
+    }
+    .notice.success {
+      background: #ecfdf3;
+      border-color: #abefc6;
+      color: var(--green);
+    }
+    .notice.error {
+      background: #fef3f2;
+      border-color: #fecdca;
+      color: var(--red);
+    }
     .error {
       color: var(--red);
       font-weight: 700;
@@ -283,7 +362,13 @@ export function runReviewConsoleHtml(): string {
 <body>
   <header>
     <div class="topbar">
-      <h1>Operator Run Review</h1>
+      <div class="title">
+        <h1>Operator Run Review</h1>
+        <div class="badges" aria-label="Runtime indicators">
+          <span class="badge mode-${escapeAttribute(mode)}">Mode: ${escapeHtml(mode)}</span>
+          <span class="badge simulation">Simulation only</span>
+        </div>
+      </div>
       <div class="actions">
         <div class="demo" id="demoControls" hidden>
           <select id="demoScenario" aria-label="Demo scenario"></select>
@@ -311,10 +396,11 @@ export function runReviewConsoleHtml(): string {
         <h2>Review</h2>
         <button id="refresh" class="secondary" type="button">Refresh</button>
       </div>
-      <div id="detail" class="detail"><div class="empty">Select a run.</div></div>
+      <div id="detail" class="detail"><div class="empty">Run a scenario or select an existing run to review the decision and approval gate.</div></div>
     </section>
   </main>
   <script>
+    const SERVER_MODE = ${JSON.stringify(mode)};
     const tokenInput = document.getElementById("token");
     const demoControls = document.getElementById("demoControls");
     const demoScenario = document.getElementById("demoScenario");
@@ -325,6 +411,7 @@ export function runReviewConsoleHtml(): string {
     const summaryEl = document.getElementById("summary");
     let runs = [];
     let selectedRunId = "";
+    let approvalFeedback = null;
 
     tokenInput.value = sessionStorage.getItem("operatorReadToken") || "";
     document.getElementById("save").addEventListener("click", () => {
@@ -336,8 +423,9 @@ export function runReviewConsoleHtml(): string {
       tokenInput.value = "";
       runs = [];
       selectedRunId = "";
+      approvalFeedback = null;
       renderRuns();
-      detailEl.innerHTML = '<div class="empty">Select a run.</div>';
+      renderReviewEmpty();
     });
     document.getElementById("refresh").addEventListener("click", loadRuns);
     runDemoButton.addEventListener("click", runDemoScenario);
@@ -374,6 +462,8 @@ export function runReviewConsoleHtml(): string {
       renderRuns();
       if (selectedRunId) {
         await loadReview(selectedRunId);
+      } else {
+        renderReviewEmpty();
       }
     }
 
@@ -426,7 +516,7 @@ export function runReviewConsoleHtml(): string {
 
     function renderRuns() {
       if (runs.length === 0) {
-        runsEl.innerHTML = '<div class="empty">No retained runs.</div>';
+        runsEl.innerHTML = emptyRunsHtml();
         summaryEl.textContent = "";
         return;
       }
@@ -446,10 +536,31 @@ export function runReviewConsoleHtml(): string {
       for (const row of runsEl.querySelectorAll(".row")) {
         row.addEventListener("click", async () => {
           selectedRunId = row.getAttribute("data-id") || "";
+          approvalFeedback = null;
           renderRuns();
           await loadReview(selectedRunId);
         });
       }
+    }
+
+    function emptyRunsHtml() {
+      if (SERVER_MODE === "local") {
+        return '<div class="empty empty-state">' +
+          '<strong>No runs yet.</strong>' +
+          '<p>Run a demo scenario above to create the first operator review.</p>' +
+        '</div>';
+      }
+      return '<div class="empty empty-state">' +
+        '<strong>No retained runs.</strong>' +
+        '<p>Waiting for signed Grafana webhook runs. Enter the read token, then refresh after ingestion.</p>' +
+      '</div>';
+    }
+
+    function renderReviewEmpty() {
+      detailEl.innerHTML = '<div class="empty empty-state">' +
+        '<strong>No run selected.</strong>' +
+        '<p>Choose a retained run from the queue to inspect evidence, safety status, and approval gate state.</p>' +
+      '</div>';
     }
 
     async function loadReview(runId) {
@@ -481,7 +592,7 @@ export function runReviewConsoleHtml(): string {
         panel("RCA Hypothesis", renderHypotheses(review.explanation)) +
         panel("Decision", '<div class="chips">' + chip(decision.incident_class) + chip(decision.next_action) + chip("confidence " + (decision.confidence ?? "n/a")) + '</div>' + list("Verification", decision.verification_plan)) +
         panel("Mitigation", '<div class="chips">' + chip(mitigation.status) + chip(mitigation.approval_required ? "approval required" : "no approval") + '</div>' + field("Reason", mitigation.reason)) +
-        panel("Approval Gate", renderApproval(approval)) +
+        panel("Approval Gate", renderApproval(approval), "approval-panel " + approvalPanelStatus(approval)) +
         panel("Evidence", evidence.slice(0, 8).map(renderEvidence).join("") || '<div class="muted">No evidence snapshot.</div>') +
         panel("Raw Review", '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>');
       attachApprovalHandlers();
@@ -505,23 +616,27 @@ export function runReviewConsoleHtml(): string {
     }
 
     function renderApproval(approval) {
+      const feedback = renderApprovalFeedback(approval);
       if (!approval.enabled) {
-        return '<div class="muted">Approval decisions are unavailable in this runtime.</div>' +
+        return feedback +
+          '<div class="notice info">Approval decisions are unavailable in this runtime mode.</div>' +
           (approval.approval_id ? field("Approval ID", approval.approval_id) : "");
       }
       if (!approval.approval_id) {
-        return '<div class="muted">No approval is linked to this run.</div>';
+        return feedback + '<div class="muted">No approval is linked to this run.</div>';
       }
       const record = approval.record;
       if (!record) {
-        return field("Approval ID", approval.approval_id) +
+        return feedback + field("Approval ID", approval.approval_id) +
           '<div class="muted">No approval record has been staged for this run.</div>';
       }
       const disabled = record.status !== "pending_human_approval" ? " disabled" : "";
       const execution = record.execution
         ? field("Execution", record.execution.status + " / dry run: " + String(record.execution.dry_run))
         : "";
-      return '<div class="chips">' + chip(record.status) + chip(record.catalog_id) + chip(record.runbook_id) + '</div>' +
+      return feedback +
+        '<div class="notice info">Simulation only: approval decisions and executor results do not change production state.</div>' +
+        '<div class="chips">' + chip(record.status) + chip(record.catalog_id) + chip(record.runbook_id) + '</div>' +
         '<div class="grid">' +
           field("Approval ID", record.approval_id) +
           field("Service", record.service) +
@@ -537,10 +652,28 @@ export function runReviewConsoleHtml(): string {
         '</div>';
     }
 
+    function approvalPanelStatus(approval) {
+      const record = approval && approval.record;
+      return record && record.status ? record.status : "not_available";
+    }
+
+    function renderApprovalFeedback(approval) {
+      if (!approvalFeedback) {
+        return "";
+      }
+      if (approvalFeedback.approvalId && approval.approval_id && approvalFeedback.approvalId !== approval.approval_id) {
+        return "";
+      }
+      const role = approvalFeedback.kind === "error" ? "alert" : "status";
+      return '<div class="notice ' + escapeHtml(approvalFeedback.kind) + '" role="' + role + '">' +
+        escapeHtml(approvalFeedback.message) +
+      '</div>';
+    }
+
     function renderApprovalTimeline(record) {
       const decided = record.decided_at
-        ? timelineItem("Decision recorded", record.decided_at + " / actor: local_operator / status: " + record.status)
-        : timelineItem("Awaiting decision", "actor: local_operator / status: pending_human_approval");
+        ? timelineItem("Decision recorded", record.decided_at + " / actor: local_operator / status: " + record.status, record.status === "human_approved" ? "success" : "warning")
+        : timelineItem("Awaiting decision", "actor: local_operator / status: pending_human_approval", "warning");
       const execution = record.execution
         ? timelineItem("Simulated executor", record.execution.status + " / dry run: " + String(record.execution.dry_run) + " / executed: " + String(record.execution.executed))
         : "";
@@ -551,8 +684,9 @@ export function runReviewConsoleHtml(): string {
       '</div>';
     }
 
-    function timelineItem(title, body) {
-      return '<div class="timeline-item"><div class="timeline-title">' + escapeHtml(title) + '</div><div class="meta">' + escapeHtml(body) + '</div></div>';
+    function timelineItem(title, body, tone) {
+      const toneClass = tone ? " " + tone : "";
+      return '<div class="timeline-item' + toneClass + '"><div class="timeline-title">' + escapeHtml(title) + '</div><div class="meta">' + escapeHtml(body) + '</div></div>';
     }
 
     function attachApprovalHandlers() {
@@ -569,25 +703,45 @@ export function runReviewConsoleHtml(): string {
       if (!approvalId || !decision) {
         return;
       }
-      demoStatus.textContent = decision === "approve" ? "Approving mitigation..." : "Rejecting mitigation...";
+      approvalFeedback = { approvalId, kind: "info", message: decision === "approve" ? "Approving simulated mitigation..." : "Rejecting simulated mitigation..." };
+      renderApprovalFeedbackInPlace();
       const response = await fetch("/api/approvals/" + encodeURIComponent(approvalId) + "/" + decision, { method: "POST" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        demoStatus.textContent = "Approval decision failed: " + (body.error || response.status);
+        approvalFeedback = { approvalId, kind: "error", message: "Approval decision failed: " + (body.error || response.status) };
+        renderApprovalFeedbackInPlace();
         return;
       }
+      approvalFeedback = { approvalId, kind: "success", message: "Approval decision recorded. Simulated executor state refreshed below." };
       if (selectedRunId) {
         await loadReview(selectedRunId);
       }
-      demoStatus.textContent = "Approval decision recorded.";
+      demoStatus.textContent = "";
+    }
+
+    function renderApprovalFeedbackInPlace() {
+      const panelBody = detailEl.querySelector(".approval-panel .panel-body");
+      if (!panelBody || !approvalFeedback) {
+        return;
+      }
+      let notice = panelBody.querySelector("[data-approval-feedback]");
+      if (!notice) {
+        notice = document.createElement("div");
+        notice.setAttribute("data-approval-feedback", "true");
+        panelBody.prepend(notice);
+      }
+      notice.className = "notice " + approvalFeedback.kind;
+      notice.setAttribute("role", approvalFeedback.kind === "error" ? "alert" : "status");
+      notice.textContent = approvalFeedback.message;
     }
 
     function field(label, value) {
       return '<div class="field"><span class="label">' + escapeHtml(label) + '</span><div class="value">' + escapeHtml(value) + '</div></div>';
     }
 
-    function panel(title, body) {
-      return '<div class="panel"><div class="panel-title">' + escapeHtml(title) + '</div><div class="panel-body">' + body + '</div></div>';
+    function panel(title, body, className) {
+      const extraClass = className ? " " + escapeHtml(className) : "";
+      return '<div class="panel' + extraClass + '"><div class="panel-title">' + escapeHtml(title) + '</div><div class="panel-body">' + body + '</div></div>';
     }
 
     function chip(value) {
@@ -611,4 +765,18 @@ export function runReviewConsoleHtml(): string {
   </script>
 </body>
 </html>`;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[char] ?? char);
+}
+
+function escapeAttribute(value: unknown): string {
+  return escapeHtml(value).replace(/[^a-zA-Z0-9_-]/g, "_");
 }
