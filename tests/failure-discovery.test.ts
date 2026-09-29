@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
+  defaultFailureCaseCatalog,
+  executeFailureCase,
+} from "../evals/failure-case-catalog";
+import {
   createReviewBatch,
   fingerprintJson,
   loadReviewRecord,
@@ -179,6 +183,47 @@ describe("failure discovery review domain", () => {
   });
 });
 
+describe("representative failure case catalog", () => {
+  test("contains 20 to 30 stable unique cases without live credentials", () => {
+    const caseIds = defaultFailureCaseCatalog.map((item) => item.caseId);
+
+    expect(caseIds.length).toBeGreaterThanOrEqual(20);
+    expect(caseIds.length).toBeLessThanOrEqual(30);
+    expect(new Set(caseIds).size).toBe(caseIds.length);
+    expect(defaultFailureCaseCatalog.some((item) => item.sourceKind === "recorded")).toBe(true);
+    expect(defaultFailureCaseCatalog.every((item) => item.mode === "mock")).toBe(true);
+  });
+
+  test("executes a mock case through the workflow-backed eval runner", async () => {
+    const definition = requiredCase("mock:bad-deploy-latency:baseline");
+    const record = await executeFailureCase(definition, "2026-09-28T20:00:00.000Z");
+
+    expect(record.sourceKind).toBe("mock");
+    expect(record.outcome.run_status).toBe("completed");
+    expect(record.outcome.states).toEqual(expect.arrayContaining(["received", "context_gathered", "scored"]));
+    expect(objectValue(record.outcome.safety).status).toBe("approval_required");
+  });
+
+  test("keeps malformed mock output reviewable as a recoverable run", async () => {
+    const definition = requiredCase("mock:checkout-payment-timeout:malformed-json");
+    const record = await executeFailureCase(definition, "2026-09-28T20:00:00.000Z");
+
+    expect(record.outcome.run_status).toBe("recoverable_failure");
+    expect(objectValue(record.outcome.validation).valid).toBe(false);
+  });
+
+  test("executes recorded cases through Grafana and recorded Loki inputs", async () => {
+    const definition = requiredCase("recorded:capacity-saturation:baseline");
+    const record = await executeFailureCase(definition, "2026-09-28T20:00:00.000Z");
+
+    expect(record.sourceKind).toBe("recorded");
+    expect(record.outcome.run_status).toBe("completed");
+    expect(objectValue(record.outcome.investigation).steps).toBeInstanceOf(Array);
+    expect(record.outcome.evidence).toBeInstanceOf(Array);
+    expect(objectValue(record.outcome.mitigation_control).status).toBe("approval_required");
+  });
+});
+
 function sampleRun(): FailureRunRecord {
   return {
     schemaVersion: 1,
@@ -205,4 +250,18 @@ function sampleRun(): FailureRunRecord {
 
 function tempRoot(): string {
   return mkdtempSync(join(tmpdir(), "failure-discovery-"));
+}
+
+function requiredCase(caseId: string) {
+  const definition = defaultFailureCaseCatalog.find((item) => item.caseId === caseId);
+  if (!definition) {
+    throw new Error(`Missing test case ${caseId}.`);
+  }
+  return definition;
+}
+
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }

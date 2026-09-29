@@ -18,13 +18,13 @@ const projectRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const recordedTriageSecret = "recorded-triage-secret";
 const recordedOperatorReadToken = "recorded-operator-read-token";
 
-interface RecordedScenario {
+export interface RecordedScenario {
   webhookFixture: string;
   logFixture: string;
   grafanaScenario: string;
 }
 
-interface InputSummary {
+export interface InputSummary {
   source: string;
   alerts: string[];
   service: string;
@@ -51,7 +51,13 @@ export const scenarios = {
   },
 } satisfies Record<string, RecordedScenario>;
 
-type ScenarioName = keyof typeof scenarios;
+export type RecordedScenarioName = keyof typeof scenarios;
+
+export interface RecordedTriageExecutionResult {
+  statusCode: number;
+  response: Record<string, unknown>;
+  input: InputSummary;
+}
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   const args = parseArgs(argv);
@@ -73,30 +79,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return summary.canary.passed ? 0 : 1;
     }
 
-    const webhookPayload = payload(scenario.webhookFixture);
-    const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
-    const llmClient = args.live
-      ? new FlueDecisionClient(loadConfig(join(projectRoot, ".env")), undefined, logger)
-      : new StaticDecisionClient({
-        [scenario.grafanaScenario]: JSON.stringify(mockDecisionForName(scenario.grafanaScenario)),
-      });
-    const [status, response] = await handleGrafanaWebhook(
-      webhookPayload,
-      recordedTriageSecret,
-      {
-        fixturesDir: join(projectRoot, "fixtures"),
-        webhookSecret: recordedTriageSecret,
-        llmClient,
-        lokiClient: new RecordedLokiClient(recordedLogs),
-        lokiLimit: 20,
-      },
-    );
+    const result = await runRecordedTriageScenario(args.scenario, { live: args.live, logger });
     const summary = sanitizedSummary(
       args.scenario,
       args.live ? "live" : "mock",
-      status,
-      response,
-      summarizeInput(webhookPayload, recordedLogs.length),
+      result.statusCode,
+      result.response,
+      result.input,
     );
 
     if (args.json) {
@@ -104,7 +93,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     } else {
       printSummary(summary);
     }
-    return status >= 200 && status < 300 ? 0 : 1;
+    return result.statusCode >= 200 && result.statusCode < 300 ? 0 : 1;
   } catch (error) {
     process.stderr.write(`Recorded triage run failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
@@ -112,7 +101,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 }
 
 export function sanitizedSummary(
-  scenarioName: ScenarioName,
+  scenarioName: RecordedScenarioName,
   mode: "mock" | "live",
   statusCode: number,
   response: Record<string, unknown>,
@@ -140,8 +129,38 @@ export function sanitizedSummary(
   };
 }
 
+export async function runRecordedTriageScenario(
+  scenarioName: RecordedScenarioName,
+  options: { live?: boolean; logger?: ReturnType<typeof createLogger> } = {},
+): Promise<RecordedTriageExecutionResult> {
+  const scenario = scenarios[scenarioName];
+  const webhookPayload = payload(scenario.webhookFixture);
+  const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
+  const llmClient = options.live
+    ? new FlueDecisionClient(loadConfig(join(projectRoot, ".env")), undefined, options.logger)
+    : new StaticDecisionClient({
+      [scenario.grafanaScenario]: JSON.stringify(mockDecisionForName(scenario.grafanaScenario)),
+    });
+  const [statusCode, response] = await handleGrafanaWebhook(
+    webhookPayload,
+    recordedTriageSecret,
+    {
+      fixturesDir: join(projectRoot, "fixtures"),
+      webhookSecret: recordedTriageSecret,
+      llmClient,
+      lokiClient: new RecordedLokiClient(recordedLogs),
+      lokiLimit: 20,
+    },
+  );
+  return {
+    statusCode,
+    response,
+    input: summarizeInput(webhookPayload, recordedLogs.length),
+  };
+}
+
 function parseArgs(argv: string[]) {
-  let scenario: ScenarioName = "checkout-payment-timeout";
+  let scenario: RecordedScenarioName = "checkout-payment-timeout";
   let scenarioProvided = false;
   let live = false;
   let json = false;
@@ -180,7 +199,7 @@ function parseArgs(argv: string[]) {
   return { scenario, live, json, readOnlyCanary, postgres, logLevel };
 }
 
-function isScenarioName(value: string | undefined): value is ScenarioName {
+function isScenarioName(value: string | undefined): value is RecordedScenarioName {
   return value !== undefined && value in scenarios;
 }
 
