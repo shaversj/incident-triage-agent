@@ -88,6 +88,58 @@ export interface LoadedReviewBatch {
   reviews: FailureReviewRecord[];
 }
 
+export type FailureModeStatus = "active" | "retired";
+
+export interface FailureModeEntry {
+  id: string;
+  name: string;
+  revision: number;
+  status: FailureModeStatus;
+  definition: string;
+  distinguishingNotes: string;
+  sourceCaseIds: string[];
+}
+
+export interface FailureTaxonomy {
+  schemaVersion: typeof failureDiscoverySchemaVersion;
+  modes: FailureModeEntry[];
+}
+
+export interface PromotedFailureCase {
+  schemaVersion: typeof failureDiscoverySchemaVersion;
+  caseId: string;
+  sourceBatchId: string;
+  sourceRunId: string;
+  sourceReviewId: string;
+  sourceCaseId: string;
+  sourceKind: ReviewSourceKind;
+  scenarioName: string;
+  fingerprint: string;
+  observation?: string;
+  firstFailure: FirstFailureAnchor;
+  downstreamEffects: string[];
+  independentFindings: string[];
+  failureMode?: FailureModeReference;
+  outcome: Record<string, unknown>;
+}
+
+export interface PromoteCandidateOptions {
+  batch: LoadedReviewBatch;
+  runId: string;
+  caseDirectory: string;
+}
+
+export interface PromoteFailureModeOptions {
+  batch: LoadedReviewBatch;
+  runIds: string[];
+  taxonomyPath: string;
+  caseDirectory: string;
+  modeId: string;
+  name: string;
+  definition: string;
+  distinguishingNotes: string;
+}
+
 export function reviewPaths(root: string, batchId: string): ReviewBatchPaths {
   const directory = join(root, batchId);
   return {
@@ -292,6 +344,148 @@ export function renderReviewBatchSummary(batch: LoadedReviewBatch): string {
   return `${lines.join("\n")}\n`;
 }
 
+export function loadFailureTaxonomy(path: string): FailureTaxonomy {
+  if (!existsSync(path)) {
+    return { schemaVersion: failureDiscoverySchemaVersion, modes: [] };
+  }
+  const record = readRecord(readJson(path), "failure taxonomy");
+  readSchemaVersion(record);
+  if (!Array.isArray(record.modes)) {
+    throw new Error("failure taxonomy modes must be an array.");
+  }
+  return {
+    schemaVersion: failureDiscoverySchemaVersion,
+    modes: record.modes.map(parseFailureModeEntry),
+  };
+}
+
+export function saveFailureTaxonomy(path: string, taxonomy: FailureTaxonomy): void {
+  writeJsonAtomic(path, {
+    schemaVersion: failureDiscoverySchemaVersion,
+    modes: taxonomy.modes.map(parseFailureModeEntry),
+  });
+}
+
+export function loadPromotedCase(path: string): PromotedFailureCase {
+  return parsePromotedFailureCase(readJson(path));
+}
+
+export function promoteCandidateObservation(options: PromoteCandidateOptions): PromotedFailureCase {
+  const source = reviewedSource(options.batch, options.runId);
+  const snapshot = promotedSnapshot(options.batch.manifest.batchId, source.run, source.review);
+  savePromotedCase(options.caseDirectory, snapshot);
+  return snapshot;
+}
+
+export function promoteFailureMode(
+  options: PromoteFailureModeOptions,
+): { mode: FailureModeEntry; cases: PromotedFailureCase[] } {
+  const distinctRunIds = [...new Set(options.runIds)];
+  if (distinctRunIds.length < 2) {
+    throw new Error("Activating a named failure mode requires at least two source reviews.");
+  }
+  const modeId = requiredText(options.modeId, "mode_id");
+  const taxonomy = loadFailureTaxonomy(options.taxonomyPath);
+  if (taxonomy.modes.some((mode) => mode.id === modeId)) {
+    throw new Error(`Failure mode ${modeId} already exists; revise it instead.`);
+  }
+  const mode: FailureModeEntry = {
+    id: modeId,
+    name: requiredText(options.name, "name"),
+    revision: 1,
+    status: "active",
+    definition: requiredText(options.definition, "definition"),
+    distinguishingNotes: requiredText(options.distinguishingNotes, "distinguishing_notes"),
+    sourceCaseIds: [],
+  };
+  const cases = distinctRunIds.map((runId) => {
+    const source = reviewedSource(options.batch, runId);
+    if (source.review.failureMode && source.review.failureMode.id !== modeId) {
+      throw new Error(
+        `Review ${source.review.reviewId} already names failure mode ${source.review.failureMode.id}.`,
+      );
+    }
+    return promotedSnapshot(
+      options.batch.manifest.batchId,
+      source.run,
+      source.review,
+      { id: modeId, revision: 1 },
+    );
+  });
+  mode.sourceCaseIds = cases.map((item) => item.caseId);
+  for (const snapshot of cases) {
+    savePromotedCase(options.caseDirectory, snapshot);
+  }
+  saveFailureTaxonomy(options.taxonomyPath, {
+    ...taxonomy,
+    modes: [...taxonomy.modes, mode],
+  });
+  return { mode, cases };
+}
+
+export function reviseFailureMode(
+  taxonomyPath: string,
+  details: {
+    modeId: string;
+    name?: string;
+    definition: string;
+    distinguishingNotes: string;
+    sourceCaseIds: string[];
+  },
+): FailureModeEntry {
+  const taxonomy = loadFailureTaxonomy(taxonomyPath);
+  const latest = latestFailureMode(taxonomy, details.modeId);
+  if (!latest) {
+    throw new Error(`Unknown failure mode ${details.modeId}.`);
+  }
+  if (details.sourceCaseIds.length < 2) {
+    throw new Error("An active failure mode revision requires at least two source cases.");
+  }
+  const revision: FailureModeEntry = {
+    id: latest.id,
+    name: details.name === undefined ? latest.name : requiredText(details.name, "name"),
+    revision: latest.revision + 1,
+    status: "active",
+    definition: requiredText(details.definition, "definition"),
+    distinguishingNotes: requiredText(details.distinguishingNotes, "distinguishing_notes"),
+    sourceCaseIds: [...new Set(details.sourceCaseIds)],
+  };
+  saveFailureTaxonomy(taxonomyPath, { ...taxonomy, modes: [...taxonomy.modes, revision] });
+  return revision;
+}
+
+export function retireFailureMode(taxonomyPath: string, modeId: string): FailureModeEntry {
+  const taxonomy = loadFailureTaxonomy(taxonomyPath);
+  const latest = latestFailureMode(taxonomy, modeId);
+  if (!latest) {
+    throw new Error(`Unknown failure mode ${modeId}.`);
+  }
+  const retired: FailureModeEntry = {
+    ...latest,
+    revision: latest.revision + 1,
+    status: "retired",
+  };
+  saveFailureTaxonomy(taxonomyPath, { ...taxonomy, modes: [...taxonomy.modes, retired] });
+  return retired;
+}
+
+export function findFailureMode(
+  taxonomy: FailureTaxonomy,
+  modeId: string,
+  revision: number,
+): FailureModeEntry | undefined {
+  return taxonomy.modes.find((mode) => mode.id === modeId && mode.revision === revision);
+}
+
+export function latestFailureMode(
+  taxonomy: FailureTaxonomy,
+  modeId: string,
+): FailureModeEntry | undefined {
+  return taxonomy.modes
+    .filter((mode) => mode.id === modeId)
+    .sort((left, right) => right.revision - left.revision)[0];
+}
+
 export function validateReviewRecord(review: FailureReviewRecord, run: FailureRunRecord): string[] {
   const errors: string[] = [];
   if (review.runId !== run.runId) {
@@ -486,6 +680,196 @@ function outcomeEvidenceIds(run: FailureRunRecord): Set<string> {
       return record.evidence_id ?? record.id;
     })
     .filter((id): id is string => typeof id === "string"));
+}
+
+function reviewedSource(
+  batch: LoadedReviewBatch,
+  runId: string,
+): { run: FailureRunRecord; review: FailureReviewRecord } {
+  const run = batch.runs.find((item) => item.runId === runId);
+  const review = batch.reviews.find((item) => item.runId === runId);
+  if (!run || !review) {
+    throw new Error(`Batch does not contain run and review ${runId}.`);
+  }
+  const errors = validateReviewRecord(review, run);
+  if (errors.length > 0) {
+    throw new Error(`Review ${review.reviewId} is invalid: ${errors.join(" ")}`);
+  }
+  if (review.disposition !== "failed" || !review.firstFailure) {
+    throw new Error(`Review ${review.reviewId} must record a failed disposition before promotion.`);
+  }
+  rejectCredentialKeys(run.outcome);
+  return { run, review };
+}
+
+function promotedSnapshot(
+  batchId: string,
+  run: FailureRunRecord,
+  review: FailureReviewRecord,
+  failureMode?: FailureModeReference,
+): PromotedFailureCase {
+  if (!review.firstFailure) {
+    throw new Error(`Review ${review.reviewId} does not have a first failure.`);
+  }
+  const seed = {
+    sourceBatchId: batchId,
+    sourceRunId: run.runId,
+    sourceReviewId: review.reviewId,
+    firstFailure: review.firstFailure,
+  };
+  const snapshot: PromotedFailureCase = {
+    schemaVersion: failureDiscoverySchemaVersion,
+    caseId: `failure-case-${fingerprintJson(seed).slice(0, 16)}`,
+    sourceBatchId: batchId,
+    sourceRunId: run.runId,
+    sourceReviewId: review.reviewId,
+    sourceCaseId: run.caseId,
+    sourceKind: run.sourceKind,
+    scenarioName: run.scenarioName,
+    fingerprint: run.fingerprint,
+    firstFailure: review.firstFailure,
+    downstreamEffects: [...review.downstreamEffects],
+    independentFindings: [...review.independentFindings],
+    outcome: allowlistedOutcome(run.outcome),
+  };
+  if (review.observation !== undefined) {
+    snapshot.observation = review.observation;
+  }
+  if (failureMode) {
+    snapshot.failureMode = failureMode;
+  }
+  return snapshot;
+}
+
+function savePromotedCase(caseDirectory: string, snapshot: PromotedFailureCase): void {
+  const path = join(caseDirectory, `${snapshot.caseId}.json`);
+  if (existsSync(path)) {
+    const existing = loadPromotedCase(path);
+    if (canonicalJson(existing) !== canonicalJson(snapshot)) {
+      throw new Error(`Promoted case ${snapshot.caseId} is immutable and already differs on disk.`);
+    }
+    return;
+  }
+  writeJsonAtomic(path, snapshot);
+}
+
+function allowlistedOutcome(outcome: Record<string, unknown>): Record<string, unknown> {
+  const allowed = [
+    "status",
+    "run_id",
+    "run_status",
+    "incident",
+    "scenario",
+    "states",
+    "investigation",
+    "validation",
+    "explanation_validation",
+    "analysis",
+    "finding_summary",
+    "recommendation",
+    "decision",
+    "evidence",
+    "provenance",
+    "safety",
+    "mitigation_control",
+    "scorecard",
+    "recorded_input",
+    "recorded_status_code",
+  ];
+  return Object.fromEntries(
+    allowed
+      .filter((key) => outcome[key] !== undefined)
+      .map((key) => [key, JSON.parse(JSON.stringify(outcome[key])) as unknown]),
+  );
+}
+
+function rejectCredentialKeys(value: unknown, path = "outcome"): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => rejectCredentialKeys(item, `${path}[${index}]`));
+    return;
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (/^(api[_-]?key|access[_-]?token|auth[_-]?token|token|secret|password|authorization|cookie)$/i.test(key)) {
+      throw new Error(`Promotion rejected credential-bearing key ${key} at ${path}.`);
+    }
+    rejectCredentialKeys(item, `${path}.${key}`);
+  }
+}
+
+function parseFailureModeEntry(payload: unknown): FailureModeEntry {
+  const record = readRecord(payload, "failure mode");
+  const status = record.status;
+  if (status !== "active" && status !== "retired") {
+    throw new Error("failure mode status must be active or retired.");
+  }
+  return {
+    id: readString(record.id, "failure mode id"),
+    name: readString(record.name, "failure mode name"),
+    revision: readPositiveInteger(record.revision, "failure mode revision"),
+    status,
+    definition: readString(record.definition, "failure mode definition"),
+    distinguishingNotes: readString(
+      record.distinguishingNotes ?? record.distinguishing_notes,
+      "failure mode distinguishing_notes",
+    ),
+    sourceCaseIds: readStringArray(
+      record.sourceCaseIds ?? record.source_case_ids,
+      "failure mode source_case_ids",
+    ),
+  };
+}
+
+function parsePromotedFailureCase(payload: unknown): PromotedFailureCase {
+  const record = readRecord(payload, "promoted failure case");
+  readSchemaVersion(record);
+  const sourceKind = record.sourceKind ?? record.source_kind;
+  if (sourceKind !== "mock" && sourceKind !== "recorded" && sourceKind !== "live") {
+    throw new Error("promoted case source_kind is unsupported.");
+  }
+  const snapshot: PromotedFailureCase = {
+    schemaVersion: failureDiscoverySchemaVersion,
+    caseId: readString(record.caseId ?? record.case_id, "case_id"),
+    sourceBatchId: readString(record.sourceBatchId ?? record.source_batch_id, "source_batch_id"),
+    sourceRunId: readString(record.sourceRunId ?? record.source_run_id, "source_run_id"),
+    sourceReviewId: readString(record.sourceReviewId ?? record.source_review_id, "source_review_id"),
+    sourceCaseId: readString(record.sourceCaseId ?? record.source_case_id, "source_case_id"),
+    sourceKind,
+    scenarioName: readString(record.scenarioName ?? record.scenario_name, "scenario_name"),
+    fingerprint: readString(record.fingerprint, "fingerprint"),
+    firstFailure: parseFirstFailure(record.firstFailure ?? record.first_failure),
+    downstreamEffects: readStringArray(
+      record.downstreamEffects ?? record.downstream_effects,
+      "downstream_effects",
+    ),
+    independentFindings: readStringArray(
+      record.independentFindings ?? record.independent_findings,
+      "independent_findings",
+    ),
+    outcome: readRecord(record.outcome, "outcome"),
+  };
+  const observation = optionalString(record.observation, "observation");
+  if (observation !== undefined) {
+    snapshot.observation = observation;
+  }
+  const failureMode = record.failureMode ?? record.failure_mode;
+  if (failureMode !== undefined) {
+    const mode = readRecord(failureMode, "failure_mode");
+    snapshot.failureMode = {
+      id: readString(mode.id, "failure_mode.id"),
+      revision: readPositiveInteger(mode.revision, "failure_mode.revision"),
+    };
+  }
+  return snapshot;
+}
+
+function requiredText(value: string, label: string): string {
+  if (!value.trim()) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value;
 }
 
 function sortJson(value: unknown): unknown {

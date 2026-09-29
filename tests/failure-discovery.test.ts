@@ -10,10 +10,20 @@ import {
   executeFailureCase,
 } from "../evals/failure-case-catalog";
 import {
+  addRunToBatch,
+  completeReviewBatch,
   createReviewBatch,
+  findFailureMode,
   fingerprintJson,
+  loadFailureTaxonomy,
+  loadPromotedCase,
   loadReviewRecord,
+  promoteCandidateObservation,
+  promoteFailureMode,
+  retireFailureMode,
   reviewPaths,
+  reviewArtifactPath,
+  reviseFailureMode,
   saveReviewRecord,
   validateReviewRecord,
   type FailureReviewRecord,
@@ -349,6 +359,127 @@ describe("failure review CLI", () => {
     expect(firstSummary.stdout).toContain("# Failure review batch: batch-cli-contract");
     expect(firstSummary.stdout).toContain("Pending: 19");
   }, 30_000);
+
+  test("promotes reviewed sources through the CLI", async () => {
+    const root = tempRoot();
+    const batch = createReviewedFailureBatch(root);
+    const taxonomyPath = join(root, "failure-taxonomy.json");
+    const caseDirectory = join(root, "failure-cases");
+    const result = await runFailureReviewCli([
+      "promote",
+      batch.manifest.batchId,
+      ...batch.manifest.runIds,
+      "--root",
+      root,
+      "--taxonomy",
+      taxonomyPath,
+      "--case-dir",
+      caseDirectory,
+      "--mode-id",
+      "unsupported-evidence-citation",
+      "--name",
+      "Unsupported evidence citation",
+      "--definition",
+      "The decision cites evidence absent from the run.",
+      "--distinguishing-notes",
+      "Use for invalid citations, not weak valid evidence.",
+      "--json",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).mode).toMatchObject({
+      id: "unsupported-evidence-citation",
+      revision: 1,
+      status: "active",
+    });
+    expect(readdirSync(caseDirectory)).toHaveLength(2);
+  });
+});
+
+describe("failure taxonomy promotion", () => {
+  test("activates a named mode from two reviewed sources and preserves revisions", () => {
+    const workspace = tempRoot();
+    const batch = createReviewedFailureBatch(workspace);
+    const taxonomyPath = join(workspace, "failure-taxonomy.json");
+    const caseDirectory = join(workspace, "failure-cases");
+    const promoted = promoteFailureMode({
+      batch,
+      runIds: batch.manifest.runIds,
+      taxonomyPath,
+      caseDirectory,
+      modeId: "unsupported-evidence-citation",
+      name: "Unsupported evidence citation",
+      definition: "The bounded decision cites evidence that the run did not establish.",
+      distinguishingNotes: "Use only when the citation itself is invalid, not when valid evidence is merely weak.",
+    });
+
+    expect(promoted.mode).toMatchObject({
+      id: "unsupported-evidence-citation",
+      revision: 1,
+      status: "active",
+    });
+    expect(promoted.mode.sourceCaseIds).toHaveLength(2);
+    const firstSnapshot = loadPromotedCase(join(caseDirectory, `${promoted.mode.sourceCaseIds[0]}.json`));
+    expect(firstSnapshot.failureMode).toEqual({ id: "unsupported-evidence-citation", revision: 1 });
+    expect(firstSnapshot.outcome).not.toHaveProperty("api_key");
+
+    const revised = reviseFailureMode(taxonomyPath, {
+      modeId: "unsupported-evidence-citation",
+      definition: "The decision cites an identifier absent from the run evidence package.",
+      distinguishingNotes: "Do not use for weak but valid evidence.",
+      sourceCaseIds: promoted.mode.sourceCaseIds,
+    });
+    const retired = retireFailureMode(taxonomyPath, "unsupported-evidence-citation");
+    const taxonomy = loadFailureTaxonomy(taxonomyPath);
+
+    expect(revised.revision).toBe(2);
+    expect(retired).toMatchObject({ revision: 3, status: "retired" });
+    expect(findFailureMode(taxonomy, "unsupported-evidence-citation", 1)?.definition).toBe(
+      "The bounded decision cites evidence that the run did not establish.",
+    );
+    expect(firstSnapshot.failureMode).toEqual({ id: "unsupported-evidence-citation", revision: 1 });
+  });
+
+  test("keeps one source as an uncategorized candidate and rejects unsafe promotion", () => {
+    const workspace = tempRoot();
+    const batch = createReviewedFailureBatch(workspace);
+    const caseDirectory = join(workspace, "failure-cases");
+    const candidate = promoteCandidateObservation({
+      batch,
+      runId: batch.manifest.runIds[0]!,
+      caseDirectory,
+    });
+
+    expect(candidate.failureMode).toBeUndefined();
+    expect(() => promoteFailureMode({
+      batch,
+      runIds: [batch.manifest.runIds[0]!],
+      taxonomyPath: join(workspace, "taxonomy.json"),
+      caseDirectory,
+      modeId: "single-source-mode",
+      name: "Single source",
+      definition: "A mode with only one source.",
+      distinguishingNotes: "This must not activate.",
+    })).toThrow("at least two source reviews");
+
+    const unsafeRun = {
+      ...batch.runs[0]!,
+      runId: "run-secret",
+      caseId: "mock:bad-deploy-latency:secret",
+      outcome: { ...batch.runs[0]!.outcome, api_key: "do-not-copy" },
+    };
+    const unsafeReview = failedReview(unsafeRun.runId);
+    const unsafeBatch = {
+      manifest: { ...batch.manifest, runIds: [unsafeRun.runId] },
+      runs: [unsafeRun],
+      reviews: [unsafeReview],
+    };
+    expect(() => promoteCandidateObservation({
+      batch: unsafeBatch,
+      runId: unsafeRun.runId,
+      caseDirectory,
+    })).toThrow("credential-bearing key api_key");
+  });
 });
 
 function sampleRun(): FailureRunRecord {
@@ -372,6 +503,56 @@ function sampleRun(): FailureRunRecord {
       safety: { status: "approval_required" },
       mitigation_control: { status: "approval_required", staged_action: { executed: false } },
     },
+  };
+}
+
+function createReviewedFailureBatch(root: string) {
+  createReviewBatch(root, {
+    batchId: "batch-promotion",
+    changeLabel: "taxonomy-contract",
+    requestedSize: 2,
+    repositoryRevision: "abc123",
+    repositoryDirty: false,
+    generatedAt: "2026-09-28T20:00:00.000Z",
+  });
+  const first = sampleRun();
+  const second: FailureRunRecord = {
+    ...sampleRun(),
+    runId: "run-2",
+    caseId: "mock:capacity-saturation:unknown-evidence",
+    scenarioName: "capacity-saturation",
+  };
+  for (const run of [first, second]) {
+    addRunToBatch(root, "batch-promotion", run);
+    saveReviewRecord(
+      reviewArtifactPath(reviewPaths(root, "batch-promotion").reviews, run.runId),
+      failedReview(run.runId),
+    );
+  }
+  completeReviewBatch(root, "batch-promotion");
+  return {
+    manifest: JSON.parse(readFileSync(reviewPaths(root, "batch-promotion").manifest, "utf8")),
+    runs: [first, second],
+    reviews: [failedReview(first.runId), failedReview(second.runId)],
+  };
+}
+
+function failedReview(runId: string): FailureReviewRecord {
+  return {
+    schemaVersion: 1,
+    reviewId: `review:${runId}`,
+    runId,
+    disposition: "failed",
+    observation: "The decision used unsupported evidence.",
+    firstFailure: {
+      phase: "context_gathered",
+      stepId: "deploy_lookup",
+      evidenceIds: ["deploy:0"],
+      rationale: "The evidence package did not support the later decision.",
+    },
+    downstreamEffects: ["The recommendation became unreliable."],
+    independentFindings: [],
+    followUpDisposition: "candidate",
   };
 }
 

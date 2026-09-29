@@ -15,13 +15,19 @@ import {
   defaultFailureReviewRoot,
   failureDiscoverySchemaVersion,
   fingerprintJson,
+  latestFailureMode,
+  loadFailureTaxonomy,
   loadReviewBatch,
   parseFailureReviewRecord,
+  promoteCandidateObservation,
+  promoteFailureMode,
   renderReviewBatchSummary,
+  retireFailureMode,
   reviewArtifactPath,
   reviewPaths,
   reviewStage,
   saveReviewRecord,
+  reviseFailureMode,
   validateReviewBatch,
   validateReviewRecord,
   type FailureRunRecord,
@@ -50,6 +56,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return validateBatch(args);
       case "summarize":
         return summarizeBatch(args);
+      case "promote":
+        return promoteReviews(args);
+      case "revise-mode":
+        return reviseMode(args);
+      case "retire-mode":
+        return retireMode(args);
       default:
         throw new Error(`Unknown command: ${args.command || "(missing)"}.`);
     }
@@ -190,6 +202,70 @@ function summarizeBatch(args: ParsedArgs): number {
   return 0;
 }
 
+function promoteReviews(args: ParsedArgs): number {
+  const batchId = requiredPositional(args, 0, "batch id");
+  const runIds = args.positionals.slice(1);
+  if (runIds.length === 0) {
+    throw new Error("At least one run id is required.");
+  }
+  const batch = loadReviewBatch(rootOption(args), batchId);
+  const caseDirectory = option(args, "--case-dir") ?? "evals/failure-cases";
+  if (args.flags.has("--candidate")) {
+    if (runIds.length !== 1) {
+      throw new Error("Candidate promotion accepts exactly one run id.");
+    }
+    const snapshot = promoteCandidateObservation({ batch, runId: runIds[0]!, caseDirectory });
+    printResult(args, { case: snapshot }, `Promoted candidate ${snapshot.caseId}.`);
+    return 0;
+  }
+  const result = promoteFailureMode({
+    batch,
+    runIds,
+    taxonomyPath: option(args, "--taxonomy") ?? "evals/failure-taxonomy.json",
+    caseDirectory,
+    modeId: requiredOption(args, "--mode-id"),
+    name: requiredOption(args, "--name"),
+    definition: requiredOption(args, "--definition"),
+    distinguishingNotes: requiredOption(args, "--distinguishing-notes"),
+  });
+  printResult(
+    args,
+    result,
+    `Activated ${result.mode.id} revision ${result.mode.revision} from ${result.cases.length} sources.`,
+  );
+  return 0;
+}
+
+function reviseMode(args: ParsedArgs): number {
+  const modeId = requiredPositional(args, 0, "mode id");
+  const taxonomyPath = option(args, "--taxonomy") ?? "evals/failure-taxonomy.json";
+  const taxonomy = loadFailureTaxonomy(taxonomyPath);
+  const latest = latestFailureMode(taxonomy, modeId);
+  if (!latest) {
+    throw new Error(`Unknown failure mode ${modeId}.`);
+  }
+  const sourceCaseIds = args.positionals.slice(1);
+  const revision = reviseFailureMode(taxonomyPath, {
+    modeId,
+    name: option(args, "--name") ?? latest.name,
+    definition: requiredOption(args, "--definition"),
+    distinguishingNotes: requiredOption(args, "--distinguishing-notes"),
+    sourceCaseIds: sourceCaseIds.length > 0 ? sourceCaseIds : latest.sourceCaseIds,
+  });
+  printResult(args, { mode: revision }, `Revised ${modeId} to revision ${revision.revision}.`);
+  return 0;
+}
+
+function retireMode(args: ParsedArgs): number {
+  const modeId = requiredPositional(args, 0, "mode id");
+  const retired = retireFailureMode(
+    option(args, "--taxonomy") ?? "evals/failure-taxonomy.json",
+    modeId,
+  );
+  printResult(args, { mode: retired }, `Retired ${modeId} at revision ${retired.revision}.`);
+  return 0;
+}
+
 async function executeReviewCase(
   definition: FailureCaseDefinition,
   generatedAt: string,
@@ -263,8 +339,20 @@ function parseArgs(argv: string[]): ParsedArgs {
   const positionals: string[] = [];
   const values = new Map<string, string>();
   const flags = new Set<string>();
-  const booleanFlags = new Set(["--json", "--live"]);
-  const valueFlags = new Set(["--change", "--size", "--batch-id", "--root", "--input"]);
+  const booleanFlags = new Set(["--json", "--live", "--candidate"]);
+  const valueFlags = new Set([
+    "--change",
+    "--size",
+    "--batch-id",
+    "--root",
+    "--input",
+    "--taxonomy",
+    "--case-dir",
+    "--mode-id",
+    "--name",
+    "--definition",
+    "--distinguishing-notes",
+  ]);
   for (let index = 0; index < rest.length; index += 1) {
     const value = rest[index]!;
     if (booleanFlags.has(value)) {
@@ -333,6 +421,14 @@ function gitOutput(args: string[]): string {
 
 function printJson(value: unknown): void {
   process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function printResult(args: ParsedArgs, value: unknown, message: string): void {
+  if (args.flags.has("--json")) {
+    printJson(value);
+    return;
+  }
+  process.stdout.write(`${message}\n`);
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
