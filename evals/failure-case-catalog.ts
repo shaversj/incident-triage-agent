@@ -1,5 +1,4 @@
-import type { IncidentTriageEvalInput } from "./harness";
-import { runIncidentTriage } from "./harness";
+import { runIncidentTriage, type IncidentTriageEvalInput } from "./incident-triage-runner";
 import { fingerprintJson, type FailureRunRecord, type ReviewSourceKind } from "./failure-discovery";
 import { mockDecisionForName } from "../src/mock-decisions";
 import {
@@ -74,6 +73,14 @@ export const defaultFailureCaseCatalog: FailureCaseDefinition[] = [
     description: "Recorded Grafana webhook and Loki-shaped log replay.",
   })),
 ];
+
+export const liveFailureCaseCatalog: FailureCaseDefinition[] = canonicalScenarios.map((scenarioName) => ({
+  caseId: `live:${scenarioName}:provider`,
+  sourceKind: "live",
+  scenarioName,
+  mode: "live",
+  description: "Opt-in live provider run through the bounded workflow.",
+}));
 
 export async function executeFailureCase(
   definition: FailureCaseDefinition,

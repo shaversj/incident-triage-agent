@@ -82,6 +82,12 @@ export interface ReviewBatchPaths {
   summary: string;
 }
 
+export interface LoadedReviewBatch {
+  manifest: FailureBatchManifest;
+  runs: FailureRunRecord[];
+  reviews: FailureReviewRecord[];
+}
+
 export function reviewPaths(root: string, batchId: string): ReviewBatchPaths {
   const directory = join(root, batchId);
   return {
@@ -141,11 +147,149 @@ export function saveRunRecord(path: string, record: FailureRunRecord): void {
 }
 
 export function loadReviewRecord(path: string): FailureReviewRecord {
-  return parseReviewRecord(readJson(path));
+  return parseFailureReviewRecord(readJson(path));
 }
 
 export function saveReviewRecord(path: string, record: FailureReviewRecord): void {
   writeJsonAtomic(path, record);
+}
+
+export function parseFailureReviewRecord(payload: unknown): FailureReviewRecord {
+  return parseReviewRecord(payload);
+}
+
+export function reviewArtifactPath(directory: string, id: string): string {
+  return join(directory, `${encodeURIComponent(id)}.json`);
+}
+
+export function addRunToBatch(root: string, batchId: string, run: FailureRunRecord): FailureReviewRecord {
+  const paths = reviewPaths(root, batchId);
+  const manifest = loadBatchManifest(paths.manifest);
+  if (manifest.status !== "in_progress") {
+    throw new Error(`Review batch ${batchId} is already complete.`);
+  }
+  if (manifest.runIds.includes(run.runId)) {
+    throw new Error(`Review batch already contains run ${run.runId}.`);
+  }
+  const review: FailureReviewRecord = {
+    schemaVersion: failureDiscoverySchemaVersion,
+    reviewId: `review:${run.runId}`,
+    runId: run.runId,
+    disposition: "pending",
+    downstreamEffects: [],
+    independentFindings: [],
+  };
+  saveRunRecord(reviewArtifactPath(paths.runs, run.runId), run);
+  saveReviewRecord(reviewArtifactPath(paths.reviews, run.runId), review);
+  saveBatchManifest(paths.manifest, {
+    ...manifest,
+    runIds: [...manifest.runIds, run.runId],
+  });
+  return review;
+}
+
+export function completeReviewBatch(root: string, batchId: string): FailureBatchManifest {
+  const paths = reviewPaths(root, batchId);
+  const manifest = loadBatchManifest(paths.manifest);
+  if (manifest.runIds.length !== manifest.requestedSize) {
+    throw new Error(
+      `Review batch has ${manifest.runIds.length} run(s), expected ${manifest.requestedSize}.`,
+    );
+  }
+  const completed = { ...manifest, status: "complete" as const };
+  saveBatchManifest(paths.manifest, completed);
+  return completed;
+}
+
+export function loadReviewBatch(root: string, batchId: string): LoadedReviewBatch {
+  const paths = reviewPaths(root, batchId);
+  const manifest = loadBatchManifest(paths.manifest);
+  return {
+    manifest,
+    runs: manifest.runIds.map((runId) => loadRunRecord(reviewArtifactPath(paths.runs, runId))),
+    reviews: manifest.runIds.map((runId) => loadReviewRecord(reviewArtifactPath(paths.reviews, runId))),
+  };
+}
+
+export function validateReviewBatch(batch: LoadedReviewBatch): string[] {
+  const errors: string[] = [];
+  if (batch.manifest.status !== "complete") {
+    errors.push("batch generation is not complete.");
+  }
+  if (batch.manifest.runIds.length !== batch.manifest.requestedSize) {
+    errors.push(
+      `batch contains ${batch.manifest.runIds.length} run(s), expected ${batch.manifest.requestedSize}.`,
+    );
+  }
+  const runById = new Map(batch.runs.map((run) => [run.runId, run]));
+  const reviewByRunId = new Map(batch.reviews.map((review) => [review.runId, review]));
+  const pending = batch.reviews.filter((review) => review.disposition === "pending").length;
+  if (pending > 0) {
+    errors.push(`${pending} review(s) are still pending.`);
+  }
+  for (const runId of batch.manifest.runIds) {
+    const run = runById.get(runId);
+    const review = reviewByRunId.get(runId);
+    if (!run) {
+      errors.push(`manifest references missing run ${runId}.`);
+      continue;
+    }
+    if (!review) {
+      errors.push(`manifest references missing review for ${runId}.`);
+      continue;
+    }
+    for (const error of validateReviewRecord(review, run)) {
+      errors.push(`${runId}: ${error}`);
+    }
+  }
+  return errors;
+}
+
+export function reviewStage(review: FailureReviewRecord): string {
+  if (review.disposition === "pending" || review.disposition === "acceptable") {
+    return review.disposition;
+  }
+  if (review.followUpDisposition === "protect") {
+    return "protected";
+  }
+  if (review.followUpDisposition === "categorized") {
+    return "categorized";
+  }
+  if (review.followUpDisposition === "candidate") {
+    return "candidate";
+  }
+  return "failed";
+}
+
+export function renderReviewBatchSummary(batch: LoadedReviewBatch): string {
+  const counts = new Map<string, number>();
+  for (const review of batch.reviews) {
+    const stage = reviewStage(review);
+    counts.set(stage, (counts.get(stage) ?? 0) + 1);
+  }
+  const lines = [
+    `# Failure review batch: ${batch.manifest.batchId}`,
+    "",
+    `Change: ${batch.manifest.changeLabel}`,
+    `Generated: ${batch.manifest.generatedAt}`,
+    `Repository revision: ${batch.manifest.repositoryRevision}${batch.manifest.repositoryDirty ? " (dirty)" : ""}`,
+    `Runs: ${batch.runs.length}`,
+    `Pending: ${counts.get("pending") ?? 0}`,
+    `Acceptable: ${counts.get("acceptable") ?? 0}`,
+    `Failed: ${counts.get("failed") ?? 0}`,
+    `Candidate: ${counts.get("candidate") ?? 0}`,
+    `Categorized: ${counts.get("categorized") ?? 0}`,
+    `Protected: ${counts.get("protected") ?? 0}`,
+    "",
+    "| Run | Source | Scenario | Review state |",
+    "| --- | --- | --- | --- |",
+  ];
+  const reviewByRunId = new Map(batch.reviews.map((review) => [review.runId, review]));
+  for (const run of batch.runs) {
+    const review = reviewByRunId.get(run.runId);
+    lines.push(`| ${run.runId} | ${run.sourceKind} | ${run.scenarioName} | ${review ? reviewStage(review) : "missing"} |`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 export function validateReviewRecord(review: FailureReviewRecord, run: FailureRunRecord): string[] {

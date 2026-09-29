@@ -1,7 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { text } from "node:stream/consumers";
 import { describe, expect, test } from "vitest";
 import {
   defaultFailureCaseCatalog,
@@ -224,6 +226,131 @@ describe("representative failure case catalog", () => {
   });
 });
 
+describe("failure review CLI", () => {
+  test("generates, inspects, annotates, validates, and summarizes a local batch", async () => {
+    const root = tempRoot();
+    const generated = await runFailureReviewCli([
+      "generate",
+      "--change",
+      "cli-contract",
+      "--size",
+      "20",
+      "--batch-id",
+      "batch-cli-contract",
+      "--root",
+      root,
+      "--json",
+    ]);
+    const generation = JSON.parse(generated.stdout) as Record<string, unknown>;
+    const batchDirectory = join(root, "batch-cli-contract");
+    const manifest = JSON.parse(readFileSync(join(batchDirectory, "manifest.json"), "utf8")) as {
+      runIds: string[];
+      status: string;
+      changeLabel: string;
+      requestedSize: number;
+      repositoryRevision: string;
+      repositoryDirty: boolean;
+    };
+
+    expect(generated.exitCode).toBe(0);
+    expect(generation).toMatchObject({ batch_id: "batch-cli-contract", run_count: 20 });
+    expect(manifest).toMatchObject({
+      status: "complete",
+      changeLabel: "cli-contract",
+      requestedSize: 20,
+    });
+    expect(manifest.repositoryRevision).toMatch(/^[0-9a-f]+$/);
+    expect(typeof manifest.repositoryDirty).toBe("boolean");
+    expect(readdirSync(join(batchDirectory, "runs"))).toHaveLength(20);
+    expect(readdirSync(join(batchDirectory, "reviews"))).toHaveLength(20);
+
+    const runId = manifest.runIds[0];
+    expect(runId).toBeTruthy();
+    const listed = await runFailureReviewCli(["list", "batch-cli-contract", "--root", root, "--json"]);
+    const shown = await runFailureReviewCli(["show", "batch-cli-contract", runId!, "--root", root, "--json"]);
+    expect(listed.exitCode).toBe(0);
+    expect(JSON.parse(listed.stdout).reviews).toHaveLength(20);
+    expect(shown.exitCode).toBe(0);
+    expect(JSON.parse(shown.stdout).run.outcome.states).toBeInstanceOf(Array);
+    expect(JSON.parse(shown.stdout).run.outcome.investigation.steps).toBeInstanceOf(Array);
+
+    const annotationPath = join(root, "annotation.json");
+    writeFileSync(annotationPath, JSON.stringify({
+      schemaVersion: 1,
+      reviewId: `review:${runId}`,
+      runId,
+      disposition: "acceptable",
+      observation: "No material failure in this run.",
+      downstreamEffects: [],
+      independentFindings: [],
+      followUpDisposition: "none",
+    }));
+    const annotated = await runFailureReviewCli([
+      "annotate",
+      "batch-cli-contract",
+      runId!,
+      "--input",
+      annotationPath,
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(annotated.exitCode).toBe(0);
+    expect(JSON.parse(annotated.stdout).review.disposition).toBe("acceptable");
+
+    const invalid = await runFailureReviewCli([
+      "annotate",
+      "batch-cli-contract",
+      runId!,
+      "--input",
+      join(root, "missing.json"),
+      "--root",
+      root,
+    ]);
+    const shownAfterInvalid = await runFailureReviewCli([
+      "show",
+      "batch-cli-contract",
+      runId!,
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.stderr).toContain("Failure review error:");
+    expect(invalid.stderr).not.toContain("at ");
+    expect(JSON.parse(shownAfterInvalid.stdout).review.disposition).toBe("acceptable");
+
+    const validation = await runFailureReviewCli([
+      "validate",
+      "batch-cli-contract",
+      "--root",
+      root,
+      "--json",
+    ]);
+    expect(validation.exitCode).toBe(1);
+    expect(JSON.parse(validation.stdout).errors).toContain(
+      "19 review(s) are still pending.",
+    );
+
+    const firstSummary = await runFailureReviewCli([
+      "summarize",
+      "batch-cli-contract",
+      "--root",
+      root,
+    ]);
+    const secondSummary = await runFailureReviewCli([
+      "summarize",
+      "batch-cli-contract",
+      "--root",
+      root,
+    ]);
+    expect(firstSummary.exitCode).toBe(0);
+    expect(secondSummary.stdout).toBe(firstSummary.stdout);
+    expect(firstSummary.stdout).toContain("# Failure review batch: batch-cli-contract");
+    expect(firstSummary.stdout).toContain("Pending: 19");
+  }, 30_000);
+});
+
 function sampleRun(): FailureRunRecord {
   return {
     schemaVersion: 1,
@@ -264,4 +391,17 @@ function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+async function runFailureReviewCli(args: string[]) {
+  const proc = spawn("npx", ["tsx", `${process.cwd()}/scripts/failure-review.ts`, ...args], {
+    cwd: process.cwd(),
+    env: { ...process.env, FORCE_COLOR: "0" },
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    text(proc.stdout),
+    text(proc.stderr),
+    new Promise<number | null>((resolve) => proc.on("exit", resolve)),
+  ]);
+  return { stdout, stderr, exitCode };
 }
