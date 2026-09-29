@@ -22,6 +22,7 @@ import {
   fingerprintJson,
   loadFailureTaxonomy,
   loadPromotedCase,
+  loadReviewBatch,
   loadReviewRecord,
   promoteCandidateObservation,
   promoteFailureMode,
@@ -583,11 +584,7 @@ function createReviewedFailureBatch(root: string) {
     );
   }
   completeReviewBatch(root, "batch-promotion");
-  return {
-    manifest: JSON.parse(readFileSync(reviewPaths(root, "batch-promotion").manifest, "utf8")),
-    runs: [first, second],
-    reviews: [failedReview(first.runId), failedReview(second.runId)],
-  };
+  return loadReviewBatch(root, "batch-promotion");
 }
 
 function failedReview(runId: string): FailureReviewRecord {

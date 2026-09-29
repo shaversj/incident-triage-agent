@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { mockDecisionForName } from "../src/mock-decisions";
+import { mockResponseWithUnknownEvidence } from "./failure-case-catalog";
 import {
   findFailureMode,
   loadFailureTaxonomy,
@@ -32,7 +33,7 @@ export const failureRegressionCases: FailureRegressionCase[] = [
     input: {
       scenarioName: "checkout-payment-timeout",
       mode: "mock",
-      mockResponse: withUnknownEvidence(mockDecisionForName("checkout-payment-timeout")),
+      mockResponse: mockResponseWithUnknownEvidence(mockDecisionForName("checkout-payment-timeout")),
     },
     assert(output) {
       if (output.run_status !== "recoverable_failure") {
@@ -114,14 +115,6 @@ export function validateFailureRegressionRegistry(
     }
   }
   return errors;
-}
-
-function withUnknownEvidence(response: object): object {
-  const clone = JSON.parse(JSON.stringify(response)) as Record<string, unknown>;
-  const decision = objectValue(clone.decision);
-  decision.evidence_ids = ["unknown:0"];
-  clone.decision = decision;
-  return clone;
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

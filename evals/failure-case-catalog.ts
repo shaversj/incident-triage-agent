@@ -45,7 +45,7 @@ export const defaultFailureCaseCatalog: FailureCaseDefinition[] = [
     scenarioName,
     "unknown-evidence",
     "Decision cites evidence that the workflow did not gather.",
-    { mockResponse: withUnknownEvidence(mockDecisionForName(scenarioName)) },
+    { mockResponse: mockResponseWithUnknownEvidence(mockDecisionForName(scenarioName)) },
   )),
   ...canonicalScenarios.map((scenarioName) => mockCase(
     scenarioName,
@@ -154,7 +154,7 @@ function mockCase(
   };
 }
 
-function withUnknownEvidence(response: object): object {
+export function mockResponseWithUnknownEvidence(response: object): object {
   const clone = cloneObject(response);
   const decision = objectValue(clone.decision);
   decision.evidence_ids = ["unknown:0"];

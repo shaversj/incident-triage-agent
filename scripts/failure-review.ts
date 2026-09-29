@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/config";
 import {
   defaultFailureCaseCatalog,
