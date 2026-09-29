@@ -20,6 +20,7 @@ This is not an incident chatbot. The project is about control: the workflow owns
 - Persists run reviews and evidence snapshots in memory or Postgres.
 - Exposes browser consoles for run review and approval decisions.
 - Runs deterministic tests and evals for schema, evidence grounding, safety, mitigation governance, and readability.
+- Reviews representative run batches, promotes recurring first failures into a living taxonomy, and links them to executable regressions.
 
 ## Main Demo
 
@@ -183,6 +184,87 @@ npm run triage:recorded -- --scenario bad-deploy-latency --json
 ```
 
 The recorded path does not start Grafana, Loki, Docker Compose, or a synthetic service. It loads fixtures from `fixtures/grafana/` and `fixtures/logs/`, then exercises webhook normalization, evidence construction, workflow validation, mitigation governance, safety policy, provenance, and scorecard output.
+
+## Failure Discovery Loop
+
+Use the failure review CLI after a meaningful workflow, prompt, or model change. The default catalog runs 24 stable mock and recorded cases without provider credentials:
+
+```bash
+npm run review:failures -- generate \
+  --change "evidence-ranking-update" \
+  --size 24 \
+  --batch-id evidence-ranking-v1 \
+  --json
+
+npm run review:failures -- list evidence-ranking-v1
+npm run review:failures -- show evidence-ranking-v1 \
+  'review-run:mock:bad-deploy-latency:baseline'
+```
+
+Generated packets live under `.triage/failure-reviews/` and stay out of git. Each run includes the ordered workflow states, investigation steps, evidence, validation result, decision, provenance, mitigation state, safety result, and scorecard. Its matching review file starts as `pending`.
+
+Complete each review as either `acceptable` or `failed`. A failed review records one first upstream failure, its workflow phase, optional investigation step, supporting evidence IDs, rationale, downstream effects, and follow-up disposition. Save the structured review through the CLI so invalid input cannot replace the prior record:
+
+```json
+{
+  "schemaVersion": 1,
+  "reviewId": "review:review-run:mock:bad-deploy-latency:baseline",
+  "runId": "review-run:mock:bad-deploy-latency:baseline",
+  "disposition": "failed",
+  "observation": "The first material defect observed in this run.",
+  "firstFailure": {
+    "phase": "llm_decision_requested",
+    "evidenceIds": ["alert:0", "deploy:0"],
+    "rationale": "Why this is the earliest causal failure."
+  },
+  "downstreamEffects": ["A later recommendation became unreliable."],
+  "independentFindings": [],
+  "followUpDisposition": "candidate"
+}
+```
+
+```bash
+npm run review:failures -- annotate evidence-ranking-v1 \
+  'review-run:mock:bad-deploy-latency:baseline' \
+  --input review.json
+
+npm run review:failures -- validate evidence-ranking-v1
+npm run review:failures -- summarize evidence-ranking-v1
+```
+
+A named failure mode needs a definition, distinguishing notes, and at least two reviewed source runs. Promotion copies only reduced, allowlisted evidence into `evals/failure-cases/` and updates `evals/failure-taxonomy.json`:
+
+```bash
+npm run review:failures -- promote evidence-ranking-v1 \
+  'review-run:mock:checkout-payment-timeout:unknown-evidence' \
+  'review-run:mock:bad-deploy-latency:unknown-evidence' \
+  --mode-id unsupported-evidence-citation \
+  --name "Unsupported evidence citation" \
+  --definition "The decision cites evidence absent from the run." \
+  --distinguishing-notes "Use for invalid citations, not weak valid evidence."
+```
+
+Uncategorized observations can remain in their local review packet. Promote one as a versioned candidate snapshot only when it is worth preserving:
+
+```bash
+npm run review:failures -- promote evidence-ranking-v1 \
+  'review-run:mock:noisy-alert:missing-runbook-context' \
+  --candidate
+```
+
+Regression cases live in `evals/failure-regressions.ts`. Each one names the exact taxonomy revision and promoted source cases that justify it. `npm run evals` validates those references before executing the regression and includes the provenance in the saved eval report.
+
+Live review capture is explicit and optional:
+
+```bash
+RUN_LIVE_FLUE_EVALS=1 npm run review:failures -- generate \
+  --change "live-provider-check" \
+  --size 24 \
+  --batch-id live-provider-check \
+  --live
+```
+
+Live capture requires the normal provider configuration. It still uses synthetic incident scenarios, records provider failures as reviewable outcomes, and never enables production actions. Human findings supplement the deterministic schema, grounding, provenance, mitigation, and safety gates; they do not override them.
 
 ## Human Approval Simulation
 
@@ -367,7 +449,7 @@ docker compose up -d postgres
 POSTGRES_TEST_DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage npm run test:postgres
 ```
 
-Deterministic evals cover scenario contracts, evidence citations, provenance, safety behavior, mitigation governance, and recorded-triage readability. Live evals are opt-in:
+Deterministic evals cover scenario contracts, evidence citations, provenance, safety behavior, mitigation governance, recorded-triage readability, and provenance-linked failure regressions. Live evals are opt-in:
 
 ```bash
 RUN_LIVE_FLUE_EVALS=1 npm run evals

@@ -123,6 +123,13 @@ git diff --check
 - Use the Anthropic-compatible MiniMax endpoint through the adapter boundary. Do not scatter direct provider calls through workflow code.
 - Keep the CLI trace as a product surface: it should distinguish raw facts, gathered evidence, LLM output, validation, mitigation governance, safety gating, and scorecard results.
 - Keep diagnostic logs on stderr so stdout remains usable for the triage report.
+- Keep generated failure-review batches under `.triage/failure-reviews/`; never commit an uncurated batch.
+- Keep human review answers out of raw incident, Grafana, and recorded-log fixtures. Review findings belong in local review records or promoted failure snapshots.
+- Require at least two promoted source examples before activating a named failure mode. Preserve historical taxonomy revisions used by older reviews and regressions.
+- Promote only reduced allowlisted evidence. Reject credential-bearing fields and keep full local packets out of version control.
+- Keep failure regressions executable and case-specific, with links to the exact failure-mode revision and promoted source cases that justify them.
+- Human failure reviews supplement deterministic schema, evidence, provenance, mitigation, and safety gates; they never override those gates.
+- Keep live failure-review capture explicit and opt-in. It must not grant production mutation authority.
 - When changing library, SDK, API, CLI, framework, or cloud-service usage, fetch current docs with `ctx7` first as described by the repo instructions.
 
 ## Testing Convention
@@ -154,6 +161,9 @@ git diff --check
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads.
 - [fixtures/logs/](fixtures/logs/): recorded Loki-shaped log fixtures for recorded triage runs and integration tests.
 - [evals/](evals/): Flue eval suites for deterministic contracts, opt-in live drift checks, and explanation-quality scoring.
+- [evals/failure-taxonomy.json](evals/failure-taxonomy.json): versioned failure-mode definitions discovered through human review.
+- [evals/failure-cases/](evals/failure-cases/): curated source snapshots that justify taxonomy and regression decisions.
+- [scripts/failure-review.ts](scripts/failure-review.ts): CLI for generating, reviewing, validating, summarizing, and promoting failure-review batches.
 - [tests/support/outcomes.ts](tests/support/outcomes.ts): shared outcome assertions for workflow, webhook, recorded integration, and live-provider tests.
 - [tests/observability-integration.test.ts](tests/observability-integration.test.ts): recorded Grafana/Loki-shaped integration matrix.
 - [scripts/run-recorded-triage.ts](scripts/run-recorded-triage.ts): one-command recorded observability triage run.
