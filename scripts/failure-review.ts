@@ -79,6 +79,9 @@ async function generateBatch(args: ParsedArgs): Promise<number> {
   }
   const includeLive = args.flags.has("--live");
   if (includeLive) {
+    if (process.env.RUN_LIVE_FLUE_EVALS !== "1") {
+      throw new Error("--live requires RUN_LIVE_FLUE_EVALS=1.");
+    }
     loadConfig(".env");
   }
   const catalog = selectedCatalog(size, includeLive);

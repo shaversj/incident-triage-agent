@@ -399,6 +399,26 @@ describe("failure review CLI", () => {
     });
     expect(readdirSync(caseDirectory)).toHaveLength(2);
   });
+
+  test("rejects live generation before creating a batch unless explicitly enabled", async () => {
+    const root = tempRoot();
+    const result = await runFailureReviewCli([
+      "generate",
+      "--change",
+      "live-preflight",
+      "--size",
+      "20",
+      "--batch-id",
+      "live-preflight",
+      "--root",
+      root,
+      "--live",
+    ], { RUN_LIVE_FLUE_EVALS: undefined });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("RUN_LIVE_FLUE_EVALS=1");
+    expect(() => readFileSync(join(root, "live-preflight", "manifest.json"))).toThrow();
+  });
 });
 
 describe("failure taxonomy promotion", () => {
@@ -607,10 +627,23 @@ function objectValue(value: unknown): Record<string, unknown> {
     : {};
 }
 
-async function runFailureReviewCli(args: string[]) {
+async function runFailureReviewCli(
+  args: string[],
+  envOverride: Record<string, string | undefined> = {},
+) {
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    FORCE_COLOR: "0",
+    ...envOverride,
+  };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete env[key];
+    }
+  }
   const proc = spawn("npx", ["tsx", `${process.cwd()}/scripts/failure-review.ts`, ...args], {
     cwd: process.cwd(),
-    env: { ...process.env, FORCE_COLOR: "0" },
+    env,
   });
   const [stdout, stderr, exitCode] = await Promise.all([
     text(proc.stdout),
