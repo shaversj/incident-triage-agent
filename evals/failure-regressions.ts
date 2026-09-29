@@ -100,11 +100,14 @@ export function validateFailureRegressionRegistry(
       try {
         const snapshot = loadPromotedCase(join(caseDirectory, `${sourceCaseId}.json`));
         if (
-          snapshot.failureMode?.id !== regression.failureMode.id ||
-          snapshot.failureMode.revision !== regression.failureMode.revision
+          snapshot.failureMode &&
+          (
+            snapshot.failureMode.id !== regression.failureMode.id ||
+            snapshot.failureMode.revision > regression.failureMode.revision
+          )
         ) {
           errors.push(
-            `Source case ${sourceCaseId} does not reference ${regression.failureMode.id} revision ${regression.failureMode.revision}.`,
+            `Source case ${sourceCaseId} has incompatible failure-mode provenance for ${regression.failureMode.id} revision ${regression.failureMode.revision}.`,
           );
         }
       } catch (error) {

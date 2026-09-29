@@ -141,6 +141,7 @@ export interface PromoteFailureModeOptions {
 }
 
 export function reviewPaths(root: string, batchId: string): ReviewBatchPaths {
+  assertSafeBatchId(batchId);
   const directory = join(root, batchId);
   return {
     directory,
@@ -263,7 +264,10 @@ export function loadReviewBatch(root: string, batchId: string): LoadedReviewBatc
   };
 }
 
-export function validateReviewBatch(batch: LoadedReviewBatch): string[] {
+export function validateReviewBatch(
+  batch: LoadedReviewBatch,
+  taxonomy?: FailureTaxonomy,
+): string[] {
   const errors: string[] = [];
   if (batch.manifest.status !== "complete") {
     errors.push("batch generation is not complete.");
@@ -292,6 +296,15 @@ export function validateReviewBatch(batch: LoadedReviewBatch): string[] {
     }
     for (const error of validateReviewRecord(review, run)) {
       errors.push(`${runId}: ${error}`);
+    }
+    if (
+      review.failureMode &&
+      taxonomy &&
+      !findFailureMode(taxonomy, review.failureMode.id, review.failureMode.revision)
+    ) {
+      errors.push(
+        `${runId}: failure_mode references unknown mode ${review.failureMode.id} revision ${review.failureMode.revision}.`,
+      );
     }
   }
   return errors;
@@ -431,6 +444,7 @@ export function reviseFailureMode(
     definition: string;
     distinguishingNotes: string;
     sourceCaseIds: string[];
+    caseDirectory: string;
   },
 ): FailureModeEntry {
   const taxonomy = loadFailureTaxonomy(taxonomyPath);
@@ -438,8 +452,17 @@ export function reviseFailureMode(
   if (!latest) {
     throw new Error(`Unknown failure mode ${details.modeId}.`);
   }
-  if (details.sourceCaseIds.length < 2) {
+  const sourceCaseIds = [...new Set(details.sourceCaseIds)];
+  if (sourceCaseIds.length < 2) {
     throw new Error("An active failure mode revision requires at least two source cases.");
+  }
+  for (const sourceCaseId of sourceCaseIds) {
+    const snapshot = loadPromotedCase(join(details.caseDirectory, `${sourceCaseId}.json`));
+    if (snapshot.failureMode && snapshot.failureMode.id !== details.modeId) {
+      throw new Error(
+        `Source case ${sourceCaseId} belongs to failure mode ${snapshot.failureMode.id}.`,
+      );
+    }
   }
   const revision: FailureModeEntry = {
     id: latest.id,
@@ -448,7 +471,7 @@ export function reviseFailureMode(
     status: "active",
     definition: requiredText(details.definition, "definition"),
     distinguishingNotes: requiredText(details.distinguishingNotes, "distinguishing_notes"),
-    sourceCaseIds: [...new Set(details.sourceCaseIds)],
+    sourceCaseIds,
   };
   saveFailureTaxonomy(taxonomyPath, { ...taxonomy, modes: [...taxonomy.modes, revision] });
   return revision;
@@ -870,6 +893,12 @@ function requiredText(value: string, label: string): string {
     throw new Error(`${label} must be a non-empty string.`);
   }
   return value;
+}
+
+function assertSafeBatchId(batchId: string): void {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(batchId) || batchId === "." || batchId === "..") {
+    throw new Error("batch_id must be a path-safe identifier using letters, numbers, dots, underscores, or hyphens.");
+  }
 }
 
 function sortJson(value: unknown): unknown {

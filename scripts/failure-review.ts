@@ -2,9 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/config";
 import {
-  defaultFailureCaseCatalog,
   executeFailureCase,
-  liveFailureCaseCatalog,
+  selectFailureCases,
   type FailureCaseDefinition,
 } from "../evals/failure-case-catalog";
 import {
@@ -83,7 +82,7 @@ async function generateBatch(args: ParsedArgs): Promise<number> {
     }
     loadConfig(".env");
   }
-  const catalog = selectedCatalog(size, includeLive);
+  const catalog = selectFailureCases(size, includeLive);
   const root = option(args, "--root") ?? defaultFailureReviewRoot;
   const generatedAt = new Date().toISOString();
   const batchId = option(args, "--batch-id") ?? generatedBatchId(generatedAt);
@@ -184,7 +183,10 @@ function annotateRun(args: ParsedArgs): number {
 function validateBatch(args: ParsedArgs): number {
   const batchId = requiredPositional(args, 0, "batch id");
   const batch = loadReviewBatch(rootOption(args), batchId);
-  const errors = validateReviewBatch(batch);
+  const taxonomy = loadFailureTaxonomy(
+    option(args, "--taxonomy") ?? "evals/failure-taxonomy.json",
+  );
+  const errors = validateReviewBatch(batch, taxonomy);
   if (args.flags.has("--json")) {
     printJson({ batch_id: batchId, valid: errors.length === 0, errors });
   } else if (errors.length === 0) {
@@ -253,6 +255,7 @@ function reviseMode(args: ParsedArgs): number {
     definition: requiredOption(args, "--definition"),
     distinguishingNotes: requiredOption(args, "--distinguishing-notes"),
     sourceCaseIds: sourceCaseIds.length > 0 ? sourceCaseIds : latest.sourceCaseIds,
+    caseDirectory: option(args, "--case-dir") ?? "evals/failure-cases",
   });
   printResult(args, { mode: revision }, `Revised ${modeId} to revision ${revision.revision}.`);
   return 0;
@@ -300,15 +303,6 @@ async function executeReviewCase(
       outcome,
     };
   }
-}
-
-function selectedCatalog(size: number, includeLive: boolean): FailureCaseDefinition[] {
-  const live = includeLive ? liveFailureCaseCatalog : [];
-  const mockCount = size - live.length;
-  if (mockCount < 0 || mockCount > defaultFailureCaseCatalog.length) {
-    throw new Error(`Requested ${size} runs, but only ${defaultFailureCaseCatalog.length + live.length} stable cases are available.`);
-  }
-  return [...defaultFailureCaseCatalog.slice(0, mockCount), ...live];
 }
 
 function renderRun(run: FailureRunRecord, state: string): string {

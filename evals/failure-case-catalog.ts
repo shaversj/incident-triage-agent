@@ -82,6 +82,22 @@ export const liveFailureCaseCatalog: FailureCaseDefinition[] = canonicalScenario
   description: "Opt-in live provider run through the bounded workflow.",
 }));
 
+export function selectFailureCases(
+  size: number,
+  includeLive: boolean,
+): FailureCaseDefinition[] {
+  const recorded = defaultFailureCaseCatalog.filter((item) => item.sourceKind === "recorded");
+  const mock = defaultFailureCaseCatalog.filter((item) => item.sourceKind === "mock");
+  const live = includeLive ? liveFailureCaseCatalog : [];
+  const mockCount = size - recorded.length - live.length;
+  if (mockCount < 0 || mockCount > mock.length) {
+    throw new Error(
+      `Requested ${size} runs, but only ${defaultFailureCaseCatalog.length + live.length} stable cases are available.`,
+    );
+  }
+  return [...mock.slice(0, mockCount), ...recorded, ...live];
+}
+
 export async function executeFailureCase(
   definition: FailureCaseDefinition,
   generatedAt = new Date().toISOString(),

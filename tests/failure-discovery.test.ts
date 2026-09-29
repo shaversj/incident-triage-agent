@@ -8,6 +8,7 @@ import { describe, expect, test } from "vitest";
 import {
   defaultFailureCaseCatalog,
   executeFailureCase,
+  selectFailureCases,
 } from "../evals/failure-case-catalog";
 import {
   failureRegressionCases,
@@ -31,6 +32,7 @@ import {
   reviewArtifactPath,
   reviseFailureMode,
   saveReviewRecord,
+  validateReviewBatch,
   validateReviewRecord,
   type FailureReviewRecord,
   type FailureRunRecord,
@@ -55,6 +57,18 @@ describe("failure discovery review domain", () => {
       runIds: [],
     });
     expect(JSON.parse(readFileSync(paths.manifest, "utf8"))).toEqual(manifest);
+  });
+
+  test("rejects batch identifiers that escape the review root", () => {
+    const root = tempRoot();
+
+    expect(() => createReviewBatch(root, {
+      batchId: "../escaped",
+      changeLabel: "local-validation",
+      requestedSize: 24,
+      repositoryRevision: "abc123",
+      repositoryDirty: false,
+    })).toThrow("path-safe identifier");
   });
 
   test("accepts an acceptable review without a failure anchor or taxonomy", () => {
@@ -166,6 +180,34 @@ describe("failure discovery review domain", () => {
     ]));
   });
 
+  test("rejects failure-mode references absent from the taxonomy", () => {
+    const run = sampleRun();
+    const review: FailureReviewRecord = {
+      ...failedReview(run.runId),
+      failureMode: { id: "missing-mode", revision: 99 },
+      followUpDisposition: "categorized",
+    };
+    const errors = validateReviewBatch({
+      manifest: {
+        schemaVersion: 1,
+        batchId: "batch-validation",
+        changeLabel: "taxonomy-validation",
+        requestedSize: 1,
+        generatedAt: "2026-09-28T20:00:00.000Z",
+        repositoryRevision: "abc123",
+        repositoryDirty: false,
+        status: "complete",
+        runIds: [run.runId],
+      },
+      runs: [run],
+      reviews: [review],
+    }, { schemaVersion: 1, modes: [] });
+
+    expect(errors).toContain(
+      `${run.runId}: failure_mode references unknown mode missing-mode revision 99.`,
+    );
+  });
+
   test("reports unsupported schema versions with a field-specific diagnostic", () => {
     const root = tempRoot();
     const path = join(root, "review.json");
@@ -210,6 +252,16 @@ describe("representative failure case catalog", () => {
     expect(new Set(caseIds).size).toBe(caseIds.length);
     expect(defaultFailureCaseCatalog.some((item) => item.sourceKind === "recorded")).toBe(true);
     expect(defaultFailureCaseCatalog.every((item) => item.mode === "mock")).toBe(true);
+  });
+
+  test("keeps recorded coverage in minimum and live review batches", () => {
+    for (const [size, includeLive] of [[20, false], [24, false], [20, true], [24, true]] as const) {
+      const selected = selectFailureCases(size, includeLive);
+      expect(selected).toHaveLength(size);
+      expect(selected.some((item) => item.sourceKind === "mock")).toBe(true);
+      expect(selected.some((item) => item.sourceKind === "recorded")).toBe(true);
+      expect(selected.some((item) => item.sourceKind === "live")).toBe(includeLive);
+    }
   });
 
   test("executes a mock case through the workflow-backed eval runner", async () => {
@@ -454,6 +506,7 @@ describe("failure taxonomy promotion", () => {
       definition: "The decision cites an identifier absent from the run evidence package.",
       distinguishingNotes: "Do not use for weak but valid evidence.",
       sourceCaseIds: promoted.mode.sourceCaseIds,
+      caseDirectory,
     });
     const retired = retireFailureMode(taxonomyPath, "unsupported-evidence-citation");
     const taxonomy = loadFailureTaxonomy(taxonomyPath);
@@ -464,6 +517,43 @@ describe("failure taxonomy promotion", () => {
       "The bounded decision cites evidence that the run did not establish.",
     );
     expect(firstSnapshot.failureMode).toEqual({ id: "unsupported-evidence-citation", revision: 1 });
+    expect(validateFailureRegressionRegistry([{
+      ...failureRegressionCases[0]!,
+      failureMode: { id: "unsupported-evidence-citation", revision: 2 },
+      sourceCaseIds: promoted.mode.sourceCaseIds,
+    }], { taxonomyPath, caseDirectory })).toEqual([]);
+  });
+
+  test("rejects duplicate and dangling sources when revising a failure mode", () => {
+    const workspace = tempRoot();
+    const batch = createReviewedFailureBatch(workspace);
+    const taxonomyPath = join(workspace, "failure-taxonomy.json");
+    const caseDirectory = join(workspace, "failure-cases");
+    const promoted = promoteFailureMode({
+      batch,
+      runIds: batch.manifest.runIds,
+      taxonomyPath,
+      caseDirectory,
+      modeId: "unsupported-evidence-citation",
+      name: "Unsupported evidence citation",
+      definition: "The decision cites evidence absent from the run.",
+      distinguishingNotes: "Use for invalid citations, not weak valid evidence.",
+    });
+
+    expect(() => reviseFailureMode(taxonomyPath, {
+      modeId: promoted.mode.id,
+      definition: "Revised definition.",
+      distinguishingNotes: "Revised notes.",
+      sourceCaseIds: [promoted.mode.sourceCaseIds[0]!, promoted.mode.sourceCaseIds[0]!],
+      caseDirectory,
+    })).toThrow("at least two source cases");
+    expect(() => reviseFailureMode(taxonomyPath, {
+      modeId: promoted.mode.id,
+      definition: "Revised definition.",
+      distinguishingNotes: "Revised notes.",
+      sourceCaseIds: [promoted.mode.sourceCaseIds[0]!, "missing-case"],
+      caseDirectory,
+    })).toThrow();
   });
 
   test("keeps one source as an uncategorized candidate and rejects unsafe promotion", () => {
