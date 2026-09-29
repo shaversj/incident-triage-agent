@@ -10,6 +10,11 @@ import {
   executeFailureCase,
 } from "../evals/failure-case-catalog";
 import {
+  failureRegressionCases,
+  validateFailureRegressionRegistry,
+} from "../evals/failure-regressions";
+import { runIncidentTriage } from "../evals/incident-triage-runner";
+import {
   addRunToBatch,
   completeReviewBatch,
   createReviewBatch,
@@ -479,6 +484,34 @@ describe("failure taxonomy promotion", () => {
       runId: unsafeRun.runId,
       caseDirectory,
     })).toThrow("credential-bearing key api_key");
+  });
+});
+
+describe("failure regression provenance", () => {
+  test("resolves every versioned regression to its mode revision and source cases", () => {
+    expect(validateFailureRegressionRegistry(failureRegressionCases)).toEqual([]);
+  });
+
+  test("rejects dangling mode revisions and source cases before execution", () => {
+    const invalid = [{
+      ...failureRegressionCases[0]!,
+      failureMode: { id: "missing-mode", revision: 99 },
+      sourceCaseIds: ["missing-case"],
+    }];
+
+    expect(validateFailureRegressionRegistry(invalid)).toEqual(expect.arrayContaining([
+      expect.stringContaining("missing-mode revision 99"),
+      expect.stringContaining("missing-case"),
+    ]));
+  });
+
+  test("detects the same upstream defect when downstream wording changes", async () => {
+    const regression = failureRegressionCases[0]!;
+    const mockResponse = JSON.parse(JSON.stringify(regression.input.mockResponse)) as Record<string, unknown>;
+    mockResponse.finding_summary = "Completely different downstream explanation text.";
+    const result = await runIncidentTriage({ ...regression.input, mockResponse });
+
+    expect(() => regression.assert(result.output)).not.toThrow();
   });
 });
 

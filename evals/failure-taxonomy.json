@@ -1,4 +1,17 @@
 {
   "schemaVersion": 1,
-  "modes": []
+  "modes": [
+    {
+      "id": "unsupported-evidence-citation",
+      "name": "Unsupported evidence citation",
+      "revision": 1,
+      "status": "active",
+      "definition": "The bounded decision cites an evidence identifier that is absent from the run evidence package.",
+      "distinguishingNotes": "Use this mode when a citation is invalid. Weak but valid evidence belongs to evidence-quality review.",
+      "sourceCaseIds": [
+        "failure-case-2a1681883418bdcd",
+        "failure-case-6bca99673e0fa92b"
+      ]
+    }
+  ]
 }
