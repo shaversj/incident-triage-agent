@@ -52,6 +52,18 @@ An opt-in path that calls the real LLM provider while replaying synthetic local 
 ### Outcome-Based Test Suite
 A contract-focused test layer that verifies the operator-facing triage result: bounded decision, evidence citations, provenance support, safety behavior, and recoverable failure handling.
 
+### Failure Discovery Loop
+A manual review process that examines representative runs, groups recurring first failures into a living taxonomy, and links important failure modes to regression cases with source-trace provenance.
+
+### First Upstream Failure
+The earliest material divergence in a run that explains the downstream defect. Reviewers anchor it to the responsible investigation step and supporting evidence instead of labeling every later symptom as a separate primary failure.
+
+### Failure Mode
+A versioned definition for a recurring first upstream failure. An active mode has distinguishing notes and at least two promoted source examples so it can be separated from neighboring failure patterns.
+
+### Promoted Failure Case
+An immutable, allowlisted snapshot of a reviewed run that preserves the originating trace, first-failure anchor, supporting evidence, and failure-mode revision used by an executable regression.
+
 ### Agentic Run Envelope
 The outer triage result shape that makes a run look and read like an investigation while preserving the bounded decision as the authoritative operational contract.
 
@@ -81,4 +93,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, Live Provider Replay assertions, or Phase 1 Run Store review artifacts.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, Live Provider Replay assertions, or Phase 1 Run Store review artifacts. The Failure Discovery Loop reviews those run artifacts to identify each First Upstream Failure and carry recurring findings into regression coverage.
