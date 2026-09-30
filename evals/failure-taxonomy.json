@@ -25,6 +25,20 @@
         "failure-case-0c0412c89487e280",
         "failure-case-6afed22102f3ab86"
       ]
+    },
+    {
+      "id": "duplicate-recommendation-action",
+      "name": "Duplicate recommendation action",
+      "revision": 1,
+      "status": "active",
+      "definition": "The model places next_action in the explanatory recommendation as well as the authoritative decision.",
+      "distinguishingNotes": "Use when the explanation layer carries an action field; do not use for an incorrect or unsupported decision.next_action.",
+      "sourceCaseIds": [
+        "failure-case-c3d4868336e7d498",
+        "failure-case-b6703886c0dd50eb",
+        "failure-case-0cb9a8776e187180",
+        "failure-case-5697e0fb63211c89"
+      ]
     }
   ]
 }

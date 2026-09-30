@@ -90,6 +90,44 @@ export const failureRegressionCases: FailureRegressionCase[] = [
       }
     },
   },
+  {
+    id: "duplicate-recommendation-action-remains-non-authoritative",
+    name: "recommendation action duplication remains non-authoritative",
+    failureMode: { id: "duplicate-recommendation-action", revision: 1 },
+    sourceCaseIds: [
+      "failure-case-c3d4868336e7d498",
+      "failure-case-b6703886c0dd50eb",
+      "failure-case-0cb9a8776e187180",
+      "failure-case-5697e0fb63211c89",
+    ],
+    input: {
+      scenarioName: "checkout-payment-timeout",
+      mode: "mock",
+      mockResponse: withDuplicateRecommendationAction(
+        mockDecisionForName("checkout-payment-timeout"),
+      ),
+    },
+    assert(output) {
+      if (output.run_status !== "completed") {
+        throw new Error("Expected duplicate recommendation action to preserve the bounded decision.");
+      }
+      const explanationValidation = objectValue(output.explanation_validation);
+      const warnings = Array.isArray(explanationValidation.warnings)
+        ? explanationValidation.warnings.map(String)
+        : [];
+      if (
+        explanationValidation.status !== "degraded" ||
+        !warnings.some((warning) => warning.includes("must not include next_action"))
+      ) {
+        throw new Error("Expected duplicate recommendation action to degrade the explanation.");
+      }
+      const recommendation = objectValue(output.recommendation);
+      const decision = objectValue(output.decision);
+      if ("next_action" in recommendation || decision.next_action !== "escalate_owner") {
+        throw new Error("Expected decision.next_action to remain the only action authority.");
+      }
+    },
+  },
 ];
 
 export function validateFailureRegressionRegistry(
@@ -165,4 +203,13 @@ function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
+}
+
+function withDuplicateRecommendationAction(response: object): object {
+  const clone = JSON.parse(JSON.stringify(response)) as Record<string, unknown>;
+  const recommendation = objectValue(clone.recommendation);
+  const decision = objectValue(clone.decision);
+  recommendation.next_action = decision.next_action;
+  clone.recommendation = recommendation;
+  return clone;
 }

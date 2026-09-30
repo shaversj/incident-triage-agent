@@ -635,6 +635,17 @@ describe("failure regression provenance", () => {
 
     expect(() => regression!.assert(result.output)).not.toThrow();
   });
+
+  test("keeps recommendation action duplication out of workflow authority", async () => {
+    const regression = failureRegressionCases.find(
+      (item) => item.id === "duplicate-recommendation-action-remains-non-authoritative",
+    );
+
+    expect(regression).toBeDefined();
+    const result = await runIncidentTriage(regression!.input);
+
+    expect(() => regression!.assert(result.output)).not.toThrow();
+  });
 });
 
 function sampleRun(): FailureRunRecord {

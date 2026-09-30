@@ -72,6 +72,30 @@ Return one structured object with all top-level fields below. Do not omit `recom
   - `caveats`
   - `verification_plan`
 
+The action field belongs only in `decision`. This partial field-placement example is valid:
+
+```json
+{
+  "recommendation": {
+    "rationale": "Why the bounded action is appropriate.",
+    "evidence_ids": ["evidence-id"]
+  },
+  "decision": {
+    "next_action": "escalate_owner"
+  }
+}
+```
+
+This partial example is invalid; never return the duplicate action field:
+
+```json
+{
+  "recommendation": {
+    "next_action": "do not put an action here"
+  }
+}
+```
+
 Before returning, verify every evidence ID appears exactly in the supplied evidence package.
 Before returning, verify `recommendation` does not contain `next_action`; the only action field is `decision.next_action`.
 Before returning, verify `recommendation.rationale` is a non-empty explanation of why `decision.next_action` is the right bounded next action.
