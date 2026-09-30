@@ -86,7 +86,6 @@ export const incidentTriageExpandedSchema = v.object({
   recommendation: v.optional(v.object({
     rationale: v.string(),
     evidence_ids: v.array(v.string()),
-    next_action: v.optional(v.unknown()),
   })),
   decision: incidentTriageDecisionSchema,
 });
@@ -161,6 +160,11 @@ export async function runIncidentTriageSkill(
   const result = await runFlue({ evidencePackage }, config, logger);
   if (result.exitCode !== 0) {
     const errorText = result.stderr.trim() || result.stdout.trim() || `flue run exited with code ${result.exitCode}`;
+    if (/\boverloaded_error\b|peak-hour surge|failed:\s*529\b/i.test(errorText)) {
+      throw new DecisionValidationError(
+        "LLM provider is temporarily overloaded after retries; retry triage later.",
+      );
+    }
     throw new DecisionValidationError(redactSecret(`Flue incident-triage workflow failed: ${errorText}`, config));
   }
   return parseFlueRunOutput(result.stdout);

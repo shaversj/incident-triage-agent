@@ -266,6 +266,12 @@ RUN_LIVE_FLUE_EVALS=1 npm run review:failures -- generate \
 
 Live capture requires the normal provider configuration. It still uses synthetic incident scenarios, records provider failures as reviewable outcomes, and never enables production actions. Human findings supplement the deterministic schema, grounding, provenance, mitigation, and safety gates; they do not override them.
 
+### Measured Live Iteration
+
+A September 2026 review cycle turned two observed live-provider patterns into taxonomy entries and deterministic regressions. The final 24-run batch completed all four live scenarios with the expected incident classes and bounded actions, reduced duplicate recommendation action warnings from 4/4 to 0/4, and left one evidence-citation issue as an unpromoted candidate.
+
+Read the [failure discovery case study](docs/failure-discovery-case-study.md) for the batches, fixes, and remaining limitation.
+
 ## Human Approval Simulation
 
 Approval-required mitigation responses include a pending `approval_request` with the catalog ID, runbook ID, approve/reject commands, and `executed: false`.

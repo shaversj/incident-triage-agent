@@ -1,9 +1,11 @@
 import { expect, test } from "vitest";
+import * as v from "valibot";
 import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import {
   FlueDecisionClient,
   StaticDecisionClient,
+  incidentTriageExpandedSchema,
   parseFlueRunOutput,
   parseDecisionText,
   runIncidentTriageSkill,
@@ -93,6 +95,27 @@ test("valid decision with malformed explanation is accepted with warnings", () =
   expect(result.explanationValidation?.warnings.join(" ")).toContain("unknown evidence IDs");
   expect(result.explanationValidation?.warnings.join(" ")).toContain("must not include next_action");
   expect(result.explanation?.hypotheses).toBeUndefined();
+});
+
+test("expanded result schema does not advertise recommendation action authority", () => {
+  const parsed = v.parse(incidentTriageExpandedSchema, {
+    finding_summary: "Payment timeout evidence points upstream.",
+    recommendation: {
+      rationale: "Escalate based on timeout evidence.",
+      evidence_ids: ["alert:1"],
+      next_action: "escalate_owner",
+    },
+    decision: {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:1"],
+      caveats: [],
+      verification_plan: ["Watch payment timeout rate."],
+    },
+  });
+
+  expect(parsed.recommendation).not.toHaveProperty("next_action");
 });
 
 test("explanation warns on unsupported deploy timing and dependency owner claims", () => {
@@ -245,6 +268,27 @@ test("runIncidentTriageSkill reports non-secret flue run failures", async () => 
     stderr: "failed with secret-key",
     stdout: "",
   }))).rejects.toThrow("<redacted>");
+});
+
+test("runIncidentTriageSkill normalizes exhausted provider overload failures", async () => {
+  const rawFailure = [
+    "(node:43411) ExperimentalWarning: SQLite is an experimental feature",
+    "warn [flue:model-retry] Transient model error retries exhausted",
+    "Error: Workflow failed: [internal_error] skill(\"incident-triage\") failed: 529",
+    '{"type":"error","error":{"type":"overloaded_error"},"request_id":"provider-request-123"}',
+  ].join("\n");
+
+  const result = runIncidentTriageSkill(evidencePackage(), appConfig(), noopLogger, async () => ({
+    exitCode: 1,
+    stderr: rawFailure,
+    stdout: "",
+  }));
+
+  await expect(result).rejects.toThrow(
+    "LLM provider is temporarily overloaded after retries; retry triage later.",
+  );
+  await expect(result).rejects.not.toThrow("provider-request-123");
+  await expect(result).rejects.not.toThrow("ExperimentalWarning");
 });
 
 test("runIncidentTriageSkill still accepts an injected executor as third argument", async () => {

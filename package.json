@@ -1,7 +1,7 @@
 {
   "name": "incident-triage-agent",
-  "version": "0.1.0",
-  "description": "A proof of concept for bounded LLM-assisted incident triage.",
+  "version": "1.0.0",
+  "description": "A bounded LLM-assisted SRE operator for evidence-backed incident triage.",
   "license": "MIT",
   "type": "module",
   "private": true,
