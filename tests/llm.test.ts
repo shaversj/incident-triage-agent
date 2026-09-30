@@ -247,6 +247,27 @@ test("runIncidentTriageSkill reports non-secret flue run failures", async () => 
   }))).rejects.toThrow("<redacted>");
 });
 
+test("runIncidentTriageSkill normalizes exhausted provider overload failures", async () => {
+  const rawFailure = [
+    "(node:43411) ExperimentalWarning: SQLite is an experimental feature",
+    "warn [flue:model-retry] Transient model error retries exhausted",
+    "Error: Workflow failed: [internal_error] skill(\"incident-triage\") failed: 529",
+    '{"type":"error","error":{"type":"overloaded_error"},"request_id":"provider-request-123"}',
+  ].join("\n");
+
+  const result = runIncidentTriageSkill(evidencePackage(), appConfig(), noopLogger, async () => ({
+    exitCode: 1,
+    stderr: rawFailure,
+    stdout: "",
+  }));
+
+  await expect(result).rejects.toThrow(
+    "LLM provider is temporarily overloaded after retries; retry triage later.",
+  );
+  await expect(result).rejects.not.toThrow("provider-request-123");
+  await expect(result).rejects.not.toThrow("ExperimentalWarning");
+});
+
 test("runIncidentTriageSkill still accepts an injected executor as third argument", async () => {
   const result = await runIncidentTriageSkill(evidencePackage(), appConfig(), async () => ({
     exitCode: 0,

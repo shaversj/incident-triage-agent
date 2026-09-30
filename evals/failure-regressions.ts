@@ -17,7 +17,7 @@ export interface FailureRegressionCase {
   name: string;
   failureMode: FailureModeReference;
   sourceCaseIds: string[];
-  input: IncidentTriageEvalInput & { mockResponse: object };
+  input: IncidentTriageEvalInput;
   assert(output: IncidentTriageEvalOutput): void;
 }
 
@@ -46,6 +46,47 @@ export const failureRegressionCases: FailureRegressionCase[] = [
       }
       if (output.safety !== undefined || output.mitigation_control !== undefined) {
         throw new Error("Safety and mitigation must not run after evidence validation fails.");
+      }
+    },
+  },
+  {
+    id: "provider-overload-remains-cleanly-recoverable",
+    name: "provider overload remains a clean recoverable failure",
+    failureMode: { id: "provider-overload-exhaustion", revision: 1 },
+    sourceCaseIds: [
+      "failure-case-011d7ed1a3d6ac86",
+      "failure-case-0c0412c89487e280",
+      "failure-case-6afed22102f3ab86",
+    ],
+    input: {
+      scenarioName: "bad-deploy-latency",
+      mode: "mock",
+      mockFlueResult: {
+        exitCode: 1,
+        stdout: "",
+        stderr: [
+          "(node:999) ExperimentalWarning: SQLite is an experimental feature",
+          "warn [flue:model-retry] Transient model error retries exhausted",
+          "Error: skill failed: 529",
+          '{"error":{"type":"overloaded_error"},"request_id":"provider-request-fixture"}',
+        ].join("\n"),
+      },
+    },
+    assert(output) {
+      if (output.run_status !== "recoverable_failure") {
+        throw new Error("Expected provider overload to produce recoverable_failure.");
+      }
+      const validation = objectValue(output.validation);
+      const errors = Array.isArray(validation.errors) ? validation.errors.map(String) : [];
+      const expected = "LLM provider is temporarily overloaded after retries; retry triage later.";
+      if (!errors.includes(expected)) {
+        throw new Error("Expected a stable operator-facing provider overload error.");
+      }
+      if (errors.some((error) => error.includes("provider-request-fixture") || error.includes("ExperimentalWarning"))) {
+        throw new Error("Expected raw provider diagnostics to stay out of the operator error.");
+      }
+      if (output.safety !== undefined || output.mitigation_control !== undefined) {
+        throw new Error("Safety and mitigation must not run after provider execution fails.");
       }
     },
   },

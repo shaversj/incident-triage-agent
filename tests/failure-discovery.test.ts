@@ -624,6 +624,17 @@ describe("failure regression provenance", () => {
 
     expect(() => regression.assert(result.output)).not.toThrow();
   });
+
+  test("contains provider overload without requiring a live provider", async () => {
+    const regression = failureRegressionCases.find(
+      (item) => item.id === "provider-overload-remains-cleanly-recoverable",
+    );
+
+    expect(regression).toBeDefined();
+    const result = await runIncidentTriage(regression!.input);
+
+    expect(() => regression!.assert(result.output)).not.toThrow();
+  });
 });
 
 function sampleRun(): FailureRunRecord {

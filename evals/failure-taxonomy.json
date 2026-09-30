@@ -12,6 +12,19 @@
         "failure-case-2a1681883418bdcd",
         "failure-case-6bca99673e0fa92b"
       ]
+    },
+    {
+      "id": "provider-overload-exhaustion",
+      "name": "Provider overload exhaustion",
+      "revision": 1,
+      "status": "active",
+      "definition": "The live model provider exhausts transient-error retries before returning a bounded triage decision.",
+      "distinguishingNotes": "Use when an upstream provider reports transient overload after the retry budget; do not use for malformed output, validation failures, or missing evidence.",
+      "sourceCaseIds": [
+        "failure-case-011d7ed1a3d6ac86",
+        "failure-case-0c0412c89487e280",
+        "failure-case-6afed22102f3ab86"
+      ]
     }
   ]
 }
