@@ -1,9 +1,11 @@
 import { expect, test } from "vitest";
+import * as v from "valibot";
 import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import {
   FlueDecisionClient,
   StaticDecisionClient,
+  incidentTriageExpandedSchema,
   parseFlueRunOutput,
   parseDecisionText,
   runIncidentTriageSkill,
@@ -93,6 +95,27 @@ test("valid decision with malformed explanation is accepted with warnings", () =
   expect(result.explanationValidation?.warnings.join(" ")).toContain("unknown evidence IDs");
   expect(result.explanationValidation?.warnings.join(" ")).toContain("must not include next_action");
   expect(result.explanation?.hypotheses).toBeUndefined();
+});
+
+test("expanded result schema does not advertise recommendation action authority", () => {
+  const parsed = v.parse(incidentTriageExpandedSchema, {
+    finding_summary: "Payment timeout evidence points upstream.",
+    recommendation: {
+      rationale: "Escalate based on timeout evidence.",
+      evidence_ids: ["alert:1"],
+      next_action: "escalate_owner",
+    },
+    decision: {
+      incident_class: "dependency_outage",
+      next_action: "escalate_owner",
+      confidence: 0.88,
+      evidence_ids: ["alert:1"],
+      caveats: [],
+      verification_plan: ["Watch payment timeout rate."],
+    },
+  });
+
+  expect(parsed.recommendation).not.toHaveProperty("next_action");
 });
 
 test("explanation warns on unsupported deploy timing and dependency owner claims", () => {

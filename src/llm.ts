@@ -86,7 +86,6 @@ export const incidentTriageExpandedSchema = v.object({
   recommendation: v.optional(v.object({
     rationale: v.string(),
     evidence_ids: v.array(v.string()),
-    next_action: v.optional(v.unknown()),
   })),
   decision: incidentTriageDecisionSchema,
 });
