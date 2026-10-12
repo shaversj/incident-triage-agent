@@ -810,6 +810,8 @@ function runRecordToResponse(run: TriageRunRecord): Record<string, unknown> {
     scorecard: run.scorecard,
     retention_class: run.retentionClass,
     correlation_id: run.correlationId,
+    parent_run_id: run.parentRunId,
+    gate_decision_id: run.gateDecisionId,
     created_at: run.createdAt,
     expires_at: run.expiresAt,
   };
@@ -835,8 +837,43 @@ function runReviewToResponse(review: TriageRunReviewRecord, runtime: WebhookRunt
       expires_at: review.evidenceSnapshot.expiresAt,
     };
   }
+  response.trigger = triggerForGateDecision(review.gateDecision);
+  response.parent_run_id = review.run.parentRunId ?? review.gateDecision?.priorRunId;
+  response.parent_run_retained = review.parentRunRetained;
+  if (review.gateDecision) {
+    response.gate_decision = gateDecisionToResponse(review.gateDecision);
+  }
+  response.recent_gate_decisions = review.recentGateDecisions.map(gateDecisionToResponse);
   response.approval = runApprovalToResponse(review, runtime);
   return response;
+}
+
+function triggerForGateDecision(decision: TriageRunReviewRecord["gateDecision"]): string {
+  if (!decision) {
+    return "legacy_run";
+  }
+  if (decision.outcome === "first_observation") {
+    return "first_observation";
+  }
+  return decision.outcome === "material" ? "material_evidence" : "suppressed_update";
+}
+
+function gateDecisionToResponse(decision: NonNullable<TriageRunReviewRecord["gateDecision"]>): Record<string, unknown> {
+  return {
+    decision_id: decision.decisionId,
+    incident_id: decision.incidentId,
+    canonicalization_version: decision.canonicalizationVersion,
+    candidate_digest: decision.candidateDigest,
+    prior_run_id: decision.priorRunId,
+    child_run_id: decision.childRunId,
+    outcome: decision.outcome,
+    basis: decision.basis,
+    delta: decision.delta,
+    rationale: decision.rationale,
+    cited_delta_refs: decision.citedDeltaRefs,
+    created_at: decision.createdAt,
+    expires_at: decision.expiresAt,
+  };
 }
 
 function runApprovalToResponse(review: TriageRunReviewRecord, runtime: WebhookRuntime): Record<string, unknown> {

@@ -446,6 +446,11 @@ test("server exposes persisted read-only run review by run id", async () => {
       body: rawBody,
     });
     const postedBody = await posted.json() as any;
+    const duplicate = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, unixTimestamp(new Date(Date.now() + 1_000))),
+      body: rawBody,
+    });
     const unauthorized = await fetch(`${baseUrl}/api/runs/${encodeURIComponent(postedBody.run_id)}`);
     const review = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(postedBody.run_id)}`, {
       headers: { Authorization: "Bearer read-secret" },
@@ -453,6 +458,7 @@ test("server exposes persisted read-only run review by run id", async () => {
     const run = review.run as any;
 
     expect(posted.status).toBe(200);
+    expect(duplicate.status).toBe(202);
     expect(unauthorized.status).toBe(401);
     expect(run.run_id).toBe(postedBody.run_id);
     expect((review.review as any).decision).toMatchObject({
@@ -463,6 +469,14 @@ test("server exposes persisted read-only run review by run id", async () => {
     expect((review.evidence_snapshot as any).evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ evidenceId: "log:0" }),
     ]));
+    expect(review).toMatchObject({
+      trigger: "first_observation",
+      parent_run_retained: false,
+      gate_decision: { outcome: "first_observation", basis: "no_baseline" },
+      recent_gate_decisions: expect.arrayContaining([
+        expect.objectContaining({ outcome: "not_material", basis: "equivalent" }),
+      ]),
+    });
   } finally {
     await server.close();
   }

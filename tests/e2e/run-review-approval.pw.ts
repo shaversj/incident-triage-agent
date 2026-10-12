@@ -6,7 +6,12 @@ import { join } from "node:path";
 import { StaticDecisionClient } from "../../src/llm";
 import { InMemoryTriageRunPersistenceStore } from "../../src/persistence";
 import { RecordedLokiClient } from "../../src/recorded-observability";
-import { startWebhookServer, type RunningWebhookServer, type WebhookRuntime } from "../../src/server";
+import {
+  handleGrafanaWebhook,
+  startWebhookServer,
+  type RunningWebhookServer,
+  type WebhookRuntime,
+} from "../../src/server";
 
 test("shows local mode, simulation badge, and first-run guidance", async ({ page }) => {
   const harness = await startApprovalHarness();
@@ -37,6 +42,64 @@ test("shows read-only mode and token-gated empty run guidance", async ({ page })
 
     await expect(page.getByText("No retained runs.", { exact: true })).toBeVisible();
     await expect(page.getByText("Waiting for signed Grafana webhook runs. Enter the read token, then refresh after ingestion.")).toBeVisible();
+  } finally {
+    await harness.server.close();
+  }
+});
+
+test("shows material lineage and suppressed updates on desktop and narrow screens", async ({ page }) => {
+  const harness = await startApprovalHarness({ operatorReadToken: "local-read-token", mode: "read_only" });
+  try {
+    const original = JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8"));
+    const changed = structuredClone(original);
+    changed.commonLabels.severity = "sev1";
+    changed.alerts[0].labels.severity = "sev1";
+
+    const first = await handleGrafanaWebhook(original, "test-secret", harness.runtime, { bodyDigest: "e2e:first" });
+    await handleGrafanaWebhook(original, "test-secret", harness.runtime, { bodyDigest: "e2e:suppressed" });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await handleGrafanaWebhook(changed, "test-secret", harness.runtime, { bodyDigest: "e2e:material" });
+
+    await page.goto(`${harness.baseUrl}/runs`);
+    await page.getByPlaceholder("OPERATOR_READ_TOKEN").fill("local-read-token");
+    await page.getByRole("button", { name: "Load" }).click();
+
+    const reentry = page.locator(".panel").filter({ hasText: "Evidence Re-entry" });
+    await expect(reentry.locator(".field").filter({ hasText: "Trigger" }).getByText("Material evidence", { exact: true })).toBeVisible();
+    await expect(reentry.getByText("deterministic_policy", { exact: true })).toBeVisible();
+    await expect(reentry.getByText("Suppressed update", { exact: true })).toBeVisible();
+    await expect(reentry.getByText(/1 incident changes/)).toBeVisible();
+
+    await reentry.getByRole("button", { name: first[1].run_id as string }).first().click();
+    await expect(reentry.locator(".field").filter({ hasText: "Trigger" }).getByText("First observation", { exact: true })).toBeVisible();
+
+    await page.setViewportSize({ width: 420, height: 800 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  } finally {
+    await harness.server.close();
+  }
+});
+
+test("shows an unavailable parent without breaking child review", async ({ page }) => {
+  const harness = await startApprovalHarness({ operatorReadToken: "local-read-token", mode: "read_only" });
+  try {
+    const original = JSON.parse(readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8"));
+    const changed = structuredClone(original);
+    changed.commonLabels.severity = "sev1";
+    changed.alerts[0].labels.severity = "sev1";
+    const first = await handleGrafanaWebhook(original, "test-secret", harness.runtime, { bodyDigest: "e2e:expired:first" });
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    await handleGrafanaWebhook(changed, "test-secret", harness.runtime, { bodyDigest: "e2e:expired:material" });
+    harness.runStore.runs.delete(first[1].run_id as string);
+    harness.runStore.evidenceSnapshots.delete(first[1].run_id as string);
+
+    await page.goto(`${harness.baseUrl}/runs`);
+    await page.getByPlaceholder("OPERATOR_READ_TOKEN").fill("local-read-token");
+    await page.getByRole("button", { name: "Load" }).click();
+
+    const reentry = page.locator(".panel").filter({ hasText: "Evidence Re-entry" });
+    await expect(reentry.getByText("Parent run is no longer retained.", { exact: true })).toBeVisible();
+    await expect(reentry.locator(".field").filter({ hasText: "Trigger" }).getByText("Material evidence", { exact: true })).toBeVisible();
   } finally {
     await harness.server.close();
   }
@@ -155,7 +218,13 @@ async function openApprovalGate(page: Page, baseUrl: string) {
   return gate;
 }
 
-async function startApprovalHarness(options: { operatorReadToken?: string; mode?: WebhookRuntime["mode"] } = {}): Promise<{ server: RunningWebhookServer; baseUrl: string }> {
+async function startApprovalHarness(options: { operatorReadToken?: string; mode?: WebhookRuntime["mode"] } = {}): Promise<{
+  server: RunningWebhookServer;
+  baseUrl: string;
+  runtime: WebhookRuntime;
+  runStore: InMemoryTriageRunPersistenceStore;
+}> {
+  const runStore = new InMemoryTriageRunPersistenceStore();
   const runtime: WebhookRuntime = {
     fixturesDir: "fixtures",
     webhookSecret: "test-secret",
@@ -163,7 +232,7 @@ async function startApprovalHarness(options: { operatorReadToken?: string; mode?
     lokiClient: RecordedLokiClient.fromFixture("bad-deploy-latency"),
     lokiLimit: 20,
     mode: options.mode ?? "local",
-    runStore: new InMemoryTriageRunPersistenceStore(),
+    runStore,
     approvalStorePath: join(mkdtempSync(join(tmpdir(), "incident-triage-e2e-")), "approvals.json"),
   };
   if (options.operatorReadToken) {
@@ -175,7 +244,7 @@ async function startApprovalHarness(options: { operatorReadToken?: string; mode?
     runtime,
   });
   await server.ready;
-  return { server, baseUrl: serverUrl(server) };
+  return { server, baseUrl: serverUrl(server), runtime, runStore };
 }
 
 async function postBadDeployWebhook(baseUrl: string): Promise<void> {

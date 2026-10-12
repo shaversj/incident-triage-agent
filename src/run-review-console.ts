@@ -219,6 +219,8 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
     }
     .timeline-item.success { border-left-color: var(--green); }
     .timeline-item.warning { border-left-color: var(--amber); }
+    .timeline-item.material { border-left-color: var(--blue); }
+    .timeline-item.suppressed { border-left-color: var(--slate); }
     .timeline-title {
       font-weight: 800;
       font-size: 13px;
@@ -347,6 +349,31 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
     .error {
       color: var(--red);
       font-weight: 700;
+    }
+    .run-link {
+      border: 0;
+      background: transparent;
+      color: var(--blue);
+      padding: 0;
+      font-weight: 760;
+      white-space: normal;
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    .decision-heading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .decision-mark {
+      width: 22px;
+      height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      flex: 0 0 22px;
+      font-weight: 800;
     }
     @media (max-width: 900px) {
       .topbar { flex-direction: column; align-items: flex-start; }
@@ -589,6 +616,7 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
           field("Run Status", run.run_status) +
           field("Created", run.created_at) +
         '</div>' +
+        panel("Evidence Re-entry", renderReentry(data)) +
         panel("RCA Hypothesis", renderHypotheses(review.explanation)) +
         panel("Decision", '<div class="chips">' + chip(decision.incident_class) + chip(decision.next_action) + chip("confidence " + (decision.confidence ?? "n/a")) + '</div>' + list("Verification", decision.verification_plan)) +
         panel("Mitigation", '<div class="chips">' + chip(mitigation.status) + chip(mitigation.approval_required ? "approval required" : "no approval") + '</div>' + field("Reason", mitigation.reason)) +
@@ -596,6 +624,77 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
         panel("Evidence", evidence.slice(0, 8).map(renderEvidence).join("") || '<div class="muted">No evidence snapshot.</div>') +
         panel("Raw Review", '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>');
       attachApprovalHandlers();
+      attachRunLinkHandlers();
+    }
+
+    function renderReentry(data) {
+      const run = data.run || {};
+      const decision = data.gate_decision;
+      if (!decision) {
+        return '<div class="notice info">This retained run predates evidence re-entry tracking.</div>';
+      }
+      const parent = data.parent_run_id
+        ? data.parent_run_retained
+          ? '<button class="run-link" type="button" data-run-id="' + escapeHtml(data.parent_run_id) + '">' + escapeHtml(data.parent_run_id) + '</button>'
+          : '<span class="muted">Parent run is no longer retained.</span>'
+        : '<span class="muted">No parent. This run established the baseline.</span>';
+      const history = (data.recent_gate_decisions || []).map(renderGateDecision).join("");
+      return '<div class="grid">' +
+          field("Trigger", gateDecisionLabel(decision)) +
+          field("Basis", decision.basis) +
+          htmlField("Parent run", parent) +
+          field("Gate decision", decision.decision_id) +
+        '</div>' +
+        field("Rationale", decision.rationale) +
+        '<div class="timeline" aria-label="Evidence re-entry history">' + history + '</div>';
+    }
+
+    function renderGateDecision(decision) {
+      const fallback = decision.basis === "classifier_fallback";
+      const tone = fallback ? "warning" : decision.outcome === "material" ? "material" : decision.outcome === "not_material" ? "suppressed" : "success";
+      const mark = fallback ? "!" : decision.outcome === "material" ? "+" : decision.outcome === "not_material" ? "=" : "1";
+      const child = decision.child_run_id
+        ? ' / child: <button class="run-link" type="button" data-run-id="' + escapeHtml(decision.child_run_id) + '">' + escapeHtml(decision.child_run_id) + '</button>'
+        : "";
+      return '<div class="timeline-item ' + tone + '">' +
+        '<div class="decision-heading"><span class="decision-mark" aria-hidden="true">' + mark + '</span><span class="timeline-title">' + escapeHtml(gateDecisionLabel(decision)) + '</span></div>' +
+        '<div class="meta">' + escapeHtml(decision.created_at) + ' / basis: ' + escapeHtml(decision.basis) + child + '</div>' +
+        '<div class="value">' + escapeHtml(decision.rationale) + '</div>' +
+        '<div class="meta">' + escapeHtml(deltaSummary(decision.delta)) + '</div>' +
+      '</div>';
+    }
+
+    function gateDecisionLabel(decision) {
+      if (decision.basis === "classifier_fallback") {
+        return "Classifier fallback: retriage";
+      }
+      if (decision.outcome === "first_observation") {
+        return "First observation";
+      }
+      if (decision.outcome === "material") {
+        return decision.basis === "classifier" ? "Classifier-confirmed material evidence" : "Material evidence";
+      }
+      return "Suppressed update";
+    }
+
+    function deltaSummary(delta) {
+      const value = delta || {};
+      return [
+        (value.added || []).length + " added",
+        (value.removed || []).length + " removed",
+        (value.incidentChanges || []).length + " incident changes",
+        (value.resolvedMissingContext || []).length + " missing-context gaps resolved"
+      ].join(" / ");
+    }
+
+    function attachRunLinkHandlers() {
+      for (const button of detailEl.querySelectorAll("[data-run-id]")) {
+        button.addEventListener("click", async () => {
+          selectedRunId = button.getAttribute("data-run-id") || "";
+          renderRuns();
+          await loadReview(selectedRunId);
+        });
+      }
     }
 
     function renderHypotheses(explanation) {
@@ -737,6 +836,10 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
 
     function field(label, value) {
       return '<div class="field"><span class="label">' + escapeHtml(label) + '</span><div class="value">' + escapeHtml(value) + '</div></div>';
+    }
+
+    function htmlField(label, value) {
+      return '<div class="field"><span class="label">' + escapeHtml(label) + '</span><div class="value">' + value + '</div></div>';
     }
 
     function panel(title, body, className) {

@@ -65,6 +65,7 @@ export interface TriageRunReviewRecord {
   run: TriageRunRecord;
   evidenceSnapshot?: EvidenceSnapshotRecord;
   gateDecision?: EvidenceGateDecisionRecord;
+  parentRunRetained: boolean;
   recentGateDecisions: EvidenceGateDecisionRecord[];
 }
 
@@ -181,6 +182,7 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
       run,
       ...(evidenceSnapshot ? { evidenceSnapshot } : {}),
       ...(gateDecision ? { gateDecision } : {}),
+      parentRunRetained: run.parentRunId ? this.runs.has(run.parentRunId) : false,
       recentGateDecisions,
     };
   }
@@ -365,6 +367,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
 
   async getTriageRunReview(runId: string): Promise<TriageRunReviewRecord | undefined> {
     const result = await this.pool.query<RunRecordRow & {
+      parent_run_retained: boolean;
       snapshot_evidence: unknown[] | null;
       snapshot_missing_context: string[] | null;
       snapshot_retention_class: RetentionClass | null;
@@ -377,6 +380,9 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
         runs.validation_status, runs.safety_status, runs.mitigation_status, runs.evidence_ids,
         runs.scorecard, runs.review_envelope, runs.retention_class, runs.correlation_id,
         runs.parent_run_id, runs.gate_decision_id,
+        EXISTS (
+          SELECT 1 FROM incident_runs parent WHERE parent.run_id = runs.parent_run_id
+        ) AS parent_run_retained,
         runs.created_at, runs.expires_at,
         snapshots.evidence AS snapshot_evidence,
         snapshots.missing_context AS snapshot_missing_context,
@@ -398,7 +404,12 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
       ? decisions.find((decision) => decision.decisionId === run.gateDecisionId)
       : undefined;
     if (!row.snapshot_evidence) {
-      return { run, ...(gateDecision ? { gateDecision } : {}), recentGateDecisions: decisions };
+      return {
+        run,
+        ...(gateDecision ? { gateDecision } : {}),
+        parentRunRetained: row.parent_run_retained,
+        recentGateDecisions: decisions,
+      };
     }
     return {
       run,
@@ -412,6 +423,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
         expiresAt: row.snapshot_expires_at ? isoValue(row.snapshot_expires_at) : run.expiresAt,
       },
       ...(gateDecision ? { gateDecision } : {}),
+      parentRunRetained: row.parent_run_retained,
       recentGateDecisions: decisions,
     };
   }
