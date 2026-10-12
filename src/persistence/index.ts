@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
 
+import type { EvidenceDelta, MaterialityBasis, MaterialityDecision, MaterialityOutcome } from "../reentry";
 import type { TriageRun } from "../workflow";
 
 export type RetentionClass = "ephemeral" | "read_only_triage";
@@ -33,6 +34,8 @@ export interface TriageRunRecord {
   reviewEnvelope?: TriageRunReviewEnvelope;
   retentionClass: RetentionClass;
   correlationId: string;
+  parentRunId?: string;
+  gateDecisionId?: string;
   createdAt: string;
   expiresAt: string;
 }
@@ -61,6 +64,56 @@ export interface EvidenceSnapshotRecord {
 export interface TriageRunReviewRecord {
   run: TriageRunRecord;
   evidenceSnapshot?: EvidenceSnapshotRecord;
+  gateDecision?: EvidenceGateDecisionRecord;
+  recentGateDecisions: EvidenceGateDecisionRecord[];
+}
+
+export interface EvidenceGateCandidate {
+  incidentId: string;
+  canonicalizationVersion: string;
+  candidateDigest: string;
+  priorRunId?: string;
+  delta: EvidenceDelta;
+  decision: MaterialityDecision;
+}
+
+export interface EvidenceGateDecisionRecord {
+  decisionId: string;
+  incidentId: string;
+  canonicalizationVersion: string;
+  candidateDigest: string;
+  baselineKey: string;
+  priorRunId?: string;
+  childRunId?: string;
+  outcome: MaterialityOutcome;
+  basis: MaterialityBasis;
+  delta: EvidenceDelta;
+  rationale: string;
+  citedDeltaRefs: string[];
+  retentionClass: RetentionClass;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface EvidenceGateDecisionWriteResult {
+  decision: EvidenceGateDecisionRecord;
+  created: boolean;
+}
+
+export interface GatedTriageRunWriteResult extends EvidenceGateDecisionWriteResult {
+  run: TriageRunRecord;
+}
+
+export interface IncidentBaseline {
+  run: TriageRunRecord;
+  evidenceSnapshot?: EvidenceSnapshotRecord;
+}
+
+export interface CleanupResult {
+  incidentRunsDeleted: number;
+  evidenceSnapshotsDeleted: number;
+  evidenceGateDecisionsDeleted: number;
+  replayKeysDeleted: number;
 }
 
 export interface ReplayKeyInput {
@@ -83,9 +136,19 @@ export interface TriageRunPersistenceStore {
   recordTriageRun(run: TriageRun, options?: PersistTriageRunOptions): Promise<TriageRunRecord>;
   listTriageRuns?(options?: { limit?: number }): Promise<TriageRunRecord[]>;
   getTriageRunReview?(runId: string): Promise<TriageRunReviewRecord | undefined>;
+  getLatestIncidentBaseline(incidentId: string): Promise<IncidentBaseline | undefined>;
+  recordEvidenceGateDecision(
+    candidate: EvidenceGateCandidate,
+    options?: PersistTriageRunOptions,
+  ): Promise<EvidenceGateDecisionWriteResult>;
+  recordGatedTriageRun(
+    run: TriageRun,
+    candidate: EvidenceGateCandidate,
+    options?: PersistTriageRunOptions,
+  ): Promise<GatedTriageRunWriteResult>;
   claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim>;
   releaseReplayKey?(replayKey: string): Promise<void>;
-  cleanupExpired(now?: Date): Promise<{ incidentRunsDeleted: number; evidenceSnapshotsDeleted: number; replayKeysDeleted: number }>;
+  cleanupExpired(now?: Date): Promise<CleanupResult>;
   close?(): Promise<void>;
 }
 
@@ -94,7 +157,9 @@ const defaultTtlMs = 7 * 24 * 60 * 60 * 1000;
 export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceStore {
   readonly runs = new Map<string, TriageRunRecord>();
   readonly evidenceSnapshots = new Map<string, EvidenceSnapshotRecord>();
+  readonly evidenceGateDecisions = new Map<string, EvidenceGateDecisionRecord>();
   readonly replayKeys = new Map<string, { input: ReplayKeyInput; expiresAt: string }>();
+  private readonly evidenceGateDecisionKeys = new Map<string, string>();
 
   async recordTriageRun(run: TriageRun, options: PersistTriageRunOptions = {}): Promise<TriageRunRecord> {
     const record = buildRunRecord(run, options);
@@ -110,7 +175,69 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
       return undefined;
     }
     const evidenceSnapshot = this.evidenceSnapshots.get(runId);
+    const gateDecision = run.gateDecisionId ? this.evidenceGateDecisions.get(run.gateDecisionId) : undefined;
+    const recentGateDecisions = this.recentDecisions(run.incidentId);
+    return {
+      run,
+      ...(evidenceSnapshot ? { evidenceSnapshot } : {}),
+      ...(gateDecision ? { gateDecision } : {}),
+      recentGateDecisions,
+    };
+  }
+
+  async getLatestIncidentBaseline(incidentId: string): Promise<IncidentBaseline | undefined> {
+    const run = [...this.runs.values()]
+      .filter((candidate) => candidate.incidentId === incidentId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+    if (!run) {
+      return undefined;
+    }
+    const evidenceSnapshot = this.evidenceSnapshots.get(run.runId);
     return evidenceSnapshot ? { run, evidenceSnapshot } : { run };
+  }
+
+  async recordEvidenceGateDecision(
+    candidate: EvidenceGateCandidate,
+    options: PersistTriageRunOptions = {},
+  ): Promise<EvidenceGateDecisionWriteResult> {
+    const key = gateDecisionKey(candidate);
+    const existingId = this.evidenceGateDecisionKeys.get(key);
+    if (existingId) {
+      return { decision: this.requiredDecision(existingId), created: false };
+    }
+    const decision = buildGateDecisionRecord(candidate, options);
+    this.evidenceGateDecisions.set(decision.decisionId, decision);
+    this.evidenceGateDecisionKeys.set(key, decision.decisionId);
+    return { decision, created: true };
+  }
+
+  async recordGatedTriageRun(
+    run: TriageRun,
+    candidate: EvidenceGateCandidate,
+    options: PersistTriageRunOptions = {},
+  ): Promise<GatedTriageRunWriteResult> {
+    const key = gateDecisionKey(candidate);
+    const existingId = this.evidenceGateDecisionKeys.get(key);
+    if (existingId) {
+      const decision = this.requiredDecision(existingId);
+      const existingRun = decision.childRunId ? this.runs.get(decision.childRunId) : undefined;
+      if (!existingRun) {
+        throw new Error(`Gate decision ${decision.decisionId} has no persisted child run.`);
+      }
+      return { run: existingRun, decision, created: false };
+    }
+
+    const decision = buildGateDecisionRecord(candidate, options, run.runId);
+    const record = buildRunRecord(run, options, {
+      ...(candidate.priorRunId ? { parentRunId: candidate.priorRunId } : {}),
+      gateDecisionId: decision.decisionId,
+    });
+    const snapshot = buildEvidenceSnapshot(run, record, options);
+    this.evidenceGateDecisions.set(decision.decisionId, decision);
+    this.evidenceGateDecisionKeys.set(key, decision.decisionId);
+    this.runs.set(record.runId, record);
+    this.evidenceSnapshots.set(record.runId, snapshot);
+    return { run: record, decision, created: true };
   }
 
   async listTriageRuns(options: { limit?: number } = {}): Promise<TriageRunRecord[]> {
@@ -135,10 +262,11 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     this.replayKeys.delete(replayKey);
   }
 
-  async cleanupExpired(now = new Date()): Promise<{ incidentRunsDeleted: number; evidenceSnapshotsDeleted: number; replayKeysDeleted: number }> {
+  async cleanupExpired(now = new Date()): Promise<CleanupResult> {
     const cutoff = now.toISOString();
     let incidentRunsDeleted = 0;
     let evidenceSnapshotsDeleted = 0;
+    let evidenceGateDecisionsDeleted = 0;
     let replayKeysDeleted = 0;
     for (const [runId, run] of this.runs.entries()) {
       if (run.expiresAt <= cutoff) {
@@ -152,13 +280,35 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
         evidenceSnapshotsDeleted += 1;
       }
     }
+    for (const [decisionId, decision] of this.evidenceGateDecisions.entries()) {
+      if (decision.expiresAt <= cutoff) {
+        this.evidenceGateDecisions.delete(decisionId);
+        this.evidenceGateDecisionKeys.delete(gateDecisionRecordKey(decision));
+        evidenceGateDecisionsDeleted += 1;
+      }
+    }
     for (const [replayKey, record] of this.replayKeys.entries()) {
       if (record.expiresAt <= cutoff) {
         this.replayKeys.delete(replayKey);
         replayKeysDeleted += 1;
       }
     }
-    return { incidentRunsDeleted, evidenceSnapshotsDeleted, replayKeysDeleted };
+    return { incidentRunsDeleted, evidenceSnapshotsDeleted, evidenceGateDecisionsDeleted, replayKeysDeleted };
+  }
+
+  private recentDecisions(incidentId: string): EvidenceGateDecisionRecord[] {
+    return [...this.evidenceGateDecisions.values()]
+      .filter((decision) => decision.incidentId === incidentId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, 20);
+  }
+
+  private requiredDecision(decisionId: string): EvidenceGateDecisionRecord {
+    const decision = this.evidenceGateDecisions.get(decisionId);
+    if (!decision) {
+      throw new Error(`Missing gate decision: ${decisionId}`);
+    }
+    return decision;
   }
 }
 
@@ -226,6 +376,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
         runs.incident_title, runs.severity, runs.incident_status, runs.started_at,
         runs.validation_status, runs.safety_status, runs.mitigation_status, runs.evidence_ids,
         runs.scorecard, runs.review_envelope, runs.retention_class, runs.correlation_id,
+        runs.parent_run_id, runs.gate_decision_id,
         runs.created_at, runs.expires_at,
         snapshots.evidence AS snapshot_evidence,
         snapshots.missing_context AS snapshot_missing_context,
@@ -236,6 +387,60 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
        LEFT JOIN evidence_snapshots snapshots ON snapshots.run_id = runs.run_id
        WHERE runs.run_id = $1`,
       [runId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      return undefined;
+    }
+    const run = runRecordFromRow(row);
+    const decisions = await this.listGateDecisions(run.incidentId);
+    const gateDecision = run.gateDecisionId
+      ? decisions.find((decision) => decision.decisionId === run.gateDecisionId)
+      : undefined;
+    if (!row.snapshot_evidence) {
+      return { run, ...(gateDecision ? { gateDecision } : {}), recentGateDecisions: decisions };
+    }
+    return {
+      run,
+      evidenceSnapshot: {
+        runId: row.run_id,
+        incidentId: row.incident_id,
+        evidence: row.snapshot_evidence,
+        missingContext: row.snapshot_missing_context ?? [],
+        retentionClass: row.snapshot_retention_class ?? row.retention_class,
+        createdAt: row.snapshot_created_at ? isoValue(row.snapshot_created_at) : run.createdAt,
+        expiresAt: row.snapshot_expires_at ? isoValue(row.snapshot_expires_at) : run.expiresAt,
+      },
+      ...(gateDecision ? { gateDecision } : {}),
+      recentGateDecisions: decisions,
+    };
+  }
+
+  async getLatestIncidentBaseline(incidentId: string): Promise<IncidentBaseline | undefined> {
+    const result = await this.pool.query<RunRecordRow & {
+      snapshot_evidence: unknown[] | null;
+      snapshot_missing_context: string[] | null;
+      snapshot_retention_class: RetentionClass | null;
+      snapshot_created_at: Date | string | null;
+      snapshot_expires_at: Date | string | null;
+    }>(
+      `SELECT
+        runs.run_id, runs.incident_id, runs.scenario_name, runs.service, runs.run_status,
+        runs.incident_title, runs.severity, runs.incident_status, runs.started_at,
+        runs.validation_status, runs.safety_status, runs.mitigation_status, runs.evidence_ids,
+        runs.scorecard, runs.review_envelope, runs.retention_class, runs.correlation_id,
+        runs.parent_run_id, runs.gate_decision_id, runs.created_at, runs.expires_at,
+        snapshots.evidence AS snapshot_evidence,
+        snapshots.missing_context AS snapshot_missing_context,
+        snapshots.retention_class AS snapshot_retention_class,
+        snapshots.created_at AS snapshot_created_at,
+        snapshots.expires_at AS snapshot_expires_at
+       FROM incident_runs runs
+       LEFT JOIN evidence_snapshots snapshots ON snapshots.run_id = runs.run_id
+       WHERE runs.incident_id = $1
+       ORDER BY runs.created_at DESC
+       LIMIT 1`,
+      [incidentId],
     );
     const row = result.rows[0];
     if (!row) {
@@ -259,13 +464,65 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     };
   }
 
+  async recordEvidenceGateDecision(
+    candidate: EvidenceGateCandidate,
+    options: PersistTriageRunOptions = {},
+  ): Promise<EvidenceGateDecisionWriteResult> {
+    const record = buildGateDecisionRecord(candidate, options);
+    const inserted = await this.pool.query<EvidenceGateDecisionRow>(
+      `${insertGateDecisionSql()} ON CONFLICT (incident_id, baseline_key, candidate_digest) DO NOTHING
+       RETURNING *`,
+      gateDecisionValues(record),
+    );
+    if (inserted.rows[0]) {
+      return { decision: gateDecisionFromRow(inserted.rows[0]), created: true };
+    }
+    return { decision: await this.requiredGateDecision(candidate), created: false };
+  }
+
+  async recordGatedTriageRun(
+    run: TriageRun,
+    candidate: EvidenceGateCandidate,
+    options: PersistTriageRunOptions = {},
+  ): Promise<GatedTriageRunWriteResult> {
+    return this.withTransaction(async (client) => {
+      const decision = buildGateDecisionRecord(candidate, options, run.runId);
+      const inserted = await client.query<EvidenceGateDecisionRow>(
+        `${insertGateDecisionSql()} ON CONFLICT (incident_id, baseline_key, candidate_digest) DO NOTHING
+         RETURNING *`,
+        gateDecisionValues(decision),
+      );
+      if (!inserted.rows[0]) {
+        const existing = await selectGateDecision(client, candidate);
+        if (!existing.childRunId) {
+          throw new Error(`Gate decision ${existing.decisionId} has no persisted child run.`);
+        }
+        const existingRun = await selectRunRecord(client, existing.childRunId);
+        if (!existingRun) {
+          throw new Error(`Gate decision ${existing.decisionId} references a missing child run.`);
+        }
+        return { run: existingRun, decision: existing, created: false };
+      }
+
+      const persistedDecision = gateDecisionFromRow(inserted.rows[0]);
+      const record = buildRunRecord(run, options, {
+        ...(candidate.priorRunId ? { parentRunId: candidate.priorRunId } : {}),
+        gateDecisionId: persistedDecision.decisionId,
+      });
+      const snapshot = buildEvidenceSnapshot(run, record, options);
+      await upsertRunRecord(client, record);
+      await upsertEvidenceSnapshot(client, snapshot);
+      return { run: record, decision: persistedDecision, created: true };
+    });
+  }
+
   async listTriageRuns(options: { limit?: number } = {}): Promise<TriageRunRecord[]> {
     const result = await this.pool.query<RunRecordRow>(
       `SELECT
         run_id, incident_id, incident_title, severity, incident_status, started_at,
         scenario_name, service, run_status, validation_status, safety_status,
         mitigation_status, evidence_ids, scorecard, review_envelope, retention_class,
-        correlation_id, created_at, expires_at
+        correlation_id, parent_run_id, gate_decision_id, created_at, expires_at
        FROM incident_runs
        ORDER BY created_at DESC
        LIMIT $1`,
@@ -299,18 +556,44 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     await this.pool.query("DELETE FROM replay_keys WHERE replay_key = $1", [replayKey]);
   }
 
-  async cleanupExpired(now = new Date()): Promise<{ incidentRunsDeleted: number; evidenceSnapshotsDeleted: number; replayKeysDeleted: number }> {
+  async cleanupExpired(now = new Date()): Promise<CleanupResult> {
     const cutoff = now.toISOString();
     return this.withTransaction(async (client) => {
       const evidence = await client.query("DELETE FROM evidence_snapshots WHERE expires_at <= $1", [cutoff]);
       const runs = await client.query("DELETE FROM incident_runs WHERE expires_at <= $1", [cutoff]);
+      const decisions = await client.query("DELETE FROM evidence_gate_decisions WHERE expires_at <= $1", [cutoff]);
       const replay = await client.query("DELETE FROM replay_keys WHERE expires_at <= $1", [cutoff]);
       return {
         incidentRunsDeleted: runs.rowCount ?? 0,
         evidenceSnapshotsDeleted: evidence.rowCount ?? 0,
+        evidenceGateDecisionsDeleted: decisions.rowCount ?? 0,
         replayKeysDeleted: replay.rowCount ?? 0,
       };
     });
+  }
+
+  private async listGateDecisions(incidentId: string): Promise<EvidenceGateDecisionRecord[]> {
+    const result = await this.pool.query<EvidenceGateDecisionRow>(
+      `SELECT * FROM evidence_gate_decisions
+       WHERE incident_id = $1
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [incidentId],
+    );
+    return result.rows.map(gateDecisionFromRow);
+  }
+
+  private async requiredGateDecision(candidate: EvidenceGateCandidate): Promise<EvidenceGateDecisionRecord> {
+    const result = await this.pool.query<EvidenceGateDecisionRow>(
+      `SELECT * FROM evidence_gate_decisions
+       WHERE incident_id = $1 AND baseline_key = $2 AND candidate_digest = $3`,
+      [candidate.incidentId, baselineKey(candidate), candidate.candidateDigest],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("Gate decision conflict could not be read after insert.");
+    }
+    return gateDecisionFromRow(row);
   }
 
   async close(): Promise<void> {
@@ -351,6 +634,26 @@ interface RunRecordRow {
   review_envelope: TriageRunReviewEnvelope | null;
   retention_class: RetentionClass;
   correlation_id: string;
+  parent_run_id: string | null;
+  gate_decision_id: string | null;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+interface EvidenceGateDecisionRow {
+  decision_id: string;
+  incident_id: string;
+  canonicalization_version: string;
+  candidate_digest: string;
+  baseline_key: string;
+  prior_run_id: string | null;
+  child_run_id: string | null;
+  outcome: MaterialityOutcome;
+  basis: MaterialityBasis;
+  delta: EvidenceDelta;
+  rationale: string;
+  cited_delta_refs: unknown;
+  retention_class: RetentionClass;
   created_at: Date | string;
   expires_at: Date | string;
 }
@@ -373,6 +676,12 @@ function runRecordFromRow(row: RunRecordRow): TriageRunRecord {
     createdAt: isoValue(row.created_at),
     expiresAt: isoValue(row.expires_at),
   };
+  if (row.parent_run_id) {
+    record.parentRunId = row.parent_run_id;
+  }
+  if (row.gate_decision_id) {
+    record.gateDecisionId = row.gate_decision_id;
+  }
   if (row.safety_status) {
     record.safetyStatus = row.safety_status;
   }
@@ -401,7 +710,11 @@ export function buildReplayKey(input: ReplayKeyInput): string {
   return `replay:${digest}`;
 }
 
-function buildRunRecord(run: TriageRun, options: PersistTriageRunOptions): TriageRunRecord {
+function buildRunRecord(
+  run: TriageRun,
+  options: PersistTriageRunOptions,
+  lineage: { parentRunId?: string; gateDecisionId?: string } = {},
+): TriageRunRecord {
   const now = options.now ?? new Date();
   const retentionClass = options.retentionClass ?? "read_only_triage";
   const expiresAt = new Date(now.getTime() + (options.ttlMs ?? defaultTtlMs));
@@ -424,6 +737,12 @@ function buildRunRecord(run: TriageRun, options: PersistTriageRunOptions): Triag
     createdAt: iso(now),
     expiresAt: iso(expiresAt),
   };
+  if (lineage.parentRunId) {
+    record.parentRunId = lineage.parentRunId;
+  }
+  if (lineage.gateDecisionId) {
+    record.gateDecisionId = lineage.gateDecisionId;
+  }
   if (run.safety) {
     record.safetyStatus = run.safety.status;
   }
@@ -500,8 +819,8 @@ async function upsertRunRecord(client: PoolClient, record: TriageRunRecord): Pro
     `INSERT INTO incident_runs (
       run_id, incident_id, incident_title, severity, incident_status, started_at, scenario_name, service,
       run_status, validation_status, safety_status, mitigation_status, evidence_ids, scorecard,
-      review_envelope, retention_class, correlation_id, created_at, expires_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16, $17, $18, $19)
+      review_envelope, retention_class, correlation_id, parent_run_id, gate_decision_id, created_at, expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15::jsonb, $16, $17, $18, $19, $20, $21)
     ON CONFLICT (run_id) DO UPDATE SET
       incident_title = EXCLUDED.incident_title,
       severity = EXCLUDED.severity,
@@ -516,6 +835,8 @@ async function upsertRunRecord(client: PoolClient, record: TriageRunRecord): Pro
       review_envelope = EXCLUDED.review_envelope,
       retention_class = EXCLUDED.retention_class,
       correlation_id = EXCLUDED.correlation_id,
+      parent_run_id = EXCLUDED.parent_run_id,
+      gate_decision_id = EXCLUDED.gate_decision_id,
       expires_at = EXCLUDED.expires_at`,
     [
       record.runId,
@@ -535,6 +856,8 @@ async function upsertRunRecord(client: PoolClient, record: TriageRunRecord): Pro
       record.reviewEnvelope ? JSON.stringify(record.reviewEnvelope) : null,
       record.retentionClass,
       record.correlationId,
+      record.parentRunId ?? null,
+      record.gateDecisionId ?? null,
       record.createdAt,
       record.expiresAt,
     ],
@@ -561,6 +884,144 @@ async function upsertEvidenceSnapshot(client: PoolClient, snapshot: EvidenceSnap
       snapshot.expiresAt,
     ],
   );
+}
+
+function buildGateDecisionRecord(
+  candidate: EvidenceGateCandidate,
+  options: PersistTriageRunOptions,
+  childRunId?: string,
+): EvidenceGateDecisionRecord {
+  const now = options.now ?? new Date();
+  const retentionClass = options.retentionClass ?? "read_only_triage";
+  const expiresAt = new Date(now.getTime() + (options.ttlMs ?? defaultTtlMs));
+  const record: EvidenceGateDecisionRecord = {
+    decisionId: gateDecisionId(candidate),
+    incidentId: candidate.incidentId,
+    canonicalizationVersion: candidate.canonicalizationVersion,
+    candidateDigest: candidate.candidateDigest,
+    baselineKey: baselineKey(candidate),
+    outcome: candidate.decision.outcome,
+    basis: candidate.decision.basis,
+    delta: candidate.delta,
+    rationale: candidate.decision.rationale,
+    citedDeltaRefs: candidate.decision.citedDeltaRefs,
+    retentionClass,
+    createdAt: iso(now),
+    expiresAt: iso(expiresAt),
+  };
+  if (candidate.priorRunId) {
+    record.priorRunId = candidate.priorRunId;
+  }
+  if (childRunId) {
+    record.childRunId = childRunId;
+  }
+  return record;
+}
+
+function gateDecisionId(candidate: EvidenceGateCandidate): string {
+  return `gate:${createHash("sha256")
+    .update(candidate.incidentId)
+    .update("\0")
+    .update(baselineKey(candidate))
+    .update("\0")
+    .update(candidate.candidateDigest)
+    .digest("hex")
+    .slice(0, 24)}`;
+}
+
+function baselineKey(candidate: EvidenceGateCandidate): string {
+  return candidate.priorRunId ?? "none";
+}
+
+function gateDecisionKey(candidate: EvidenceGateCandidate): string {
+  return `${candidate.incidentId}\0${baselineKey(candidate)}\0${candidate.candidateDigest}`;
+}
+
+function gateDecisionRecordKey(record: EvidenceGateDecisionRecord): string {
+  return `${record.incidentId}\0${record.baselineKey}\0${record.candidateDigest}`;
+}
+
+function insertGateDecisionSql(): string {
+  return `INSERT INTO evidence_gate_decisions (
+    decision_id, incident_id, canonicalization_version, candidate_digest, baseline_key,
+    prior_run_id, child_run_id, outcome, basis, delta, rationale, cited_delta_refs,
+    retention_class, created_at, expires_at
+  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::jsonb, $13, $14, $15)`;
+}
+
+function gateDecisionValues(record: EvidenceGateDecisionRecord): unknown[] {
+  return [
+    record.decisionId,
+    record.incidentId,
+    record.canonicalizationVersion,
+    record.candidateDigest,
+    record.baselineKey,
+    record.priorRunId ?? null,
+    record.childRunId ?? null,
+    record.outcome,
+    record.basis,
+    JSON.stringify(record.delta),
+    record.rationale,
+    JSON.stringify(record.citedDeltaRefs),
+    record.retentionClass,
+    record.createdAt,
+    record.expiresAt,
+  ];
+}
+
+function gateDecisionFromRow(row: EvidenceGateDecisionRow): EvidenceGateDecisionRecord {
+  const record: EvidenceGateDecisionRecord = {
+    decisionId: row.decision_id,
+    incidentId: row.incident_id,
+    canonicalizationVersion: row.canonicalization_version,
+    candidateDigest: row.candidate_digest,
+    baselineKey: row.baseline_key,
+    outcome: row.outcome,
+    basis: row.basis,
+    delta: row.delta,
+    rationale: row.rationale,
+    citedDeltaRefs: Array.isArray(row.cited_delta_refs) ? row.cited_delta_refs.map(String) : [],
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+  if (row.prior_run_id) {
+    record.priorRunId = row.prior_run_id;
+  }
+  if (row.child_run_id) {
+    record.childRunId = row.child_run_id;
+  }
+  return record;
+}
+
+async function selectGateDecision(
+  client: PoolClient,
+  candidate: EvidenceGateCandidate,
+): Promise<EvidenceGateDecisionRecord> {
+  const result = await client.query<EvidenceGateDecisionRow>(
+    `SELECT * FROM evidence_gate_decisions
+     WHERE incident_id = $1 AND baseline_key = $2 AND candidate_digest = $3`,
+    [candidate.incidentId, baselineKey(candidate), candidate.candidateDigest],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Gate decision conflict could not be read after insert.");
+  }
+  return gateDecisionFromRow(row);
+}
+
+async function selectRunRecord(client: PoolClient, runId: string): Promise<TriageRunRecord | undefined> {
+  const result = await client.query<RunRecordRow>(
+    `SELECT
+      run_id, incident_id, incident_title, severity, incident_status, started_at,
+      scenario_name, service, run_status, validation_status, safety_status,
+      mitigation_status, evidence_ids, scorecard, review_envelope, retention_class,
+      correlation_id, parent_run_id, gate_decision_id, created_at, expires_at
+     FROM incident_runs
+     WHERE run_id = $1`,
+    [runId],
+  );
+  return result.rows[0] ? runRecordFromRow(result.rows[0]) : undefined;
 }
 
 interface MigrationFile {

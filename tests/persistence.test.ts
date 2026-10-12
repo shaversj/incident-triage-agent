@@ -5,6 +5,7 @@ import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import { StaticDecisionClient } from "../src/llm";
 import { InMemoryTriageRunPersistenceStore, buildReplayKey } from "../src/persistence";
+import type { EvidenceDelta, MaterialityDecision } from "../src/reentry";
 import { TriageWorkflow } from "../src/workflow";
 
 test("in-memory persistence records completed read-only run envelope and evidence snapshot", async () => {
@@ -107,6 +108,109 @@ test("in-memory persistence lists run summaries newest first", async () => {
   });
 });
 
+test("in-memory persistence records a gated run and exposes it as the latest incident baseline", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const run = await runScenario("checkout-payment-timeout", {
+    incident_class: "dependency_outage",
+    next_action: "escalate_owner",
+    confidence: 0.87,
+    evidence_ids: ["alert:0", "log:0", "runbook:dependency-outage"],
+    caveats: [],
+    verification_plan: ["Watch payment timeout rate."],
+  });
+
+  const recorded = await store.recordGatedTriageRun(run, gateCandidate({
+    candidateDigest: "candidate:first",
+    decision: materialityDecision("first_observation", "no_baseline"),
+  }), { now: new Date("2026-08-01T12:00:00.000Z") });
+  const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId);
+
+  expect(recorded.created).toBe(true);
+  expect(recorded.run.gateDecisionId).toBe(recorded.decision.decisionId);
+  expect(recorded.run).not.toHaveProperty("parentRunId");
+  expect(recorded.decision).toMatchObject({
+    outcome: "first_observation",
+    baselineKey: "none",
+    childRunId: run.runId,
+  });
+  expect(baseline?.run.runId).toBe(run.runId);
+  expect(baseline?.evidenceSnapshot?.evidence).toHaveLength(run.evidencePackage?.evidence.length ?? 0);
+});
+
+test("in-memory persistence stores a non-material decision without creating a run", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const prior = await runScenario("checkout-payment-timeout", {
+    incident_class: "dependency_outage",
+    next_action: "escalate_owner",
+    confidence: 0.87,
+    evidence_ids: ["alert:0", "log:0", "runbook:dependency-outage"],
+    caveats: [],
+    verification_plan: ["Watch payment timeout rate."],
+  });
+  await store.recordTriageRun(prior, { now: new Date("2026-08-01T12:00:00.000Z") });
+
+  const first = await store.recordEvidenceGateDecision(gateCandidate({
+    priorRunId: prior.runId,
+    candidateDigest: "candidate:same",
+    decision: materialityDecision("not_material", "equivalent"),
+  }), { now: new Date("2026-08-01T12:01:00.000Z") });
+  const duplicate = await store.recordEvidenceGateDecision(gateCandidate({
+    priorRunId: prior.runId,
+    candidateDigest: "candidate:same",
+    decision: materialityDecision("not_material", "equivalent"),
+  }), { now: new Date("2026-08-01T12:02:00.000Z") });
+  const review = await store.getTriageRunReview(prior.runId);
+
+  expect(first.created).toBe(true);
+  expect(duplicate.created).toBe(false);
+  expect(duplicate.decision.decisionId).toBe(first.decision.decisionId);
+  expect(store.runs).toHaveLength(1);
+  expect(review?.recentGateDecisions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ outcome: "not_material", priorRunId: prior.runId }),
+  ]));
+});
+
+test("in-memory persistence links a material child to its parent and scopes idempotency to the baseline", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const parent = await runScenario("checkout-payment-timeout", {
+    incident_class: "dependency_outage",
+    next_action: "escalate_owner",
+    confidence: 0.87,
+    evidence_ids: ["alert:0", "log:0", "runbook:dependency-outage"],
+    caveats: [],
+    verification_plan: ["Watch payment timeout rate."],
+  });
+  await store.recordTriageRun(parent, { now: new Date("2026-08-01T12:00:00.000Z") });
+  const child = { ...parent, runId: "triage-run:checkout-payment-timeout:child" };
+
+  const first = await store.recordGatedTriageRun(child, gateCandidate({
+    priorRunId: parent.runId,
+    candidateDigest: "candidate:material",
+    decision: materialityDecision("material", "deterministic_policy"),
+  }), { now: new Date("2026-08-01T12:01:00.000Z") });
+  const duplicate = await store.recordGatedTriageRun(
+    { ...child, runId: "triage-run:checkout-payment-timeout:duplicate" },
+    gateCandidate({
+      priorRunId: parent.runId,
+      candidateDigest: "candidate:material",
+      decision: materialityDecision("material", "deterministic_policy"),
+    }),
+    { now: new Date("2026-08-01T12:02:00.000Z") },
+  );
+  const nextBaselineDecision = await store.recordEvidenceGateDecision(gateCandidate({
+    priorRunId: child.runId,
+    candidateDigest: "candidate:material",
+    decision: materialityDecision("not_material", "equivalent"),
+  }), { now: new Date("2026-08-01T12:03:00.000Z") });
+
+  expect(first.created).toBe(true);
+  expect(first.run.parentRunId).toBe(parent.runId);
+  expect(duplicate.created).toBe(false);
+  expect(duplicate.run.runId).toBe(child.runId);
+  expect(nextBaselineDecision.created).toBe(true);
+  expect(store.runs.has("triage-run:checkout-payment-timeout:duplicate")).toBe(false);
+});
+
 test("in-memory persistence records recoverable invalid decision without approval artifacts", async () => {
   const store = new InMemoryTriageRunPersistenceStore();
   const run = await runScenario("checkout-payment-timeout", "{not json");
@@ -171,7 +275,12 @@ test("retention cleanup removes expired runs evidence snapshots and replay keys"
 
   const cleanup = await store.cleanupExpired(new Date("2026-08-01T12:00:02.000Z"));
 
-  expect(cleanup).toEqual({ incidentRunsDeleted: 1, evidenceSnapshotsDeleted: 1, replayKeysDeleted: 1 });
+  expect(cleanup).toEqual({
+    incidentRunsDeleted: 1,
+    evidenceSnapshotsDeleted: 1,
+    evidenceGateDecisionsDeleted: 0,
+    replayKeysDeleted: 1,
+  });
   expect(store.runs.has(run.runId)).toBe(false);
   expect(store.evidenceSnapshots.has(run.runId)).toBe(false);
   expect(store.replayKeys.size).toBe(0);
@@ -209,4 +318,36 @@ async function runScenario(scenarioName: string, response: object | string) {
     { mode: "read_only" },
   );
   return workflow.run(scenario);
+}
+
+function gateCandidate(overrides: {
+  candidateDigest: string;
+  decision: MaterialityDecision;
+  priorRunId?: string;
+}) {
+  return {
+    incidentId: "INC-2026-014",
+    candidateDigest: overrides.candidateDigest,
+    canonicalizationVersion: "v1",
+    delta: emptyDelta(),
+    decision: overrides.decision,
+    ...(overrides.priorRunId ? { priorRunId: overrides.priorRunId } : {}),
+  };
+}
+
+function materialityDecision(
+  outcome: MaterialityDecision["outcome"],
+  basis: MaterialityDecision["basis"],
+): MaterialityDecision {
+  return { outcome, basis, rationale: `${basis} decision`, citedDeltaRefs: [] };
+}
+
+function emptyDelta(): EvidenceDelta {
+  return {
+    added: [],
+    removed: [],
+    incidentChanges: [],
+    addedMissingContext: [],
+    resolvedMissingContext: [],
+  };
 }
