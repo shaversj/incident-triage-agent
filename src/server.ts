@@ -13,7 +13,7 @@ import {
 import { approvalConsoleHtml } from "./approval-console";
 import type { OperatorMode } from "./config";
 import { type Scenario } from "./domain";
-import { PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
+import { EvidencePackage, PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
 import {
   GrafanaPayloadError,
   defaultGrafanaSignatureHeader,
@@ -22,12 +22,23 @@ import {
   normalizeGrafanaPayload,
   verifyGrafanaWebhookHmac,
 } from "./grafana";
-import type { LLMDecisionClient } from "./llm";
+import type { LLMDecisionClient, TriageDecision } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
-import type { TriageRunPersistenceStore, TriageRunRecord, TriageRunReviewRecord } from "./persistence";
+import type {
+  EvidenceGateCandidate,
+  IncidentBaseline,
+  TriageRunPersistenceStore,
+  TriageRunRecord,
+  TriageRunReviewRecord,
+} from "./persistence";
 import { RecordedLokiClient } from "./recorded-observability";
+import {
+  evaluateEvidenceReentry,
+  type EvidenceMaterialityClassifier,
+  type EvidenceReentryResult,
+} from "./reentry";
 import { runReviewConsoleHtml } from "./run-review-console";
 import { TriageWorkflow, type TriageRun } from "./workflow";
 
@@ -44,6 +55,7 @@ export interface WebhookRuntime {
   replayTtlMs?: number;
   retentionCleanupIntervalMs?: number;
   approvalStorePath?: string;
+  materialityClassifier?: EvidenceMaterialityClassifier;
 }
 
 export interface WebhookServerOptions {
@@ -108,6 +120,8 @@ const demoScenarios: DemoScenarioDescriptor[] = [
   },
 ];
 
+const reentryCoordinators = new WeakMap<WebhookRuntime, IncidentReentryCoordinator>();
+
 export async function handleGrafanaWebhook(
   payload: unknown,
   providedSecret: string | undefined,
@@ -170,8 +184,86 @@ export async function handleGrafanaWebhook(
     name: normalized.scenarioName,
     incident: normalized.incident,
   };
+  if (reentryGateEnabled(runtime)) {
+    return reentryCoordinator(runtime).run(normalized.incident.incidentId, async () =>
+      handleEvidenceReentry(package_, scenario, runtime, options.bodyDigest)
+    );
+  }
+
+  const run = await executeTriage(package_, scenario, runtime, options.bodyDigest);
+  await persistTriageRun(run, runtime);
+  persistApprovalRequest(run, runtime);
+  return [200, runToResponse(run)];
+}
+
+async function handleEvidenceReentry(
+  candidatePackage: EvidencePackage,
+  scenario: Scenario,
+  runtime: WebhookRuntime,
+  bodyDigest?: string,
+): Promise<[number, Record<string, unknown>]> {
+  const store = runtime.runStore;
+  if (!store) {
+    throw new Error("Evidence re-entry requires a persistence store.");
+  }
+  const baseline = await store.getLatestIncidentBaseline(scenario.incident.incidentId);
+  const priorDecision = priorDecisionFromBaseline(baseline);
+  const evaluation = await evaluateEvidenceReentry({
+    candidate: candidatePackage,
+    ...(baseline ? { prior: evidencePackageFromBaseline(baseline) } : {}),
+    ...(priorDecision ? { priorDecision } : {}),
+    ...(runtime.materialityClassifier ? { classifier: runtime.materialityClassifier } : {}),
+  });
+  const gateCandidate = evidenceGateCandidate(scenario.incident.incidentId, baseline, evaluation);
+  const correlationId = runIdForWebhook(scenario.incident.incidentId, bodyDigest);
+  const persistOptions = {
+    retentionClass: "read_only_triage" as const,
+    ...(correlationId ? { correlationId } : {}),
+  };
+
+  if (evaluation.decision.outcome === "not_material") {
+    const recorded = await store.recordEvidenceGateDecision(gateCandidate, persistOptions);
+    return [202, {
+      status: "ignored",
+      reason: "non_material_evidence",
+      incident_id: scenario.incident.incidentId,
+      prior_run_id: baseline?.run.runId,
+      gate_decision_id: recorded.decision.decisionId,
+      materiality: materialityToResponse(evaluation),
+    }];
+  }
+
+  const run = await executeTriage(candidatePackage, scenario, runtime, bodyDigest);
+  const recorded = await store.recordGatedTriageRun(run, gateCandidate, persistOptions);
+  if (!recorded.created) {
+    return [202, {
+      status: "ignored",
+      reason: "evidence_already_processed",
+      incident_id: scenario.incident.incidentId,
+      prior_run_id: recorded.decision.priorRunId,
+      child_run_id: recorded.run.runId,
+      gate_decision_id: recorded.decision.decisionId,
+      materiality: materialityToResponse(evaluation),
+    }];
+  }
+  persistApprovalRequest(run, runtime);
+  return [200, {
+    ...runToResponse(run),
+    trigger: evaluation.decision.outcome === "first_observation" ? "first_observation" : "material_evidence",
+    parent_run_id: baseline?.run.runId,
+    gate_decision_id: recorded.decision.decisionId,
+    materiality: materialityToResponse(evaluation),
+  }];
+}
+
+async function executeTriage(
+  package_: EvidencePackage,
+  scenario: Scenario,
+  runtime: WebhookRuntime,
+  bodyDigest?: string,
+): Promise<TriageRun> {
   const workflowOptions = { mode: runtimeMode(runtime) };
-  const runId = runIdForWebhook(normalized.incident.incidentId, options.bodyDigest);
+  const runId = runIdForWebhook(scenario.incident.incidentId, bodyDigest);
   if (runId) {
     Object.assign(workflowOptions, { runId });
   }
@@ -181,10 +273,7 @@ export async function handleGrafanaWebhook(
     undefined,
     workflowOptions,
   );
-  const run = await workflow.run(scenario);
-  await persistTriageRun(run, runtime);
-  persistApprovalRequest(run, runtime);
-  return [200, runToResponse(run)];
+  return workflow.run(scenario);
 }
 
 export function startWebhookServer(options: WebhookServerOptions): RunningWebhookServer {
@@ -933,6 +1022,103 @@ async function persistTriageRun(run: TriageRun, runtime: WebhookRuntime): Promis
     correlationId: run.runId,
     retentionClass: runtimeMode(runtime) === "read_only" ? "read_only_triage" : "ephemeral",
   });
+}
+
+function reentryGateEnabled(runtime: WebhookRuntime): runtime is WebhookRuntime & { runStore: TriageRunPersistenceStore } {
+  return runtimeMode(runtime) === "read_only" && runtime.runStore !== undefined;
+}
+
+function reentryCoordinator(runtime: WebhookRuntime): IncidentReentryCoordinator {
+  const existing = reentryCoordinators.get(runtime);
+  if (existing) {
+    return existing;
+  }
+  const coordinator = new IncidentReentryCoordinator();
+  reentryCoordinators.set(runtime, coordinator);
+  return coordinator;
+}
+
+class IncidentReentryCoordinator {
+  private readonly tails = new Map<string, Promise<void>>();
+
+  async run<T>(incidentId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.tails.get(incidentId) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const turn = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => turn);
+    this.tails.set(incidentId, tail);
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.tails.get(incidentId) === tail) {
+        this.tails.delete(incidentId);
+      }
+    }
+  }
+}
+
+function evidencePackageFromBaseline(baseline: IncidentBaseline): EvidencePackage {
+  return new EvidencePackage(
+    baseline.run.scenarioName,
+    {
+      incidentId: baseline.run.incidentId,
+      title: baseline.run.incidentTitle,
+      severity: baseline.run.severity,
+      status: baseline.run.incidentStatus,
+      startedAt: baseline.run.startedAt,
+      service: baseline.run.service,
+      symptoms: [],
+      alerts: [],
+      recentChanges: [],
+      logSignals: [],
+      runbookRefs: [],
+      priorIncidentRefs: [],
+      verificationSignals: [],
+    },
+    (baseline.evidenceSnapshot?.evidence ?? []) as Evidence[],
+    baseline.evidenceSnapshot?.missingContext ?? [],
+  );
+}
+
+function priorDecisionFromBaseline(baseline?: IncidentBaseline): TriageDecision | undefined {
+  const decision = objectValue(objectValue(baseline?.run.reviewEnvelope).decision);
+  if (
+    typeof decision.incidentClass !== "string" ||
+    typeof decision.nextAction !== "string" ||
+    typeof decision.confidence !== "number"
+  ) {
+    return undefined;
+  }
+  return decision as unknown as TriageDecision;
+}
+
+function evidenceGateCandidate(
+  incidentId: string,
+  baseline: IncidentBaseline | undefined,
+  evaluation: EvidenceReentryResult,
+): EvidenceGateCandidate {
+  return {
+    incidentId,
+    canonicalizationVersion: evaluation.candidate.version,
+    candidateDigest: evaluation.candidate.digest,
+    ...(baseline ? { priorRunId: baseline.run.runId } : {}),
+    delta: evaluation.delta,
+    decision: evaluation.decision,
+  };
+}
+
+function materialityToResponse(evaluation: EvidenceReentryResult): Record<string, unknown> {
+  return {
+    outcome: evaluation.decision.outcome,
+    basis: evaluation.decision.basis,
+    rationale: evaluation.decision.rationale,
+    cited_delta_refs: evaluation.decision.citedDeltaRefs,
+    delta: evaluation.delta,
+  };
 }
 
 function runIdForWebhook(incidentId: string, bodyDigest?: string): string | undefined {

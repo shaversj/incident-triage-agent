@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildApprovalId, getApproval, requestApproval } from "../src/approval-store";
-import { StaticDecisionClient } from "../src/llm";
+import { StaticDecisionClient, type LLMDecisionClient } from "../src/llm";
 import { loadMitigationCatalog } from "../src/mitigation-control";
 import { InMemoryTriageRunPersistenceStore, type TriageRunPersistenceStore } from "../src/persistence";
 import { RecordedLokiClient } from "../src/recorded-observability";
@@ -168,6 +168,81 @@ test("read-only webhook records run persistence when configured", async () => {
     retentionClass: "read_only_triage",
   });
   expect([...runStore.evidenceSnapshots.keys()].some((runId) => runId.startsWith("triage-run:GRAFANA-checkout-bad-deploy-latency-001:"))).toBe(true);
+});
+
+test("read-only webhook suppresses equivalent evidence and records the gate decision", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const handlerRuntime = runtime(
+    RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+    defaultLlm(),
+    undefined,
+    "read_only",
+    runStore,
+  );
+
+  const first = await handleGrafanaWebhook(payload(), "test-secret", handlerRuntime, { bodyDigest: "delivery:first" });
+  const duplicate = await handleGrafanaWebhook(payload(), "test-secret", handlerRuntime, { bodyDigest: "delivery:duplicate" });
+
+  expect(first[0]).toBe(200);
+  expect(first[1]).toMatchObject({
+    trigger: "first_observation",
+    materiality: { outcome: "first_observation", basis: "no_baseline" },
+  });
+  expect(duplicate).toMatchObject([202, {
+    status: "ignored",
+    reason: "non_material_evidence",
+    materiality: { outcome: "not_material", basis: "equivalent" },
+  }]);
+  expect(runStore.runs.size).toBe(1);
+  expect(runStore.evidenceGateDecisions.size).toBe(2);
+});
+
+test("read-only webhook creates a lineage-linked child run for material evidence", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const handlerRuntime = runtime(
+    RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+    defaultLlm(),
+    undefined,
+    "read_only",
+    runStore,
+  );
+  const changed = payload();
+  changed.commonLabels.severity = "sev1";
+  changed.alerts[0].labels.severity = "sev1";
+
+  const first = await handleGrafanaWebhook(payload(), "test-secret", handlerRuntime, { bodyDigest: "delivery:baseline" });
+  const material = await handleGrafanaWebhook(changed, "test-secret", handlerRuntime, { bodyDigest: "delivery:material" });
+
+  expect(first[0]).toBe(200);
+  expect(material[0]).toBe(200);
+  expect(material[1]).toMatchObject({
+    trigger: "material_evidence",
+    parent_run_id: first[1].run_id,
+    materiality: { outcome: "material", basis: "deterministic_policy" },
+  });
+  expect(runStore.runs.size).toBe(2);
+  expect([...runStore.runs.values()].find((run) => run.runId === material[1].run_id)?.parentRunId).toBe(first[1].run_id);
+});
+
+test("concurrent equivalent deliveries start only one read-only triage run", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const llm = countingLlm();
+  const handlerRuntime = runtime(
+    RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+    llm.client,
+    undefined,
+    "read_only",
+    runStore,
+  );
+
+  const results = await Promise.all([
+    handleGrafanaWebhook(payload(), "test-secret", handlerRuntime, { bodyDigest: "delivery:concurrent:a" }),
+    handleGrafanaWebhook(payload(), "test-secret", handlerRuntime, { bodyDigest: "delivery:concurrent:b" }),
+  ]);
+
+  expect(results.map(([status]) => status).sort()).toEqual([200, 202]);
+  expect(llm.calls()).toBe(1);
+  expect(runStore.runs.size).toBe(1);
 });
 
 test("read-only handler requires signed server ingestion context", async () => {
@@ -809,7 +884,7 @@ test("resolved webhook is ignored", async () => {
 
 function runtime(
   lokiClient?: RecordedLokiClient,
-  llmClient = defaultLlm(),
+  llmClient: LLMDecisionClient = defaultLlm(),
   approvalStorePath?: string,
   mode?: WebhookRuntime["mode"],
   runStore?: TriageRunPersistenceStore,
@@ -841,12 +916,12 @@ function runtime(
 class FailingOnceRunStore extends InMemoryTriageRunPersistenceStore {
   private shouldFail = true;
 
-  override async recordTriageRun(...args: Parameters<InMemoryTriageRunPersistenceStore["recordTriageRun"]>) {
+  override async recordGatedTriageRun(...args: Parameters<InMemoryTriageRunPersistenceStore["recordGatedTriageRun"]>) {
     if (this.shouldFail) {
       this.shouldFail = false;
       throw new Error("simulated persistence failure");
     }
-    return super.recordTriageRun(...args);
+    return super.recordGatedTriageRun(...args);
   }
 }
 
@@ -885,6 +960,21 @@ function defaultLlm() {
       verification_plan: ["Watch payment timeout rate."],
     }),
   });
+}
+
+function countingLlm(): { client: LLMDecisionClient; calls(): number } {
+  const delegate = defaultLlm();
+  let callCount = 0;
+  return {
+    client: {
+      async decide(evidencePackage) {
+        callCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return delegate.decide(evidencePackage);
+      },
+    },
+    calls: () => callCount,
+  };
 }
 
 function badDeployLlm() {
