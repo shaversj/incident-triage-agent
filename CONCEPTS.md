@@ -43,6 +43,15 @@ The durable, reviewable result that records whether an Evidence Delta is suffici
 ### Incident Run Lineage
 The parent-child relationship between complete triage runs for the same incident when material new evidence causes re-entry.
 
+### Incident Lifecycle Record
+An append-only record of post-triage facts and decisions, such as verification outcomes, recovery attempts, resets, and review candidates. It links to immutable triage runs instead of rewriting them.
+
+### Closure Verification Loop
+The post-mitigation process that waits for independent operator or trusted observability evidence and records the incident as resolved, unresolved, or inconclusive. Approval and simulated execution do not prove closure.
+
+### Durable Recovery Budget
+A persistent, per-incident allowance for automatic recovery attempts, counted separately by failure class and reset only by an audited operator decision or relevant material evidence.
+
 ### Phase 1 Run Store
 The persistence boundary for production read-only triage. It stores incident run envelopes, evidence snapshots, re-entry decisions, run lineage, replay keys, retention class, expiry timestamps, and correlation IDs without storing approval or executor records.
 
@@ -75,6 +84,12 @@ A versioned definition for a recurring first upstream failure. An active mode ha
 
 ### Promoted Failure Case
 An immutable, allowlisted snapshot of a reviewed run that preserves the originating trace, first-failure anchor, supporting evidence, and failure-mode revision used by an executable regression.
+
+### Outcome Review Candidate
+A reduced, allowlisted snapshot of an unresolved or disputed operational outcome that awaits human failure review. Creating a candidate does not change the failure taxonomy or activate a regression.
+
+### Outcome-to-Eval Promotion
+The human-reviewed path that imports an Outcome Review Candidate into the Failure Discovery Loop, identifies its First Upstream Failure, and decides whether the case should be dismissed, categorized, or protected by an executable regression.
 
 ### Agentic Run Envelope
 The outer triage result shape that makes a run look and read like an investigation while preserving the bounded decision as the authoritative operational contract.
