@@ -31,8 +31,20 @@ The explicit runtime capability setting that controls whether the server behaves
 ### Replay Key
 A durable claim derived from a signed webhook sender, signature, timestamp, and body digest. It prevents duplicate signed Grafana payloads from running the workflow more than once within the freshness window.
 
+### Material-Evidence Re-entry Gate
+The pre-triage decision boundary that compares fresh incident evidence with the latest retained evidence and admits a new triage run only when the change is material.
+
+### Evidence Delta
+The canonical added, removed, and missing-context differences between fresh incident evidence and the latest retained evidence for the same incident.
+
+### Materiality Decision
+The durable, reviewable result that records whether an Evidence Delta is sufficient to retrigger triage, how that result was reached, and which prior run supplied the baseline.
+
+### Incident Run Lineage
+The parent-child relationship between complete triage runs for the same incident when material new evidence causes re-entry.
+
 ### Phase 1 Run Store
-The persistence boundary for production read-only triage. It stores incident run envelopes, evidence snapshots, replay keys, retention class, expiry timestamps, and correlation IDs without storing approval or executor records.
+The persistence boundary for production read-only triage. It stores incident run envelopes, evidence snapshots, re-entry decisions, run lineage, replay keys, retention class, expiry timestamps, and correlation IDs without storing approval or executor records.
 
 ### Loki Log Lookup
 The bounded log-enrichment step that queries Loki for service-specific logs around an alert window and converts results into operational evidence.
@@ -93,4 +105,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, Live Provider Replay assertions, or Phase 1 Run Store review artifacts. The Failure Discovery Loop reviews those run artifacts to identify each First Upstream Failure and carry recurring findings into regression coverage.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. For an existing incident, the Material-Evidence Re-entry Gate computes an Evidence Delta and records a Materiality Decision; material changes create Incident Run Lineage by starting a complete child run. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, Live Provider Replay assertions, or Phase 1 Run Store review artifacts. The Failure Discovery Loop reviews those run artifacts to identify each First Upstream Failure and carry recurring findings into regression coverage.

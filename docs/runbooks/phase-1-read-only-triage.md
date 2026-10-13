@@ -11,6 +11,7 @@ Read-only mode may:
 - Accept signed Grafana webhook notifications.
 - Query bounded Loki logs for the affected service and alert window.
 - Load service ownership and runbook evidence through adapter boundaries.
+- Compare fresh evidence with the latest retained run and suppress semantically equivalent updates.
 - Ask the LLM for one bounded judgment.
 - Validate, score, persist, and return the run envelope.
 
@@ -66,6 +67,19 @@ Incident reviewers should inspect:
 - `incident_runs`: run envelope, incident ID, service, validation status, safety status, mitigation status, evidence IDs, scorecard, retention class, and correlation ID.
 - `evidence_snapshots`: evidence available to the model at decision time.
 - `replay_keys`: signed webhook replay claims and expiry.
+- `evidence_gate_decisions`: first-observation, material, and suppressed decisions with bounded delta summaries and run lineage.
+
+## Re-entry Outcomes
+
+Every accepted firing notification reaches the re-entry gate after evidence collection:
+
+- `200` with `trigger: first_observation` establishes a baseline and runs full triage.
+- `200` with `trigger: material_evidence` creates a complete child run linked through `parent_run_id`.
+- `202` with `reason: non_material_evidence` records the decision but creates no run.
+
+Exact signed-request replays still return `409` before evidence comparison. A materiality classifier is used only for deltas that deterministic policy cannot resolve. Invalid or unavailable classifier output is recorded as `classifier_fallback` and reruns triage rather than suppressing evidence.
+
+Open `/runs` and inspect **Evidence Re-entry** for the selected run's trigger, parent, basis, rationale, delta summary, and recent suppressed updates.
 
 ## Canary
 
@@ -79,12 +93,19 @@ The canary must report:
 
 - `persisted_run: true`
 - `persisted_evidence_snapshot: true`
+- `first_observation_recorded: true`
+- `semantic_duplicate_suppressed: true`
+- `material_child_recorded: true`
+- `gate_decision_history_recorded: true`
+- `incident_run_count_correct: true`
 - `replay_rejected: true`
 - `approval_routes_disabled: true`
 - `approval_artifacts_absent: true`
 
 ## Retention And Redaction
 
-Phase 1 persistence records retention classes and expiry timestamps. Expired evidence snapshots and replay keys can be cleaned up through the persistence store cleanup path while preserving the run envelope.
+Phase 1 persistence records retention classes and expiry timestamps. Cleanup removes expired runs, evidence snapshots, gate decisions, and replay keys. A retained child can still explain its prior-run identifier from the gate decision after the parent expires.
+
+The incident coordinator is process-local. Run one read-only server process for this phase; add a durable incident-head or lease before horizontally scaling ingestion.
 
 Logs are redacted for common token/email patterns before becoming evidence. Persisted records must not include webhook secrets, provider keys, auth headers, or raw sensitive operational data.

@@ -11,6 +11,7 @@ Visual companion: [ai-operator-architecture.html](ai-operator-architecture.html)
 The prototype shows how an incident triage agent can move from alert to approval-ready mitigation without giving the model production authority.
 
 - The workflow gathers raw incident facts before asking the LLM for judgment.
+- A pre-triage gate compares fresh evidence with the latest retained incident run and suppresses equivalent updates.
 - The LLM returns an explanation plus one bounded decision from fixed incident and action taxonomies.
 - Local validation checks schema, taxonomy values, confidence, and evidence citations before downstream state changes.
 - The Mitigation Control Plane maps approval-sensitive actions to a catalog, evidence checks, dry-run record, staged approval request, audit event, and verification status.
@@ -23,8 +24,10 @@ The prototype shows how an incident triage agent can move from alert to approval
 ```mermaid
 flowchart LR
   A["Grafana webhook or raw scenario"] --> B["Evidence package"]
-  B --> C["Workflow-authored investigation trace"]
-  C --> D["Flue incident-triage skill"]
+  B --> C{"Material-evidence re-entry gate"}
+  C -->|first or material| T["Workflow-authored investigation trace"]
+  C -->|not material| U["Recorded suppressed update"]
+  T --> D["Flue incident-triage skill"]
   D --> E["LLM explanation plus bounded decision"]
   E --> F{"Local validation"}
   F -->|invalid| R["Recoverable failure"]
@@ -43,6 +46,7 @@ flowchart LR
   Q --> S
   J --> S
   L --> S
+  U --> S
 ```
 
 The key design choice is the authority split. The LLM can explain and classify, but it cannot create catalog entries, approve actions, execute mitigations, score itself, or decide that production mutation happened.
@@ -55,9 +59,10 @@ In this mode, the server can accept real production-shaped signals while removin
 
 - Grafana webhooks require HMAC over the raw request body with timestamp freshness.
 - Duplicate signed webhook payloads are rejected through replay-key persistence when a run store is configured.
+- Semantically equivalent fresh deliveries are accepted and recorded without starting another triage run.
 - Loki queries are bounded by service label, alert start/end window, limit, direction, timeout, optional tenant, and optional bearer auth.
 - Service ownership and runbooks are loaded through context-source adapter interfaces.
-- Run envelopes, evidence snapshots, scorecards, retention class, expiry, and correlation IDs can be persisted to Postgres.
+- Run envelopes, evidence snapshots, gate decisions, parent lineage, scorecards, retention class, expiry, and correlation IDs can be persisted to Postgres.
 - Approval requests, staged actions, approval-store writes, approval UI/API routes, and executor behavior are disabled.
 
 The review path for a Phase 1 incident is the persisted run envelope plus evidence snapshot, not an approval queue.
@@ -69,6 +74,7 @@ The review path for a Phase 1 incident is the persisted run envelope plus eviden
 | Grafana webhook normalization | deterministic code | Signed raw alert facts and incident envelope | Root cause or mitigation recommendation |
 | Loki-shaped log replay/query | deterministic code | Bounded, redacted operational log evidence | Expected answer or hidden labels |
 | Evidence package | deterministic code | Prompt input, source tiers, stable evidence IDs | Freeform model claims |
+| Material-evidence re-entry gate | deterministic policy plus bounded classifier for ambiguity | Whether fresh evidence warrants another complete triage run | Incident class, mitigation choice, approval, or execution |
 | Flue/MiniMax decision | LLM through adapter | Explanation and bounded judgment candidate | Workflow state, action safety, approval, execution |
 | Local validation | deterministic code | Whether model output is admissible | Semantic truth beyond available evidence |
 | Provenance summary | deterministic code | Whether cited evidence is current, operational, guidance, or historical | Model-generated confidence |
@@ -94,6 +100,7 @@ The model does not call tools, inspect systems directly, write runbooks, create 
 Deterministic code owns the harness:
 
 - Builds evidence from recorded scenarios, Grafana-shaped payloads, Loki-shaped logs, deploy facts, service metadata, runbooks, prior incidents, and verification signals.
+- Canonicalizes retained and fresh evidence, computes a display-safe delta, and records first, material, or suppressed re-entry decisions.
 - Records workflow state transitions such as `received`, `context_gathered`, `decision_validated`, `approval_pending`, `simulated_action_recorded`, and `verification_failed`.
 - Validates the LLM response before the workflow trusts it.
 - Computes provenance from cited evidence.
@@ -188,7 +195,7 @@ npm run triage:recorded -- --scenario bad-deploy-latency
 
 ### Phase 1 Read-Only Canary
 
-Use this to prove signed read-only ingestion, persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts:
+Use this to prove signed read-only ingestion, first/material/suppressed routing, lineage persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts:
 
 ```bash
 npm run triage:read-only-canary -- --json
@@ -230,7 +237,7 @@ The scorecard is computed by code. The model never grades its own run.
 | Alert authentication | HMAC raw-body verification with timestamp freshness and replay claims | Same mechanism with production Grafana contact point |
 | Logs | Recorded Loki-shaped logs or bounded Loki client | Real Loki query with production auth, tenant, timeouts, and rate limits |
 | LLM | MiniMax through Flue or deterministic mock client | Same adapter boundary, with model monitoring |
-| Run persistence | In-memory store or Postgres-backed Phase 1 run store | Managed Postgres with retention and audit review process |
+| Run persistence | In-memory store or Postgres-backed runs, evidence, gate decisions, and lineage | Managed Postgres with retention and audit review process |
 | Runbooks | Context-source-backed runbook evidence | Versioned runbook source of truth |
 | Mitigation catalog | Local JSON catalog | Change-controlled mitigation catalog with owners |
 | Approval | Local JSON store plus console | Authenticated approval workflow with audit storage |

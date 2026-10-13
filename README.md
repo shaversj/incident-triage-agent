@@ -18,6 +18,7 @@ This is not an incident chatbot. The project is about control: the workflow owns
 - Maps approval-sensitive actions through a mitigation catalog.
 - Stages human approvals and records simulated executor output without touching production systems.
 - Persists run reviews and evidence snapshots in memory or Postgres.
+- Compares fresh evidence with the latest retained incident run and retriggers triage only for a first observation or material change.
 - Exposes browser consoles for run review and approval decisions.
 - Runs deterministic tests and evals for schema, evidence grounding, safety, mitigation governance, and readability.
 - Reviews representative run batches, promotes recurring first failures into a living taxonomy, and links them to executable regressions.
@@ -102,6 +103,7 @@ Start with these files if you want to understand the implementation:
 | --- | --- |
 | [src/workflow.ts](src/workflow.ts) | Incident lifecycle and state machine. |
 | [src/evidence.ts](src/evidence.ts) | Deterministic evidence gathering and provenance. |
+| [src/reentry.ts](src/reentry.ts) | Canonical evidence comparison, bounded materiality decisions, and conservative fallback. |
 | [src/llm.ts](src/llm.ts) | Mock and live LLM boundary plus response validation. |
 | [src/mitigation-control.ts](src/mitigation-control.ts) | Catalog-backed mitigation governance, dry-run, audit, and approval staging. |
 | [src/policy.ts](src/policy.ts) | Safety compatibility gate derived from mitigation governance. |
@@ -115,15 +117,17 @@ Start with these files if you want to understand the implementation:
 ```mermaid
 flowchart LR
     A["Raw incident data"] --> B["Evidence package"]
-    B --> C["Investigation trace"]
-    C --> D["incident-triage skill"]
-    D --> E["Structured LLM result"]
-    E --> F["Schema and taxonomy validation"]
-    F --> G["Evidence citation validation"]
+    B --> C{"Material-evidence re-entry gate"}
+    C -->|first or material| D["Investigation trace"]
+    C -->|not material| L["Record suppressed update"]
+    D --> E["incident-triage skill"]
+    E --> F["Structured LLM result"]
+    F --> G["Schema, taxonomy, and citation validation"]
     G --> H["Mitigation Control Plane"]
     H --> I["Safety compatibility gate"]
     I --> J["Operator output"]
-    J --> K["Scorecard"]
+    J --> K["Scorecard and audit trail"]
+    L --> K
 ```
 
 The workflow owns control flow, factual investigation steps, validation, provenance, mitigation governance, safety, and scoring. The `incident-triage` skill guides the LLM through a human SRE-style investigation order: current signal, impact, recent changes, dependency-vs-local evidence, evidence quality, missing context, bounded next action, and verification.
@@ -172,6 +176,8 @@ Allowed `next_action` values:
 - `gather_more_context`
 
 The provider response is never trusted directly. Local validation checks JSON shape, taxonomy values, confidence, and cited evidence IDs before the workflow applies mitigation governance or safety policy.
+
+In read-only server mode, a separate pre-triage gate compares the fresh evidence package with the latest retained run for the same normalized incident ID. A first observation or material change returns `200` and creates a complete run. Equivalent evidence returns `202` with `reason: non_material_evidence`, the prior run ID, and a durable gate-decision ID. Ambiguous deltas may use the separate `evidence-materiality` skill; invalid or unavailable classifier output falls back to retriage. Material means worthy of retriage, not approved to act.
 
 ## Recorded Observability Path
 
@@ -324,7 +330,7 @@ Run the signed read-only webhook canary against recorded Grafana and Loki-shaped
 npm run --silent triage:read-only-canary -- --json
 ```
 
-The canary starts the local server in `AI_OPERATOR_MODE=read_only`, posts a signed Grafana webhook, verifies the run and evidence snapshot were persisted in the in-memory store, verifies duplicate replay is rejected, verifies approval routes are disabled, and verifies no approval request or staged action appears in the response.
+The canary starts the local server in `AI_OPERATOR_MODE=read_only` and sends three fresh signed requests: a first observation, semantically equivalent evidence, and a material severity change. It verifies one suppressed update, two lineage-linked runs, retained gate-decision history, exact replay rejection, disabled approval routes, and no approval request or staged action.
 
 Run the same canary against local Postgres:
 
@@ -403,7 +409,9 @@ Read-only mode requires Grafana HMAC headers on webhook requests. Configure Graf
 
 Read-only mode disables the approval console/API and suppresses approval-store writes, even when the decision maps to an approval-required mitigation. The older `X-Webhook-Secret` header remains for local/demo mode only.
 
-The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Persisted read-only review data can be fetched from `GET /api/runs` and `GET /api/runs/:run_id` with `Authorization: Bearer $OPERATOR_READ_TOKEN`; the detail response returns the run envelope and evidence snapshot without exposing approval mutation routes.
+The server runs the repo-owned SQL migrations at startup when `DATABASE_URL` is set. Persisted read-only review data can be fetched from `GET /api/runs` and `GET /api/runs/:run_id` with `Authorization: Bearer $OPERATOR_READ_TOKEN`; the detail response returns the run envelope, evidence snapshot, parent lineage, selected gate decision, and recent decisions for the incident without exposing approval mutation routes.
+
+The re-entry coordinator serializes one incident inside one server process. A horizontally scaled deployment would need a durable incident-head or lease protocol before claiming the same ordering guarantee across instances.
 
 Open the read-only operator review console:
 
