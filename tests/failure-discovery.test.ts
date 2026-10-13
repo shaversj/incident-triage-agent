@@ -475,6 +475,37 @@ describe("failure review CLI", () => {
 });
 
 describe("failure taxonomy promotion", () => {
+  test("preserves bounded re-entry context in promoted review packets", () => {
+    const workspace = tempRoot();
+    const batch = createReviewedFailureBatch(workspace);
+    const run = {
+      ...batch.runs[0]!,
+      outcome: {
+        ...batch.runs[0]!.outcome,
+        trigger: "material_evidence",
+        parent_run_id: "triage-run:prior",
+        gate_decision_id: "gate:1",
+        materiality: {
+          outcome: "material",
+          basis: "classifier",
+          delta: { added: [{ ref: "added:evidence:0", summary: "New runbook guidance" }] },
+        },
+      },
+    };
+    const promoted = promoteCandidateObservation({
+      batch: { ...batch, runs: [run, batch.runs[1]!] },
+      runId: run.runId,
+      caseDirectory: join(workspace, "failure-cases"),
+    });
+
+    expect(promoted.outcome).toMatchObject({
+      trigger: "material_evidence",
+      parent_run_id: "triage-run:prior",
+      gate_decision_id: "gate:1",
+      materiality: { outcome: "material", basis: "classifier" },
+    });
+  });
+
   test("activates a named mode from two reviewed sources and preserves revisions", () => {
     const workspace = tempRoot();
     const batch = createReviewedFailureBatch(workspace);

@@ -4,11 +4,13 @@ import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import {
   FlueDecisionClient,
+  FlueMaterialityClassifier,
   StaticDecisionClient,
   incidentTriageExpandedSchema,
   parseFlueRunOutput,
   parseDecisionText,
   runIncidentTriageSkill,
+  runEvidenceMaterialitySkill,
   validateDecisionPayload,
   validateTriagePayload,
 } from "../src/llm";
@@ -233,6 +235,37 @@ test("Flue decision client validates injected skill runner output", async () => 
   expect(result.decision?.evidenceIds).toEqual(["alert:0"]);
 });
 
+test("Flue materiality classifier delegates only the bounded delta input", async () => {
+  let receivedAuthority = "";
+  const classifier = new FlueMaterialityClassifier(appConfig(), async (input) => {
+    receivedAuthority = input.authority;
+    return {
+      material: false,
+      rationale: "The added history does not change the current finding.",
+      evidence_refs: [input.deltaRefs[0]],
+    };
+  });
+
+  const result = await classifier.classify(materialityInput());
+
+  expect(receivedAuthority).toBe("materiality_only");
+  expect(result).toMatchObject({ material: false, evidence_refs: ["added:evidence:0"] });
+});
+
+test("runEvidenceMaterialitySkill parses successful Flue output", async () => {
+  const result = await runEvidenceMaterialitySkill(materialityInput(), appConfig(), noopLogger, async () => ({
+    exitCode: 0,
+    stdout: JSON.stringify({
+      material: true,
+      rationale: "The guidance changes the verification path.",
+      evidence_refs: ["added:evidence:0"],
+    }),
+    stderr: "",
+  }));
+
+  expect(result).toMatchObject({ material: true, evidence_refs: ["added:evidence:0"] });
+});
+
 test("Flue decision client redacts provider secrets from errors", async () => {
   const client = new FlueDecisionClient(appConfig(), async () => {
     throw new Error("provider rejected secret-key");
@@ -347,6 +380,30 @@ test("parseFlueRunOutput accepts JSON after build output", () => {
 function evidencePackage() {
   const scenario = loadScenario("fixtures", "checkout-payment-timeout");
   return loadTools("fixtures").buildEvidencePackage(scenario);
+}
+
+function materialityInput() {
+  return {
+    authority: "materiality_only" as const,
+    incidentFacts: {
+      title: "Checkout latency",
+      severity: "SEV2",
+      status: "active",
+      service: "checkout-api",
+    },
+    addedEvidence: [{
+      ref: "added:evidence:0",
+      fingerprint: "fingerprint",
+      source: "prior_incident",
+      sourceTier: "historical_context" as const,
+      summary: "A prior incident had a similar symptom.",
+    }],
+    removedEvidence: [],
+    incidentChanges: [],
+    addedMissingContext: [],
+    resolvedMissingContext: [],
+    deltaRefs: ["added:evidence:0"],
+  };
 }
 
 function appConfig(): AppConfig {

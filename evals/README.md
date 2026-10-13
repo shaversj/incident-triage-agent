@@ -47,6 +47,7 @@ The read-only canary also supports `--live`; it still uses recorded Grafana and 
 - `live-incident-triage.eval.ts` is opt-in and checks broad live-provider contracts without asserting exact model wording, including required evidence prefixes when available.
 - `recommendation-quality.eval.ts` records a transparent judge score for explanation quality. It is a capability diagnostic, not the primary regression signal.
 - `failure-regressions.eval.ts` executes protections promoted from reviewed traces and emits their failure-mode revision plus source-case provenance in eval metadata.
+- `reentry-materiality.eval.ts` checks ambiguous evidence deltas separately from triage. Its deterministic harness is credential-free; live Flue cases run only with `RUN_LIVE_FLUE_EVALS=1`.
 
 ## Failure Review Artifacts
 

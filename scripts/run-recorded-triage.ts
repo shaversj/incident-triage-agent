@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, loadPersistenceConfig } from "../src/config";
-import { FlueDecisionClient, StaticDecisionClient } from "../src/llm";
+import { FlueDecisionClient, FlueMaterialityClassifier, StaticDecisionClient } from "../src/llm";
 import { signGrafanaWebhookBody } from "../src/grafana";
 import { createLogger } from "../src/logger";
 import { mockDecisionForName } from "../src/mock-decisions";
@@ -126,6 +126,10 @@ export function sanitizedSummary(
     safety: response.safety,
     mitigation_control: response.mitigation_control,
     scorecard: response.scorecard,
+    trigger: response.trigger,
+    parent_run_id: response.parent_run_id,
+    gate_decision_id: response.gate_decision_id,
+    materiality: response.materiality,
   };
 }
 
@@ -223,12 +227,15 @@ async function runReadOnlyCanary(
   scenario: RecordedScenario,
   logger: ReturnType<typeof createLogger>,
 ) {
-  const rawBody = payloadText(scenario.webhookFixture);
-  const webhookPayload = JSON.parse(rawBody) as unknown;
+  const fixtureBody = payloadText(scenario.webhookFixture);
+  const rawBody = isolatedCanaryBody(fixtureBody, `${Date.now()}-${process.pid}`);
+  const materialBody = materialCanaryBody(rawBody);
+  const materialPayload = JSON.parse(materialBody) as unknown;
   const recordedLogs = loadRecordedLogs(scenario.logFixture, join(projectRoot, "fixtures"));
   const runStore = await canaryRunStore(args.postgres);
-  const llmClient = args.live
-    ? new FlueDecisionClient(loadConfig(join(projectRoot, ".env")), undefined, logger)
+  const liveConfig = args.live ? loadConfig(join(projectRoot, ".env")) : undefined;
+  const llmClient = liveConfig
+    ? new FlueDecisionClient(liveConfig, undefined, logger)
     : new StaticDecisionClient({
       [scenario.grafanaScenario]: JSON.stringify(mockDecisionForName(scenario.grafanaScenario)),
     });
@@ -245,21 +252,34 @@ async function runReadOnlyCanary(
       mode: "read_only",
       runStore,
       operatorReadToken: recordedOperatorReadToken,
+      ...(liveConfig ? { materialityClassifier: new FlueMaterialityClassifier(liveConfig, undefined, logger) } : {}),
     },
   });
   await server.ready;
   try {
     const baseUrl = serverUrl(server.server);
-    const timestamp = unixTimestamp(new Date());
+    const timestamp = Math.floor(Date.now() / 1_000);
     const first = await fetch(`${baseUrl}/webhooks/grafana`, {
       method: "POST",
-      headers: signedGrafanaHeaders(rawBody, timestamp),
+      headers: signedGrafanaHeaders(rawBody, String(timestamp)),
       body: rawBody,
     });
-    const response = await first.json() as Record<string, unknown>;
+    const firstResponse = await first.json() as Record<string, unknown>;
+    const equivalent = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, String(timestamp + 1)),
+      body: rawBody,
+    });
+    const equivalentResponse = await equivalent.json() as Record<string, unknown>;
+    const material = await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(materialBody, String(timestamp + 2)),
+      body: materialBody,
+    });
+    const response = await material.json() as Record<string, unknown>;
     const replay = await fetch(`${baseUrl}/webhooks/grafana`, {
       method: "POST",
-      headers: signedGrafanaHeaders(rawBody, timestamp),
+      headers: signedGrafanaHeaders(rawBody, String(timestamp)),
       body: rawBody,
     });
     const approvalRoutes = await Promise.all([
@@ -271,10 +291,11 @@ async function runReadOnlyCanary(
     const summary = sanitizedSummary(
       args.scenario,
       args.live ? "live" : "mock",
-      first.status,
+      material.status,
       response,
-      summarizeInput(webhookPayload, recordedLogs.length),
+      summarizeInput(materialPayload, recordedLogs.length),
     );
+    const firstRunId = typeof firstResponse.run_id === "string" ? firstResponse.run_id : "";
     const runId = typeof response.run_id === "string" ? response.run_id : "";
     const runReview = runId
       ? await fetch(`${baseUrl}/api/runs/${encodeURIComponent(runId)}`, {
@@ -282,6 +303,9 @@ async function runReadOnlyCanary(
       })
       : undefined;
     const runReviewBody = runReview?.ok ? await runReview.json() as Record<string, unknown> : undefined;
+    const incidentId = stringValue(objectValue(response.incident).incident_id) ?? "";
+    const incidentRuns = (await runStore.listTriageRuns?.({ limit: 100 }) ?? [])
+      .filter((run) => run.incidentId === incidentId);
     const safety = objectValue(response.safety);
     const mitigation = objectValue(response.mitigation_control);
     const review = await runStore.getTriageRunReview?.(runId);
@@ -292,6 +316,19 @@ async function runReadOnlyCanary(
       Boolean(objectValue(runReviewBody?.review).decision) &&
       Boolean(runReviewBody?.evidence_snapshot);
     const replayRejected = replay.status === 409;
+    const firstObservationRecorded = first.status === 200 &&
+      objectValue(firstResponse.materiality).outcome === "first_observation";
+    const semanticDuplicateSuppressed = equivalent.status === 202 &&
+      equivalentResponse.reason === "non_material_evidence" &&
+      objectValue(equivalentResponse.materiality).outcome === "not_material";
+    const materialChildRecorded = material.status === 200 &&
+      response.trigger === "material_evidence" &&
+      response.parent_run_id === firstRunId &&
+      objectValue(response.materiality).outcome === "material";
+    const gateHistory = arrayValue(runReviewBody?.recent_gate_decisions);
+    const gateDecisionHistoryRecorded = gateHistory.length >= 3 &&
+      gateHistory.some((decision) => objectValue(decision).outcome === "not_material");
+    const incidentRunCountCorrect = incidentRuns.length === 2;
     const approvalRoutesDisabled = approvalRoutes.every((approvalRoute) => approvalRoute.status === 404);
     const approvalArtifactsAbsent = safety.staged_payload === undefined &&
       mitigation.dry_run === undefined &&
@@ -299,7 +336,11 @@ async function runReadOnlyCanary(
       mitigation.approval_request === undefined;
     const readOnlyDecisionRecorded = safety.status === "approval_required" && mitigation.status === "approval_required";
     const canary = {
-      passed: first.ok &&
+      passed: firstObservationRecorded &&
+        semanticDuplicateSuppressed &&
+        materialChildRecorded &&
+        gateDecisionHistoryRecorded &&
+        incidentRunCountCorrect &&
         persistedRun &&
         persistedEvidenceSnapshot &&
         authenticatedReviewRetrieval &&
@@ -309,6 +350,11 @@ async function runReadOnlyCanary(
         readOnlyDecisionRecorded,
       read_only_mode: true,
       persistence_store: args.postgres ? "postgres" : "memory",
+      first_observation_recorded: firstObservationRecorded,
+      semantic_duplicate_suppressed: semanticDuplicateSuppressed,
+      material_child_recorded: materialChildRecorded,
+      gate_decision_history_recorded: gateDecisionHistoryRecorded,
+      incident_run_count_correct: incidentRunCountCorrect,
       persisted_run: persistedRun,
       persisted_evidence_snapshot: persistedEvidenceSnapshot,
       authenticated_review_retrieval: authenticatedReviewRetrieval,
@@ -325,6 +371,28 @@ async function runReadOnlyCanary(
     await server.close();
     await runStore.close?.();
   }
+}
+
+function isolatedCanaryBody(rawBody: string, suffix: string): string {
+  const payload = JSON.parse(rawBody) as Record<string, unknown>;
+  const alerts = arrayValue(payload.alerts);
+  const firstAlert = objectValue(alerts[0]);
+  if (typeof firstAlert.fingerprint === "string") {
+    firstAlert.fingerprint = `${firstAlert.fingerprint}-${suffix}`;
+  }
+  return JSON.stringify(payload);
+}
+
+function materialCanaryBody(rawBody: string): string {
+  const payload = JSON.parse(rawBody) as Record<string, unknown>;
+  const commonLabels = objectValue(payload.commonLabels);
+  const firstAlert = objectValue(arrayValue(payload.alerts)[0]);
+  const labels = objectValue(firstAlert.labels);
+  const current = stringValue(commonLabels.severity)?.toLowerCase();
+  const severity = current === "sev1" ? "sev2" : "sev1";
+  commonLabels.severity = severity;
+  labels.severity = severity;
+  return JSON.stringify(payload);
 }
 
 async function canaryRunStore(usePostgres: boolean): Promise<TriageRunPersistenceStore> {

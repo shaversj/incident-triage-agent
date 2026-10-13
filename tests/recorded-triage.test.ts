@@ -22,6 +22,10 @@ test("sanitizedSummary keeps only safe operator fields", () => {
     safety: { status: "safe_recommendation", approval_required: false },
     mitigation_control: { status: "recommendation_only" },
     scorecard: { scores: { state_correctness: true } },
+    trigger: "material_evidence",
+    parent_run_id: "triage-run:prior",
+    gate_decision_id: "gate:1",
+    materiality: { outcome: "material", basis: "classifier" },
     evidence: [{ detail: "raw evidence detail" }],
     states: ["received"],
   };
@@ -52,6 +56,12 @@ test("sanitizedSummary keeps only safe operator fields", () => {
   expect(summary).not.toHaveProperty("evidence");
   expect(summary).not.toHaveProperty("states");
   expect(summary.mitigation_control).toEqual({ status: "recommendation_only" });
+  expect(summary).toMatchObject({
+    trigger: "material_evidence",
+    parent_run_id: "triage-run:prior",
+    gate_decision_id: "gate:1",
+    materiality: { outcome: "material", basis: "classifier" },
+  });
 });
 
 test("recorded triage output groups input separately from run decision and safety", () => {
@@ -85,6 +95,11 @@ test("read-only canary verifies signed ingestion persistence replay and no appro
     passed: true,
     read_only_mode: true,
     persistence_store: "memory",
+    first_observation_recorded: true,
+    semantic_duplicate_suppressed: true,
+    material_child_recorded: true,
+    gate_decision_history_recorded: true,
+    incident_run_count_correct: true,
     persisted_run: true,
     persisted_evidence_snapshot: true,
     authenticated_review_retrieval: true,

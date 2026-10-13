@@ -796,6 +796,12 @@ function allowlistedOutcome(outcome: Record<string, unknown>): Record<string, un
     "safety",
     "mitigation_control",
     "scorecard",
+    "trigger",
+    "parent_run_id",
+    "gate_decision_id",
+    "materiality",
+    "gate_decision",
+    "recent_gate_decisions",
     "recorded_input",
     "recorded_status_code",
   ];

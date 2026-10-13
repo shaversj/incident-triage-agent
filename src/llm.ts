@@ -5,6 +5,7 @@ import { redactSecret } from "./config";
 import { incidentClasses, nextActions, type IncidentClass, type NextAction } from "./domain";
 import type { EvidencePackage } from "./evidence";
 import { noopLogger, type TriageLogger } from "./logger";
+import type { EvidenceMaterialityClassifier, MaterialityClassifierInput } from "./reentry";
 
 export const lowConfidenceThreshold = 0.55;
 
@@ -139,6 +140,29 @@ export class FlueDecisionClient implements LLMDecisionClient {
   }
 }
 
+export class FlueMaterialityClassifier implements EvidenceMaterialityClassifier {
+  constructor(
+    private readonly config: AppConfig,
+    private readonly runSkill: (
+      input: MaterialityClassifierInput,
+      config: AppConfig,
+      logger: TriageLogger,
+    ) => Promise<unknown> = runEvidenceMaterialitySkill,
+    private readonly logger: TriageLogger = noopLogger,
+  ) {}
+
+  async classify(input: MaterialityClassifierInput): Promise<unknown> {
+    try {
+      return await this.runSkill(input, this.config, this.logger);
+    } catch (error) {
+      throw new DecisionValidationError(redactSecret(
+        error instanceof Error ? error.message : String(error),
+        this.config,
+      ));
+    }
+  }
+}
+
 export interface FlueCommandResult {
   exitCode: number | null;
   stdout: string;
@@ -175,11 +199,35 @@ export async function executeFlueRun(
   config: AppConfig,
   logger: TriageLogger = noopLogger,
 ): Promise<FlueCommandResult> {
+  return executeFlueSkillRun("incident-triage", payload, config, logger);
+}
+
+export async function runEvidenceMaterialitySkill(
+  input: MaterialityClassifierInput,
+  config: AppConfig,
+  logger: TriageLogger = noopLogger,
+  execute: FlueExecutor = (payload, appConfig, activeLogger) =>
+    executeFlueSkillRun("evidence-materiality", payload, appConfig, activeLogger),
+): Promise<unknown> {
+  const result = await execute({ materialityInput: input }, config, logger);
+  if (result.exitCode !== 0) {
+    const errorText = result.stderr.trim() || result.stdout.trim() || `flue run exited with code ${result.exitCode}`;
+    throw new DecisionValidationError(redactSecret(`Flue evidence-materiality workflow failed: ${errorText}`, config));
+  }
+  return parseFlueRunOutput(result.stdout);
+}
+
+export async function executeFlueSkillRun(
+  skillName: string,
+  payload: unknown,
+  config: AppConfig,
+  logger: TriageLogger = noopLogger,
+): Promise<FlueCommandResult> {
   const command = process.platform === "win32" ? "npx.cmd" : "npx";
   const args = [
     "flue",
     "run",
-    "incident-triage",
+    skillName,
     "--target",
     "node",
     "--payload",
@@ -187,6 +235,7 @@ export async function executeFlueRun(
   ];
   logger.debug({
     component: "flue",
+    skill: skillName,
     command,
     payloadBytes: args.at(-1)?.length ?? 0,
   }, "Starting Flue incident-triage workflow process");
@@ -216,6 +265,7 @@ export async function executeFlueRun(
     proc.on("close", (exitCode) => {
       logger.debug({
         component: "flue",
+        skill: skillName,
         exitCode,
         stdoutBytes: stdout.length,
         stderrBytes: stderr.length,

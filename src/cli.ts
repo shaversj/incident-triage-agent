@@ -2,7 +2,7 @@ import { loadConfig, loadOperatorMode, loadPersistenceConfig, loadWebhookConfig 
 import { defaultApprovalStorePath } from "./approval-store";
 import { type Scenario, listScenarios, loadScenario } from "./domain";
 import { loadTools } from "./evidence";
-import { FlueDecisionClient, StaticDecisionClient } from "./llm";
+import { FlueDecisionClient, FlueMaterialityClassifier, StaticDecisionClient } from "./llm";
 import { createLogger, type TriageLogger } from "./logger";
 import { mockDecisionForScenario, mockDecisionResponses } from "./mock-decisions";
 import { LokiClient } from "./loki";
@@ -69,6 +69,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     let webhookConfig;
     let operatorMode;
     let runStore: TriageRunPersistenceStore | undefined;
+    let materialityClassifier: FlueMaterialityClassifier | undefined;
     try {
       operatorMode = loadOperatorMode(".env", process.env, { command: "serve" });
       webhookConfig = loadWebhookConfig(".env");
@@ -83,9 +84,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         runStore = new PostgresTriageRunPersistenceStore({ connectionString: persistenceConfig.databaseUrl });
         await runStore.migrate?.();
       }
-      llmClient = parsed.mockLlm
-        ? new StaticDecisionClient(mockDecisionResponses())
-        : await liveDecisionClient(logger);
+      if (parsed.mockLlm) {
+        llmClient = new StaticDecisionClient(mockDecisionResponses());
+      } else {
+        const config = loadConfig(".env");
+        llmClient = new FlueDecisionClient(config, undefined, logger);
+        materialityClassifier = new FlueMaterialityClassifier(config, undefined, logger);
+      }
     } catch (error) {
       await runStore?.close?.();
       console.error(`Runtime error: ${error instanceof Error ? error.message : String(error)}`);
@@ -118,6 +123,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     if (runStore) {
       Object.assign(runtime, { runStore });
+    }
+    if (materialityClassifier) {
+      Object.assign(runtime, { materialityClassifier });
     }
 
     const server = startWebhookServer({
