@@ -14,6 +14,7 @@ Read-only mode may:
 - Compare fresh evidence with the latest retained run and suppress semantically equivalent updates.
 - Ask the LLM for one bounded judgment.
 - Validate, score, persist, and return the run envelope.
+- Record authenticated operator verification, lifecycle events, recovery budgets, and reduced review candidates.
 
 Read-only mode must not:
 
@@ -33,6 +34,8 @@ LOKI_BASE_URL=<loki-url>
 LOKI_LIMIT=20
 LOKI_TIMEOUT_MS=10000
 DATABASE_URL=<postgres-url>
+OPERATOR_READ_TOKEN=<read-token>
+OPERATOR_WRITE_TOKEN=<distinct-write-token>
 ```
 
 Optional Loki settings:
@@ -68,6 +71,9 @@ Incident reviewers should inspect:
 - `evidence_snapshots`: evidence available to the model at decision time.
 - `replay_keys`: signed webhook replay claims and expiry.
 - `evidence_gate_decisions`: first-observation, material, and suppressed decisions with bounded delta summaries and run lineage.
+- `incident_verification_events`: independent resolved, unresolved, and inconclusive evidence.
+- `incident_recovery_budgets` and `incident_recovery_events`: per-class counters and append-only attempt/reset history.
+- `outcome_review_candidates`: reduced pending or imported inputs to failure review.
 
 ## Re-entry Outcomes
 
@@ -80,6 +86,12 @@ Every accepted firing notification reaches the re-entry gate after evidence coll
 Exact signed-request replays still return `409` before evidence comparison. A materiality classifier is used only for deltas that deterministic policy cannot resolve. Invalid or unavailable classifier output is recorded as `classifier_fallback` and reruns triage rather than suppressing evidence.
 
 Open `/runs` and inspect **Evidence Re-entry** for the selected run's trigger, parent, basis, rationale, delta summary, and recent suppressed updates.
+
+## Closure And Recovery
+
+Use the **Incident Lifecycle** panel or `npm run triage:lifecycle` to record independent verification. Approval, recommendation, and simulated execution never set `resolved`. `inconclusive` waits for more evidence. `unresolved` stays open and creates a pending review candidate.
+
+Recovery state is isolated by failure class and stops after three attempts. Reset only the affected class with authenticated operator intent or a material-evidence decision. Candidate import remains a human review operation and cannot activate taxonomy or regression changes by itself.
 
 ## Canary
 
@@ -104,7 +116,7 @@ The canary must report:
 
 ## Retention And Redaction
 
-Phase 1 persistence records retention classes and expiry timestamps. Cleanup removes expired runs, evidence snapshots, gate decisions, and replay keys. A retained child can still explain its prior-run identifier from the gate decision after the parent expires.
+Phase 1 persistence records retention classes and expiry timestamps. Cleanup removes expired runs, evidence snapshots, gate decisions, lifecycle events, budgets, review candidates, and replay keys. A retained child can still explain its prior-run identifier from the gate decision after the parent expires.
 
 The incident coordinator is process-local. Run one read-only server process for this phase; add a durable incident-head or lease before horizontally scaling ingestion.
 

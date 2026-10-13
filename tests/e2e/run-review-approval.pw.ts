@@ -191,6 +191,24 @@ test("runs an approval scenario from the review console launcher", async ({ page
   }
 });
 
+test("records independent closure evidence from the lifecycle panel", async ({ page }) => {
+  const harness = await startApprovalHarness();
+  try {
+    await postBadDeployWebhook(harness.baseUrl);
+    await page.goto(`${harness.baseUrl}/runs`);
+    const lifecycle = page.locator(".panel").filter({ hasText: "Incident Lifecycle" });
+
+    await expect(lifecycle.getByText("No independent verification has been recorded.")).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept("Latency and error rate returned to normal."));
+    await lifecycle.getByRole("button", { name: "Resolved", exact: true }).click();
+
+    await expect(lifecycle.getByText("resolved", { exact: true }).first()).toBeVisible();
+    await expect(lifecycle.getByText(/operator:authenticated/)).toBeVisible();
+  } finally {
+    await harness.server.close();
+  }
+});
+
 test("guides operators when run review requires a read token", async ({ page }) => {
   const harness = await startApprovalHarness({ operatorReadToken: "local-read-token" });
   try {

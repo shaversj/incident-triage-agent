@@ -118,6 +118,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (webhookConfig.operatorReadToken) {
       Object.assign(runtime, { operatorReadToken: webhookConfig.operatorReadToken });
     }
+    if (webhookConfig.operatorWriteToken) {
+      Object.assign(runtime, { operatorWriteToken: webhookConfig.operatorWriteToken });
+    }
     if (operatorMode.capabilities.approvalStaging) {
       Object.assign(runtime, { approvalStorePath: parsed.approvalStorePath });
     }

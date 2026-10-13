@@ -403,6 +403,7 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
         </div>
         <div class="token">
           <input id="token" type="password" autocomplete="off" placeholder="OPERATOR_READ_TOKEN">
+          <input id="writeToken" type="password" autocomplete="off" placeholder="OPERATOR_WRITE_TOKEN">
           <button id="save" class="primary" type="button">Load</button>
           <button id="clear" class="secondary" type="button">Clear</button>
         </div>
@@ -429,6 +430,7 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
   <script>
     const SERVER_MODE = ${JSON.stringify(mode)};
     const tokenInput = document.getElementById("token");
+    const writeTokenInput = document.getElementById("writeToken");
     const demoControls = document.getElementById("demoControls");
     const demoScenario = document.getElementById("demoScenario");
     const demoStatus = document.getElementById("demoStatus");
@@ -441,13 +443,17 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
     let approvalFeedback = null;
 
     tokenInput.value = sessionStorage.getItem("operatorReadToken") || "";
+    writeTokenInput.value = sessionStorage.getItem("operatorWriteToken") || "";
     document.getElementById("save").addEventListener("click", () => {
       sessionStorage.setItem("operatorReadToken", tokenInput.value);
+      sessionStorage.setItem("operatorWriteToken", writeTokenInput.value);
       loadRuns();
     });
     document.getElementById("clear").addEventListener("click", () => {
       sessionStorage.removeItem("operatorReadToken");
+      sessionStorage.removeItem("operatorWriteToken");
       tokenInput.value = "";
+      writeTokenInput.value = "";
       runs = [];
       selectedRunId = "";
       approvalFeedback = null;
@@ -470,6 +476,15 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
     function authHeaders() {
       const token = tokenInput.value || sessionStorage.getItem("operatorReadToken") || "";
       return token ? { Authorization: "Bearer " + token } : {};
+    }
+
+    function writeHeaders(idempotencyKey) {
+      const token = writeTokenInput.value || sessionStorage.getItem("operatorWriteToken") || "";
+      return {
+        "Content-Type": "application/json",
+        "Idempotency-Key": idempotencyKey,
+        ...(token ? { Authorization: "Bearer " + token } : {})
+      };
     }
 
     async function loadRuns() {
@@ -616,6 +631,7 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
           field("Run Status", run.run_status) +
           field("Created", run.created_at) +
         '</div>' +
+        panel("Incident Lifecycle", renderLifecycle(data)) +
         panel("Evidence Re-entry", renderReentry(data)) +
         panel("RCA Hypothesis", renderHypotheses(review.explanation)) +
         panel("Decision", '<div class="chips">' + chip(decision.incident_class) + chip(decision.next_action) + chip("confidence " + (decision.confidence ?? "n/a")) + '</div>' + list("Verification", decision.verification_plan)) +
@@ -624,7 +640,112 @@ export function runReviewConsoleHtml(options: { mode: OperatorMode }): string {
         panel("Evidence", evidence.slice(0, 8).map(renderEvidence).join("") || '<div class="muted">No evidence snapshot.</div>') +
         panel("Raw Review", '<pre>' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>');
       attachApprovalHandlers();
+      attachLifecycleHandlers(run);
       attachRunLinkHandlers();
+    }
+
+    function renderLifecycle(data) {
+      const lifecycle = data.lifecycle || {};
+      const projection = lifecycle.projection || { state: "open" };
+      const budgets = lifecycle.recoveryBudgets || [];
+      const candidates = lifecycle.candidates || [];
+      const latest = (lifecycle.verificationEvents || []).slice(-1)[0];
+      return '<div class="chips">' + chip(projection.state) +
+          chip((lifecycle.verificationEvents || []).length + " verification events") +
+          chip(candidates.filter((item) => item.status === "pending").length + " pending reviews") +
+        '</div>' +
+        (latest ? field("Latest verification", latest.verification.outcome + " / " + latest.verification.sourceReference) : '<div class="muted">No independent verification has been recorded.</div>') +
+        (budgets.length ? budgets.map((budget) => '<div class="field"><span class="label">' + escapeHtml(budget.failureClass) + '</span>' +
+          '<div class="value">' + escapeHtml(budget.attempts + " of " + budget.limit + (budget.exhausted ? " / exhausted" : "")) + '</div>' +
+          (budget.exhausted ? '<button class="secondary" type="button" data-reset-budget="' + escapeHtml(budget.failureClass) + '">Reset budget</button>' : '') +
+        '</div>').join("") : '') +
+        (candidates.length ? '<div class="timeline">' + candidates.map((candidate) =>
+          '<div class="timeline-item warning"><div class="timeline-title">' + escapeHtml(candidate.category) + '</div>' +
+          '<div class="meta">' + escapeHtml(candidate.status) + ' / ' + escapeHtml(candidate.candidateId) + '</div></div>'
+        ).join("") + '</div>' : '') +
+        '<div class="approval-actions">' +
+          '<button class="secondary" type="button" data-verification="resolved">Resolved</button>' +
+          '<button class="danger" type="button" data-verification="unresolved">Unresolved</button>' +
+          '<button class="secondary" type="button" data-verification="inconclusive">Inconclusive</button>' +
+          '<button class="secondary" type="button" data-feedback="corrected_finding">Correct finding</button>' +
+          '<button class="secondary" type="button" data-feedback="reasoned_rejection">Reject recommendation</button>' +
+        '</div>';
+    }
+
+    function attachLifecycleHandlers(run) {
+      for (const button of detailEl.querySelectorAll("[data-verification]")) {
+        button.addEventListener("click", async () => {
+          const outcome = button.getAttribute("data-verification");
+          const rationale = window.prompt("Verification rationale");
+          if (!rationale) return;
+          button.disabled = true;
+          const response = await fetch(
+            "/api/incidents/" + encodeURIComponent(run.incident_id) + "/verification",
+            {
+              method: "POST",
+              headers: writeHeaders("ui:verification:" + run.run_id + ":" + outcome + ":" + Date.now()),
+              body: JSON.stringify({
+                outcome,
+                run_id: run.run_id,
+                evidence_ids: run.evidence_ids && run.evidence_ids.length ? [run.evidence_ids[0]] : ["operator:verification"],
+                rationale
+              })
+            }
+          );
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            button.disabled = false;
+            window.alert("Verification failed: " + (error.error || response.status));
+            return;
+          }
+          await loadReview(run.run_id);
+        });
+      }
+      for (const button of detailEl.querySelectorAll("[data-feedback]")) {
+        button.addEventListener("click", async () => {
+          const category = button.getAttribute("data-feedback");
+          const rationale = window.prompt("Review rationale");
+          if (!rationale) return;
+          const response = await fetch("/api/incidents/" + encodeURIComponent(run.incident_id) + "/feedback", {
+            method: "POST",
+            headers: writeHeaders("ui:feedback:" + run.run_id + ":" + category + ":" + Date.now()),
+            body: JSON.stringify({
+              category,
+              run_id: run.run_id,
+              evidence_ids: run.evidence_ids || [],
+              rationale,
+              snapshot: {}
+            })
+          });
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            window.alert("Feedback failed: " + (error.error || response.status));
+            return;
+          }
+          await loadReview(run.run_id);
+        });
+      }
+      for (const button of detailEl.querySelectorAll("[data-reset-budget]")) {
+        button.addEventListener("click", async () => {
+          const failureClass = button.getAttribute("data-reset-budget");
+          const rationale = window.prompt("Why is this budget safe to reset?");
+          if (!rationale) return;
+          const response = await fetch(
+            "/api/incidents/" + encodeURIComponent(run.incident_id) + "/recovery/" + encodeURIComponent(failureClass) + "/reset",
+            {
+              method: "POST",
+              headers: writeHeaders("ui:reset:" + run.run_id + ":" + failureClass + ":" + Date.now()),
+              body: JSON.stringify({ run_id: run.run_id, reason: "operator_reset", rationale })
+            }
+          );
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            window.alert("Reset failed: " + (error.error || response.status));
+            return;
+          }
+          await loadReview(run.run_id);
+        });
+      }
     }
 
     function renderReentry(data) {

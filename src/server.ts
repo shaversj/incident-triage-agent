@@ -15,6 +15,13 @@ import type { OperatorMode } from "./config";
 import { type Scenario } from "./domain";
 import { EvidencePackage, PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
 import {
+  parseVerificationOutcomeInput,
+  recoveryFailureClasses,
+  recoveryResetReasons,
+  type RecoveryFailureClass,
+  type RecoveryResetReason,
+} from "./incident-lifecycle";
+import {
   GrafanaPayloadError,
   defaultGrafanaSignatureHeader,
   defaultGrafanaTimestampHeader,
@@ -26,10 +33,12 @@ import type { LLMDecisionClient, TriageDecision } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
+import { buildReducedOutcomeCandidate } from "./outcome-promotion";
 import type {
   EvidenceGateCandidate,
   IncidentBaseline,
   TriageRunPersistenceStore,
+  OutcomeReviewCandidateStatus,
   TriageRunRecord,
   TriageRunReviewRecord,
 } from "./persistence";
@@ -51,6 +60,8 @@ export interface WebhookRuntime {
   mode?: OperatorMode;
   runStore?: TriageRunPersistenceStore;
   operatorReadToken?: string;
+  operatorWriteToken?: string;
+  operatorWriteActor?: string;
   hmacToleranceMs?: number;
   replayTtlMs?: number;
   retentionCleanupIntervalMs?: number;
@@ -146,6 +157,35 @@ export async function handleGrafanaWebhook(
   }
 
   if (normalized.ignored) {
+    if (
+      normalized.ignoredReason === "resolved_alert"
+      && runtimeMode(runtime) === "read_only"
+      && runtime.runStore
+      && options.bodyDigest
+    ) {
+      const baseline = await runtime.runStore.getLatestIncidentBaseline(normalized.incident.incidentId);
+      if (baseline) {
+        const recorded = await runtime.runStore.recordVerificationOutcome({
+          incidentId: normalized.incident.incidentId,
+          sourceEventKey: `grafana:resolved:${options.bodyDigest}`,
+          verification: {
+            outcome: "resolved",
+            source: "observability",
+            sourceReference: `grafana:${normalized.incident.incidentId}`,
+            runId: baseline.run.runId,
+            evidenceIds: [`grafana:resolved:${normalized.incident.incidentId}`],
+            rationale: "Signed Grafana notification reports that the incident alerts resolved.",
+          },
+        }, { retentionClass: "read_only_triage" });
+        return [202, {
+          status: "ignored",
+          reason: normalized.ignoredReason,
+          incident_id: normalized.incident.incidentId,
+          closure_recorded: recorded.created,
+          lifecycle: await runtime.runStore.getIncidentLifecycle(normalized.incident.incidentId),
+        }];
+      }
+    }
     return [202, {
       status: "ignored",
       reason: normalized.ignoredReason,
@@ -387,6 +427,16 @@ async function routeRequest(
 
   if (url.pathname === "/api/runs" || url.pathname.startsWith("/api/runs/")) {
     await routeRunReviewApi(request, response, runtime, url);
+    return;
+  }
+
+  if (url.pathname.startsWith("/api/incidents/")) {
+    await routeIncidentLifecycleApi(request, response, runtime, url);
+    return;
+  }
+
+  if (url.pathname === "/api/outcome-candidates" || url.pathname.startsWith("/api/outcome-candidates/")) {
+    await routeOutcomeCandidateApi(request, response, runtime, url);
     return;
   }
 
@@ -694,7 +744,235 @@ async function routeRunReviewApi(
     writeJson(response, 404, { status: "error", error: "run_not_found" });
     return;
   }
-  writeJson(response, 200, runReviewToResponse(review, runtime));
+  writeJson(response, 200, await runReviewToResponse(review, runtime));
+}
+
+async function routeIncidentLifecycleApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  runtime: WebhookRuntime,
+  url: URL,
+): Promise<void> {
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length < 4 || parts[0] !== "api" || parts[1] !== "incidents") {
+    writeJson(response, 404, { status: "error", error: "not_found" });
+    return;
+  }
+  if (!runtime.runStore) {
+    writeJson(response, 503, { status: "error", error: "lifecycle_store_unavailable" });
+    return;
+  }
+  const incidentId = decodeURIComponent(parts[2] ?? "");
+  if (parts[3] === "lifecycle" && request.method === "GET") {
+    if (!operatorReadAuthorized(request.headers, runtime)) {
+      writeJson(response, 401, { status: "error", error: "unauthorized" });
+      return;
+    }
+    writeJson(response, 200, {
+      status: "ok",
+      lifecycle: await runtime.runStore.getIncidentLifecycle(incidentId),
+    });
+    return;
+  }
+  if (parts[3] === "verification" && request.method === "POST") {
+    if (!operatorWriteAuthorized(request, runtime)) {
+      writeJson(response, 401, { status: "error", error: "write_unauthorized" });
+      return;
+    }
+    const sourceEventKey = firstHeader(request.headers["idempotency-key"]);
+    if (!sourceEventKey) {
+      writeJson(response, 400, { status: "error", error: "idempotency_key_required" });
+      return;
+    }
+    let input: ReturnType<typeof parseVerificationOutcomeInput>;
+    try {
+      const raw = JSON.parse(await readRequestBody(request)) as Record<string, unknown>;
+      input = parseVerificationOutcomeInput({
+        ...raw,
+        source: "operator",
+        source_reference: runtime.operatorWriteActor ?? "operator:authenticated",
+      });
+    } catch (error) {
+      writeJson(response, 400, {
+        status: "error",
+        error: error instanceof Error ? error.message : "invalid_verification",
+      });
+      return;
+    }
+    const relatedRun = await runtime.runStore.getTriageRunReview?.(input.runId);
+    if (!relatedRun || relatedRun.run.incidentId !== incidentId) {
+      writeJson(response, 409, { status: "error", error: "verification_run_incident_mismatch" });
+      return;
+    }
+    const result = await runtime.runStore.recordVerificationOutcome({
+      incidentId,
+      sourceEventKey,
+      verification: input,
+    }, {
+      retentionClass: runtimeMode(runtime) === "read_only" ? "read_only_triage" : "ephemeral",
+    });
+    const recovery = result.created && input.outcome === "unresolved"
+      ? await runtime.runStore.recordRecoveryFailure({
+        incidentId,
+        runId: input.runId,
+        sourceEventKey: `verification:${sourceEventKey}`,
+        failureClass: "unresolved_mitigation",
+        rationale: input.rationale,
+      }, {
+        retentionClass: runtimeMode(runtime) === "read_only" ? "read_only_triage" : "ephemeral",
+      })
+      : undefined;
+    writeJson(response, result.created ? 201 : 200, {
+      status: "ok",
+      created: result.created,
+      verification: result.record,
+      ...(recovery ? { recovery } : {}),
+      lifecycle: await runtime.runStore.getIncidentLifecycle(incidentId),
+    });
+    return;
+  }
+  if (parts[3] === "recovery" && parts.length >= 5 && request.method === "POST") {
+    if (!operatorWriteAuthorized(request, runtime)) {
+      writeJson(response, 401, { status: "error", error: "write_unauthorized" });
+      return;
+    }
+    const sourceEventKey = firstHeader(request.headers["idempotency-key"]);
+    if (!sourceEventKey) {
+      writeJson(response, 400, { status: "error", error: "idempotency_key_required" });
+      return;
+    }
+    const failureClass = decodeURIComponent(parts[4] ?? "") as RecoveryFailureClass;
+    if (!recoveryFailureClasses.includes(failureClass)) {
+      writeJson(response, 400, { status: "error", error: "invalid_failure_class" });
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(await readRequestBody(request)) as Record<string, unknown>;
+    } catch {
+      writeJson(response, 400, { status: "error", error: "invalid_json" });
+      return;
+    }
+    const rationale = requiredBodyText(body.rationale);
+    if (!rationale) {
+      writeJson(response, 400, { status: "error", error: "rationale_required" });
+      return;
+    }
+    const runId = requiredBodyText(body.run_id ?? body.runId);
+    if (parts.length === 6 && parts[5] === "reset") {
+      const reason = body.reason as RecoveryResetReason;
+      if (!recoveryResetReasons.includes(reason) || reason !== "operator_reset") {
+        writeJson(response, 400, { status: "error", error: "invalid_reset_reason" });
+        return;
+      }
+      const result = await runtime.runStore.resetRecoveryBudget({
+        incidentId,
+        sourceEventKey,
+        failureClass,
+        reason,
+        actor: runtime.operatorWriteActor ?? "operator:authenticated",
+        rationale,
+        ...(runId ? { runId } : {}),
+      });
+      writeJson(response, result.created ? 201 : 200, { status: "ok", ...result });
+      return;
+    }
+    if (parts.length !== 5) {
+      writeJson(response, 404, { status: "error", error: "not_found" });
+      return;
+    }
+    const result = await runtime.runStore.recordRecoveryFailure({
+      incidentId,
+      sourceEventKey,
+      failureClass,
+      rationale,
+      ...(runId ? { runId } : {}),
+    });
+    writeJson(response, result.created ? 201 : 200, { status: "ok", ...result });
+    return;
+  }
+  if (parts[3] === "feedback" && parts.length === 4 && request.method === "POST") {
+    if (!operatorWriteAuthorized(request, runtime)) {
+      writeJson(response, 401, { status: "error", error: "write_unauthorized" });
+      return;
+    }
+    const sourceEventId = firstHeader(request.headers["idempotency-key"]);
+    if (!sourceEventId) {
+      writeJson(response, 400, { status: "error", error: "idempotency_key_required" });
+      return;
+    }
+    try {
+      const body = JSON.parse(await readRequestBody(request)) as Record<string, unknown>;
+      const category = body.category;
+      if (category !== "corrected_finding" && category !== "reasoned_rejection") {
+        writeJson(response, 400, { status: "error", error: "invalid_feedback_category" });
+        return;
+      }
+      const runId = requiredBodyText(body.run_id ?? body.runId);
+      const candidate = buildReducedOutcomeCandidate({
+        incidentId,
+        sourceEventId,
+        category,
+        rationale: requiredBodyText(body.rationale) ?? "",
+        evidenceIds: Array.isArray(body.evidence_ids) ? body.evidence_ids.map(String) : [],
+        snapshot: objectValue(body.snapshot),
+        ...(runId ? { runId } : {}),
+      });
+      const result = await runtime.runStore.recordOutcomeReviewCandidate(candidate);
+      writeJson(response, result.created ? 201 : 200, { status: "ok", ...result });
+    } catch (error) {
+      writeJson(response, 400, {
+        status: "error",
+        error: error instanceof Error ? error.message : "invalid_feedback",
+      });
+    }
+    return;
+  }
+  writeJson(response, 405, { status: "error", error: "method_not_allowed" });
+}
+
+async function routeOutcomeCandidateApi(
+  request: IncomingMessage,
+  response: ServerResponse,
+  runtime: WebhookRuntime,
+  url: URL,
+): Promise<void> {
+  if (!runtime.runStore) {
+    writeJson(response, 503, { status: "error", error: "lifecycle_store_unavailable" });
+    return;
+  }
+  if (url.pathname === "/api/outcome-candidates" && request.method === "GET") {
+    if (!operatorReadAuthorized(request.headers, runtime)) {
+      writeJson(response, 401, { status: "error", error: "unauthorized" });
+      return;
+    }
+    const status = url.searchParams.get("status");
+    const options: { status?: OutcomeReviewCandidateStatus } = {};
+    if (status === "pending" || status === "imported") {
+      options.status = status;
+    }
+    writeJson(response, 200, {
+      status: "ok",
+      candidates: await runtime.runStore.listOutcomeReviewCandidates(options),
+    });
+    return;
+  }
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length === 4 && parts[0] === "api" && parts[1] === "outcome-candidates"
+    && parts[3] === "import" && request.method === "POST") {
+    if (!operatorWriteAuthorized(request, runtime)) {
+      writeJson(response, 401, { status: "error", error: "write_unauthorized" });
+      return;
+    }
+    const candidate = await runtime.runStore.markOutcomeReviewCandidateImported(decodeURIComponent(parts[2] ?? ""));
+    writeJson(response, 200, { status: "ok", candidate });
+    return;
+  }
+  writeJson(response, 404, { status: "error", error: "not_found" });
+}
+
+function requiredBodyText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 async function routeDemoScenarioApi(
@@ -776,6 +1054,17 @@ function operatorReadAuthorized(headers: IncomingHttpHeaders, runtime: WebhookRu
   return firstHeader(headers.authorization) === `Bearer ${runtime.operatorReadToken}`;
 }
 
+function operatorWriteAuthorized(request: IncomingMessage, runtime: WebhookRuntime): boolean {
+  if (runtime.operatorWriteToken) {
+    return firstHeader(request.headers.authorization) === `Bearer ${runtime.operatorWriteToken}`;
+  }
+  return runtimeMode(runtime) === "local" && isLoopbackAddress(request.socket.remoteAddress);
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
 function runListToResponse(runs: TriageRunRecord[]): Record<string, unknown> {
   const bySafety = new Map<string, number>();
   for (const run of runs) {
@@ -817,7 +1106,10 @@ function runRecordToResponse(run: TriageRunRecord): Record<string, unknown> {
   };
 }
 
-function runReviewToResponse(review: TriageRunReviewRecord, runtime: WebhookRuntime): Record<string, unknown> {
+async function runReviewToResponse(
+  review: TriageRunReviewRecord,
+  runtime: WebhookRuntime,
+): Promise<Record<string, unknown>> {
   const response: Record<string, unknown> = {
     status: "ok",
     run: runRecordToResponse(review.run),
@@ -844,7 +1136,17 @@ function runReviewToResponse(review: TriageRunReviewRecord, runtime: WebhookRunt
     response.gate_decision = gateDecisionToResponse(review.gateDecision);
   }
   response.recent_gate_decisions = review.recentGateDecisions.map(gateDecisionToResponse);
-  response.approval = runApprovalToResponse(review, runtime);
+  const approval = runApprovalToResponse(review, runtime);
+  response.approval = approval;
+  if (runtime.runStore) {
+    const lifecycle = await runtime.runStore.getIncidentLifecycle(review.run.incidentId);
+    const approvalRecord = objectValue(approval.record);
+    response.lifecycle = lifecycle.projection.state === "open"
+      && lifecycle.verificationEvents.length === 0
+      && approvalRecord.status === "human_approved"
+      ? { ...lifecycle, projection: { ...lifecycle.projection, state: "awaiting_verification" } }
+      : lifecycle;
+  }
   return response;
 }
 

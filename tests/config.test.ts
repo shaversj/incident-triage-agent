@@ -79,6 +79,7 @@ test("loadWebhookConfig reads secret and Loki values", () => {
       "LOKI_TENANT_ID=tenant-a",
       "LOKI_BEARER_TOKEN=loki-secret",
       "OPERATOR_READ_TOKEN=read-secret",
+      "OPERATOR_WRITE_TOKEN=write-secret",
     ].join("\n"),
   );
 
@@ -91,9 +92,11 @@ test("loadWebhookConfig reads secret and Loki values", () => {
   expect(config.lokiTenantId).toBe("tenant-a");
   expect(config.lokiBearerToken).toBe("loki-secret");
   expect(config.operatorReadToken).toBe("read-secret");
+  expect(config.operatorWriteToken).toBe("write-secret");
   expect(config.redacted.GRAFANA_WEBHOOK_SECRET).toBe("<redacted>");
   expect(config.redacted.LOKI_BEARER_TOKEN).toBe("<redacted>");
   expect(config.redacted.OPERATOR_READ_TOKEN).toBe("<redacted>");
+  expect(config.redacted.OPERATOR_WRITE_TOKEN).toBe("<redacted>");
 });
 
 test("loadWebhookConfig requires secret without printing values", () => {

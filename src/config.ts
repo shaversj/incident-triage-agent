@@ -26,6 +26,7 @@ export interface WebhookConfig {
   lokiTenantId?: string;
   lokiBearerToken?: string;
   operatorReadToken?: string;
+  operatorWriteToken?: string;
   redacted: {
     GRAFANA_WEBHOOK_SECRET: "<redacted>";
     LOKI_BASE_URL: string;
@@ -34,6 +35,7 @@ export interface WebhookConfig {
     LOKI_TENANT_ID?: string;
     LOKI_BEARER_TOKEN?: "<redacted>";
     OPERATOR_READ_TOKEN?: "<redacted>";
+    OPERATOR_WRITE_TOKEN?: "<redacted>";
   };
 }
 
@@ -158,6 +160,10 @@ export function loadWebhookConfig(
   if (source.OPERATOR_READ_TOKEN) {
     config.operatorReadToken = source.OPERATOR_READ_TOKEN;
     config.redacted.OPERATOR_READ_TOKEN = "<redacted>";
+  }
+  if (source.OPERATOR_WRITE_TOKEN) {
+    config.operatorWriteToken = source.OPERATOR_WRITE_TOKEN;
+    config.redacted.OPERATOR_WRITE_TOKEN = "<redacted>";
   }
   return config;
 }

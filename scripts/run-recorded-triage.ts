@@ -252,6 +252,8 @@ async function runReadOnlyCanary(
       mode: "read_only",
       runStore,
       operatorReadToken: recordedOperatorReadToken,
+      operatorWriteToken: "recorded-write-token",
+      operatorWriteActor: "operator:read-only-canary",
       ...(liveConfig ? { materialityClassifier: new FlueMaterialityClassifier(liveConfig, undefined, logger) } : {}),
     },
   });
@@ -304,6 +306,21 @@ async function runReadOnlyCanary(
       : undefined;
     const runReviewBody = runReview?.ok ? await runReview.json() as Record<string, unknown> : undefined;
     const incidentId = stringValue(objectValue(response.incident).incident_id) ?? "";
+    const verification = await fetch(`${baseUrl}/api/incidents/${encodeURIComponent(incidentId)}/verification`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer recorded-write-token",
+        "Idempotency-Key": `canary:verification:${incidentId}`,
+      },
+      body: JSON.stringify({
+        outcome: "resolved",
+        run_id: runId,
+        evidence_ids: ["verification:0"],
+        rationale: "Recorded canary verification signals returned to normal.",
+      }),
+    });
+    const lifecycle = await runStore.getIncidentLifecycle(incidentId);
     const incidentRuns = (await runStore.listTriageRuns?.({ limit: 100 }) ?? [])
       .filter((run) => run.incidentId === incidentId);
     const safety = objectValue(response.safety);
@@ -335,6 +352,7 @@ async function runReadOnlyCanary(
       mitigation.staged_action === undefined &&
       mitigation.approval_request === undefined;
     const readOnlyDecisionRecorded = safety.status === "approval_required" && mitigation.status === "approval_required";
+    const lifecycleRecorded = verification.status === 201 && lifecycle.projection.state === "resolved";
     const canary = {
       passed: firstObservationRecorded &&
         semanticDuplicateSuppressed &&
@@ -347,7 +365,8 @@ async function runReadOnlyCanary(
         replayRejected &&
         approvalRoutesDisabled &&
         approvalArtifactsAbsent &&
-        readOnlyDecisionRecorded,
+        readOnlyDecisionRecorded &&
+        lifecycleRecorded,
       read_only_mode: true,
       persistence_store: args.postgres ? "postgres" : "memory",
       first_observation_recorded: firstObservationRecorded,
@@ -362,6 +381,7 @@ async function runReadOnlyCanary(
       approval_routes_disabled: approvalRoutesDisabled,
       approval_artifacts_absent: approvalArtifactsAbsent,
       read_only_decision_recorded: readOnlyDecisionRecorded,
+      lifecycle_recorded: lifecycleRecorded,
     };
     return {
       ...summary,

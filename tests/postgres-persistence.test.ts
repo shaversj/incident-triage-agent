@@ -46,7 +46,7 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
       ttlMs: 1_000,
     });
     const review = await store.getTriageRunReview(child.run.runId);
-    const listed = await store.listTriageRuns({ limit: 5 });
+    const listed = await store.listTriageRuns({ limit: 100 });
     const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
       now: new Date("2026-08-01T12:00:00.900Z"),
     });
@@ -63,7 +63,51 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
     };
     const firstClaim = await store.claimReplayKey(replayInput);
     const duplicateClaim = await store.claimReplayKey(replayInput);
-    const cleanup = await store.cleanupExpired(new Date("2026-08-01T12:00:02.000Z"));
+    const lifecycleIncidentId = `INC-LIFECYCLE-${Date.now()}`;
+    const verificationInput = {
+      incidentId: lifecycleIncidentId,
+      sourceEventKey: `verification:${lifecycleIncidentId}`,
+      verification: {
+        outcome: "unresolved" as const,
+        source: "operator" as const,
+        sourceReference: "operator:postgres-test",
+        runId: child.run.runId,
+        evidenceIds: ["verification:latency"],
+        rationale: "Latency remains above threshold.",
+      },
+    };
+    const verification = await store.recordVerificationOutcome(verificationInput, {
+      now: new Date("2026-08-01T12:00:00.000Z"),
+      ttlMs: 1_000,
+    });
+    const duplicateVerification = await store.recordVerificationOutcome(verificationInput, {
+      now: new Date("2026-08-01T12:00:00.500Z"),
+      ttlMs: 1_000,
+    });
+    const recoveryResults = await Promise.all([1, 2, 3].map((attempt) => store.recordRecoveryFailure({
+      incidentId: lifecycleIncidentId,
+      runId: child.run.runId,
+      sourceEventKey: `provider:${lifecycleIncidentId}:${attempt}`,
+      failureClass: "provider_unavailable",
+      rationale: "Provider request failed.",
+    }, {
+      now: new Date("2026-08-01T12:00:01.000Z"),
+      ttlMs: 1_000,
+    })));
+    const blockedRecovery = await store.recordRecoveryFailure({
+      incidentId: lifecycleIncidentId,
+      runId: child.run.runId,
+      sourceEventKey: `provider:${lifecycleIncidentId}:4`,
+      failureClass: "provider_unavailable",
+      rationale: "Provider request failed again.",
+    });
+    const lifecycle = await store.getIncidentLifecycle(lifecycleIncidentId);
+    const exhaustedCandidate = lifecycle.candidates.find((candidate) => candidate.category === "recovery_exhausted");
+    expect(exhaustedCandidate).toBeDefined();
+    const importedCandidate = await store.markOutcomeReviewCandidateImported(exhaustedCandidate!.candidateId, {
+      now: new Date("2026-08-01T12:00:05.000Z"),
+    });
+    const cleanup = await store.cleanupExpired(new Date("2026-08-01T12:00:10.000Z"));
 
     expect(review?.run.reviewEnvelope?.decision).toMatchObject({
       incidentClass: "bad_deploy",
@@ -93,10 +137,23 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
     });
     expect(firstClaim.accepted).toBe(true);
     expect(duplicateClaim.accepted).toBe(false);
+    expect(verification.created).toBe(true);
+    expect(duplicateVerification).toMatchObject({
+      created: false,
+      record: { eventId: verification.record.eventId },
+    });
+    expect(recoveryResults.map((result) => result.budget.attempts).sort()).toEqual([1, 2, 3]);
+    expect(blockedRecovery).toMatchObject({ created: false, budget: { attempts: 3, exhausted: true } });
+    expect(lifecycle.projection.state).toBe("needs_human");
+    expect(importedCandidate.status).toBe("imported");
     expect(cleanup.incidentRunsDeleted).toBeGreaterThanOrEqual(1);
     expect(cleanup.evidenceSnapshotsDeleted).toBeGreaterThanOrEqual(1);
     expect(cleanup.replayKeysDeleted).toBeGreaterThanOrEqual(1);
     expect(cleanup.evidenceGateDecisionsDeleted).toBeGreaterThanOrEqual(3);
+    expect(cleanup.verificationEventsDeleted).toBeGreaterThanOrEqual(1);
+    expect(cleanup.recoveryEventsDeleted).toBeGreaterThanOrEqual(4);
+    expect(cleanup.recoveryBudgetsDeleted).toBeGreaterThanOrEqual(1);
+    expect(cleanup.outcomeCandidatesDeleted).toBeGreaterThanOrEqual(2);
     expect(await store.getTriageRunReview(recorded.run.runId)).toBeUndefined();
   } finally {
     await store.close();

@@ -43,6 +43,15 @@ The durable, reviewable result that records whether an Evidence Delta is suffici
 ### Incident Run Lineage
 The parent-child relationship between complete triage runs for the same incident when material new evidence causes re-entry.
 
+### Incident Lifecycle Record
+An append-only record of post-triage facts and decisions, such as verification outcomes, recovery attempts, resets, and review candidates. It links to immutable triage runs instead of rewriting them.
+
+### Closure Verification Loop
+The post-mitigation process that waits for independent operator or trusted observability evidence and records the incident as resolved, unresolved, or inconclusive. Approval and simulated execution do not prove closure.
+
+### Durable Recovery Budget
+A persistent, per-incident allowance for automatic recovery attempts, counted separately by failure class and reset only by an audited operator decision or relevant material evidence.
+
 ### Phase 1 Run Store
 The persistence boundary for production read-only triage. It stores incident run envelopes, evidence snapshots, re-entry decisions, run lineage, replay keys, retention class, expiry timestamps, and correlation IDs without storing approval or executor records.
 
@@ -76,6 +85,12 @@ A versioned definition for a recurring first upstream failure. An active mode ha
 ### Promoted Failure Case
 An immutable, allowlisted snapshot of a reviewed run that preserves the originating trace, first-failure anchor, supporting evidence, and failure-mode revision used by an executable regression.
 
+### Outcome Review Candidate
+A reduced, allowlisted snapshot of an unresolved or disputed operational outcome that awaits human failure review. Creating a candidate does not change the failure taxonomy or activate a regression.
+
+### Outcome-to-Eval Promotion
+The human-reviewed path that imports an Outcome Review Candidate into the Failure Discovery Loop, identifies its First Upstream Failure, and decides whether the case should be dismissed, categorized, or protected by an executable regression.
+
 ### Agentic Run Envelope
 The outer triage result shape that makes a run look and read like an investigation while preserving the bounded decision as the authoritative operational contract.
 
@@ -105,4 +120,4 @@ The deterministic evaluation result that records whether a triage run satisfied 
 
 ## Relationships
 
-A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. For an existing incident, the Material-Evidence Re-entry Gate computes an Evidence Delta and records a Materiality Decision; material changes create Incident Run Lineage by starting a complete child run. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing a Scorecard, Outcome-Based Test Suite result, Recorded Observability Integration assertions, Live Provider Replay assertions, or Phase 1 Run Store review artifacts. The Failure Discovery Loop reviews those run artifacts to identify each First Upstream Failure and carry recurring findings into regression coverage.
+A Raw Incident Fixture or Grafana Webhook Ingestion payload is transformed into an Evidence Package. Operator Mode controls which downstream capabilities are available. Recorded Observability Inputs can provide Loki-shaped logs that Loki Log Lookup conversion adds as operational evidence. Context Sources add service ownership and runbook evidence. Evidence carries a Source Tier so the Provenance Summary can explain the quality of the cited context. For an existing incident, the Material-Evidence Re-entry Gate computes an Evidence Delta and records a Materiality Decision; material changes create Incident Run Lineage by starting a complete child run. The Triage Workflow can record Investigation Steps inside an Agentic Run Envelope, ask for an Explanation Layer and Bounded Decision using that evidence, then pass the decision through the Mitigation Control Plane and Safety Gate before producing review artifacts. The Closure Verification Loop appends independent outcomes to those immutable runs. Retryable outcomes consume a class-specific Durable Recovery Budget, while unresolved, exhausted, or disputed outcomes create an Outcome Review Candidate. Outcome-to-Eval Promotion imports selected candidates into the Failure Discovery Loop, where a human identifies the First Upstream Failure before any taxonomy or regression change.
