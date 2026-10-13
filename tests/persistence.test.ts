@@ -123,7 +123,9 @@ test("in-memory persistence records a gated run and exposes it as the latest inc
     candidateDigest: "candidate:first",
     decision: materialityDecision("first_observation", "no_baseline"),
   }), { now: new Date("2026-08-01T12:00:00.000Z") });
-  const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId);
+  const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
+    now: new Date("2026-08-01T12:00:00.500Z"),
+  });
 
   expect(recorded.created).toBe(true);
   expect(recorded.run.gateDecisionId).toBe(recorded.decision.decisionId);
@@ -135,6 +137,35 @@ test("in-memory persistence records a gated run and exposes it as the latest inc
   });
   expect(baseline?.run.runId).toBe(run.runId);
   expect(baseline?.evidenceSnapshot?.evidence).toHaveLength(run.evidencePackage?.evidence.length ?? 0);
+});
+
+test("in-memory baseline lookup excludes expired runs and runs without retained evidence", async () => {
+  const run = await runScenario("checkout-payment-timeout", {
+    incident_class: "dependency_outage",
+    next_action: "escalate_owner",
+    confidence: 0.87,
+    evidence_ids: ["alert:0", "log:0", "runbook:dependency-outage"],
+    caveats: [],
+    verification_plan: ["Watch payment timeout rate."],
+  });
+  const expiredStore = new InMemoryTriageRunPersistenceStore();
+  await expiredStore.recordTriageRun(run, {
+    now: new Date("2026-08-01T12:00:00.000Z"),
+    ttlMs: 1_000,
+  });
+
+  expect(await expiredStore.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
+    now: new Date("2026-08-01T12:00:02.000Z"),
+  })).toBeUndefined();
+  expect(expiredStore.runs.has(run.runId)).toBe(true);
+
+  const snapshotlessStore = new InMemoryTriageRunPersistenceStore();
+  await snapshotlessStore.recordTriageRun(run, { now: new Date("2026-08-01T12:00:00.000Z") });
+  snapshotlessStore.evidenceSnapshots.delete(run.runId);
+
+  expect(await snapshotlessStore.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
+    now: new Date("2026-08-01T12:00:01.000Z"),
+  })).toBeUndefined();
 });
 
 test("in-memory persistence stores a non-material decision without creating a run", async () => {

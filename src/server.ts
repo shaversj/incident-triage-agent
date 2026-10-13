@@ -1116,8 +1116,8 @@ function evidencePackageFromBaseline(baseline: IncidentBaseline): EvidencePackag
       priorIncidentRefs: [],
       verificationSignals: [],
     },
-    (baseline.evidenceSnapshot?.evidence ?? []) as Evidence[],
-    baseline.evidenceSnapshot?.missingContext ?? [],
+    baseline.evidenceSnapshot.evidence as Evidence[],
+    baseline.evidenceSnapshot.missingContext,
   );
 }
 

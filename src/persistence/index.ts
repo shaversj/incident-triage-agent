@@ -107,7 +107,11 @@ export interface GatedTriageRunWriteResult extends EvidenceGateDecisionWriteResu
 
 export interface IncidentBaseline {
   run: TriageRunRecord;
-  evidenceSnapshot?: EvidenceSnapshotRecord;
+  evidenceSnapshot: EvidenceSnapshotRecord;
+}
+
+export interface IncidentBaselineLookupOptions {
+  now?: Date;
 }
 
 export interface CleanupResult {
@@ -137,7 +141,10 @@ export interface TriageRunPersistenceStore {
   recordTriageRun(run: TriageRun, options?: PersistTriageRunOptions): Promise<TriageRunRecord>;
   listTriageRuns?(options?: { limit?: number }): Promise<TriageRunRecord[]>;
   getTriageRunReview?(runId: string): Promise<TriageRunReviewRecord | undefined>;
-  getLatestIncidentBaseline(incidentId: string): Promise<IncidentBaseline | undefined>;
+  getLatestIncidentBaseline(
+    incidentId: string,
+    options?: IncidentBaselineLookupOptions,
+  ): Promise<IncidentBaseline | undefined>;
   recordEvidenceGateDecision(
     candidate: EvidenceGateCandidate,
     options?: PersistTriageRunOptions,
@@ -187,15 +194,24 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     };
   }
 
-  async getLatestIncidentBaseline(incidentId: string): Promise<IncidentBaseline | undefined> {
+  async getLatestIncidentBaseline(
+    incidentId: string,
+    options: IncidentBaselineLookupOptions = {},
+  ): Promise<IncidentBaseline | undefined> {
+    const cutoff = (options.now ?? new Date()).toISOString();
     const run = [...this.runs.values()]
-      .filter((candidate) => candidate.incidentId === incidentId)
+      .filter((candidate) => {
+        const snapshot = this.evidenceSnapshots.get(candidate.runId);
+        return candidate.incidentId === incidentId
+          && candidate.expiresAt > cutoff
+          && snapshot !== undefined
+          && snapshot.expiresAt > cutoff;
+      })
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
     if (!run) {
       return undefined;
     }
-    const evidenceSnapshot = this.evidenceSnapshots.get(run.runId);
-    return evidenceSnapshot ? { run, evidenceSnapshot } : { run };
+    return { run, evidenceSnapshot: this.evidenceSnapshots.get(run.runId)! };
   }
 
   async recordEvidenceGateDecision(
@@ -428,13 +444,17 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     };
   }
 
-  async getLatestIncidentBaseline(incidentId: string): Promise<IncidentBaseline | undefined> {
+  async getLatestIncidentBaseline(
+    incidentId: string,
+    options: IncidentBaselineLookupOptions = {},
+  ): Promise<IncidentBaseline | undefined> {
+    const cutoff = (options.now ?? new Date()).toISOString();
     const result = await this.pool.query<RunRecordRow & {
-      snapshot_evidence: unknown[] | null;
-      snapshot_missing_context: string[] | null;
-      snapshot_retention_class: RetentionClass | null;
-      snapshot_created_at: Date | string | null;
-      snapshot_expires_at: Date | string | null;
+      snapshot_evidence: unknown[];
+      snapshot_missing_context: string[];
+      snapshot_retention_class: RetentionClass;
+      snapshot_created_at: Date | string;
+      snapshot_expires_at: Date | string;
     }>(
       `SELECT
         runs.run_id, runs.incident_id, runs.scenario_name, runs.service, runs.run_status,
@@ -448,30 +468,29 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
         snapshots.created_at AS snapshot_created_at,
         snapshots.expires_at AS snapshot_expires_at
        FROM incident_runs runs
-       LEFT JOIN evidence_snapshots snapshots ON snapshots.run_id = runs.run_id
+       INNER JOIN evidence_snapshots snapshots ON snapshots.run_id = runs.run_id
        WHERE runs.incident_id = $1
+         AND runs.expires_at > $2
+         AND snapshots.expires_at > $2
        ORDER BY runs.created_at DESC
        LIMIT 1`,
-      [incidentId],
+      [incidentId, cutoff],
     );
     const row = result.rows[0];
     if (!row) {
       return undefined;
     }
     const run = runRecordFromRow(row);
-    if (!row.snapshot_evidence) {
-      return { run };
-    }
     return {
       run,
       evidenceSnapshot: {
         runId: row.run_id,
         incidentId: row.incident_id,
         evidence: row.snapshot_evidence,
-        missingContext: row.snapshot_missing_context ?? [],
-        retentionClass: row.snapshot_retention_class ?? row.retention_class,
-        createdAt: row.snapshot_created_at ? isoValue(row.snapshot_created_at) : run.createdAt,
-        expiresAt: row.snapshot_expires_at ? isoValue(row.snapshot_expires_at) : run.expiresAt,
+        missingContext: row.snapshot_missing_context,
+        retentionClass: row.snapshot_retention_class,
+        createdAt: isoValue(row.snapshot_created_at),
+        expiresAt: isoValue(row.snapshot_expires_at),
       },
     };
   }

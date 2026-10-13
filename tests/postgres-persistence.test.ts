@@ -47,7 +47,12 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
     });
     const review = await store.getTriageRunReview(child.run.runId);
     const listed = await store.listTriageRuns({ limit: 5 });
-    const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId);
+    const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
+      now: new Date("2026-08-01T12:00:00.900Z"),
+    });
+    const expiredBaseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
+      now: new Date("2026-08-01T12:00:02.000Z"),
+    });
     const replayInput = {
       sender: "grafana",
       signature: "sig",
@@ -80,6 +85,7 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
       expect.objectContaining({ outcome: "not_material", priorRunId: child.run.runId }),
     ]));
     expect(baseline?.run.runId).toBe(child.run.runId);
+    expect(expiredBaseline).toBeUndefined();
     expect(firstGateDecision.created).toBe(true);
     expect(duplicateGateDecision).toMatchObject({
       created: false,
