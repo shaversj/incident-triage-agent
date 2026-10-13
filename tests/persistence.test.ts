@@ -242,6 +242,113 @@ test("in-memory persistence links a material child to its parent and scopes idem
   expect(store.runs.has("triage-run:checkout-payment-timeout:duplicate")).toBe(false);
 });
 
+test("in-memory lifecycle persistence records verification idempotently and creates one unresolved candidate", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const input = {
+    incidentId: "INC-2026-015",
+    sourceEventKey: "operator:verification:1",
+    verification: {
+      outcome: "unresolved" as const,
+      source: "operator" as const,
+      sourceReference: "operator:local-sre",
+      runId: "run-1",
+      evidenceIds: ["verification:latency"],
+      rationale: "Latency remains above the incident threshold.",
+    },
+  };
+
+  const first = await store.recordVerificationOutcome(input, {
+    now: new Date("2026-10-13T12:00:00.000Z"),
+  });
+  const duplicate = await store.recordVerificationOutcome(input, {
+    now: new Date("2026-10-13T12:01:00.000Z"),
+  });
+  const lifecycle = await store.getIncidentLifecycle(input.incidentId);
+
+  expect(first.created).toBe(true);
+  expect(duplicate).toMatchObject({ created: false, record: { eventId: first.record.eventId } });
+  expect(lifecycle.verificationEvents).toHaveLength(1);
+  expect(lifecycle.projection).toMatchObject({ state: "recovering", verificationOutcome: "unresolved" });
+  expect(lifecycle.candidates).toEqual([
+    expect.objectContaining({ category: "unresolved_mitigation", status: "pending" }),
+  ]);
+});
+
+test("in-memory recovery budgets isolate failure classes, stop at three, and reset with audit", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const result = await store.recordRecoveryFailure({
+      incidentId: "INC-2026-015",
+      runId: "run-1",
+      sourceEventKey: `provider:${attempt}`,
+      failureClass: "provider_unavailable",
+      rationale: "Provider request failed.",
+    }, { now: new Date(`2026-10-13T12:0${attempt}:00.000Z`) });
+    expect(result.created).toBe(true);
+    expect(result.budget.attempts).toBe(attempt);
+  }
+
+  const blocked = await store.recordRecoveryFailure({
+    incidentId: "INC-2026-015",
+    runId: "run-1",
+    sourceEventKey: "provider:4",
+    failureClass: "provider_unavailable",
+    rationale: "Provider request failed again.",
+  });
+  const connector = await store.recordRecoveryFailure({
+    incidentId: "INC-2026-015",
+    runId: "run-1",
+    sourceEventKey: "connector:1",
+    failureClass: "connector_failure",
+    rationale: "Loki timed out.",
+  });
+  const reset = await store.resetRecoveryBudget({
+    incidentId: "INC-2026-015",
+    runId: "run-1",
+    sourceEventKey: "reset:provider:1",
+    failureClass: "provider_unavailable",
+    reason: "operator_reset",
+    actor: "operator:local-sre",
+    rationale: "Provider health is restored.",
+  });
+  const lifecycle = await store.getIncidentLifecycle("INC-2026-015");
+
+  expect(blocked.created).toBe(false);
+  expect(blocked.budget).toMatchObject({ attempts: 3, exhausted: true });
+  expect(connector.budget).toMatchObject({ attempts: 1, exhausted: false });
+  expect(reset).toMatchObject({ created: true, budget: { attempts: 0, exhausted: false, generation: 1 } });
+  expect(lifecycle.recoveryEvents).toEqual(expect.arrayContaining([
+    expect.objectContaining({ eventType: "exhausted", failureClass: "provider_unavailable" }),
+    expect.objectContaining({ eventType: "reset", actor: "operator:local-sre" }),
+  ]));
+  expect(lifecycle.candidates).toEqual(expect.arrayContaining([
+    expect.objectContaining({ category: "recovery_exhausted", status: "pending" }),
+  ]));
+});
+
+test("in-memory outcome candidates are reduced, idempotent, and importable", async () => {
+  const store = new InMemoryTriageRunPersistenceStore();
+  const input = {
+    incidentId: "INC-2026-015",
+    runId: "run-1",
+    sourceEventId: "feedback:1",
+    category: "corrected_finding" as const,
+    rationale: "The deploy preceded the alert by three days.",
+    evidenceIds: ["deploy:0", "alert:0"],
+    snapshot: { incident_class: "bad_deploy", next_action: "request_rollback_approval" },
+  };
+
+  const first = await store.recordOutcomeReviewCandidate(input);
+  const duplicate = await store.recordOutcomeReviewCandidate(input);
+  const imported = await store.markOutcomeReviewCandidateImported(first.candidate.candidateId);
+
+  expect(first.created).toBe(true);
+  expect(duplicate).toMatchObject({ created: false, candidate: { candidateId: first.candidate.candidateId } });
+  expect(imported.status).toBe("imported");
+  expect(await store.listOutcomeReviewCandidates({ status: "pending" })).toHaveLength(0);
+  expect(await store.listOutcomeReviewCandidates({ status: "imported" })).toHaveLength(1);
+});
+
 test("in-memory persistence records recoverable invalid decision without approval artifacts", async () => {
   const store = new InMemoryTriageRunPersistenceStore();
   const run = await runScenario("checkout-payment-timeout", "{not json");
@@ -311,6 +418,10 @@ test("retention cleanup removes expired runs evidence snapshots and replay keys"
     evidenceSnapshotsDeleted: 1,
     evidenceGateDecisionsDeleted: 0,
     replayKeysDeleted: 1,
+    verificationEventsDeleted: 0,
+    recoveryEventsDeleted: 0,
+    recoveryBudgetsDeleted: 0,
+    outcomeCandidatesDeleted: 0,
   });
   expect(store.runs.has(run.runId)).toBe(false);
   expect(store.evidenceSnapshots.has(run.runId)).toBe(false);

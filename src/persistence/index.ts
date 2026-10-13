@@ -4,6 +4,16 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
 
+import {
+  applyLifecycleEvent,
+  initialLifecycleProjection,
+  type IncidentLifecycleEvent,
+  type IncidentLifecycleProjection,
+  type OutcomeCandidateCategory,
+  type RecoveryFailureClass,
+  type RecoveryResetReason,
+  type VerificationOutcomeInput,
+} from "../incident-lifecycle";
 import type { EvidenceDelta, MaterialityBasis, MaterialityDecision, MaterialityOutcome } from "../reentry";
 import type { TriageRun } from "../workflow";
 
@@ -119,6 +129,115 @@ export interface CleanupResult {
   evidenceSnapshotsDeleted: number;
   evidenceGateDecisionsDeleted: number;
   replayKeysDeleted: number;
+  verificationEventsDeleted: number;
+  recoveryEventsDeleted: number;
+  recoveryBudgetsDeleted: number;
+  outcomeCandidatesDeleted: number;
+}
+
+export interface VerificationOutcomeRecord {
+  eventId: string;
+  incidentId: string;
+  sourceEventKey: string;
+  verification: VerificationOutcomeInput;
+  retentionClass: RetentionClass;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface VerificationOutcomeWriteInput {
+  incidentId: string;
+  sourceEventKey: string;
+  verification: VerificationOutcomeInput;
+}
+
+export interface VerificationOutcomeWriteResult {
+  record: VerificationOutcomeRecord;
+  created: boolean;
+}
+
+export type RecoveryEventType = "attempt" | "exhausted" | "reset";
+
+export interface RecoveryBudgetRecord {
+  incidentId: string;
+  failureClass: RecoveryFailureClass;
+  attempts: number;
+  limit: number;
+  exhausted: boolean;
+  generation: number;
+  updatedAt: string;
+  expiresAt: string;
+}
+
+export interface RecoveryEventRecord {
+  eventId: string;
+  incidentId: string;
+  sourceEventKey: string;
+  eventType: RecoveryEventType;
+  failureClass: RecoveryFailureClass;
+  runId?: string;
+  attempt?: number;
+  reason?: RecoveryResetReason;
+  actor?: string;
+  rationale: string;
+  generation: number;
+  retentionClass: RetentionClass;
+  createdAt: string;
+  expiresAt: string;
+}
+
+export interface RecoveryFailureWriteInput {
+  incidentId: string;
+  runId?: string;
+  sourceEventKey: string;
+  failureClass: RecoveryFailureClass;
+  rationale: string;
+}
+
+export interface RecoveryResetWriteInput extends RecoveryFailureWriteInput {
+  reason: RecoveryResetReason;
+  actor: string;
+}
+
+export interface RecoveryWriteResult {
+  event?: RecoveryEventRecord;
+  budget: RecoveryBudgetRecord;
+  created: boolean;
+}
+
+export type OutcomeReviewCandidateStatus = "pending" | "imported";
+
+export interface OutcomeReviewCandidateInput {
+  incidentId: string;
+  runId?: string;
+  sourceEventId: string;
+  category: OutcomeCandidateCategory;
+  rationale: string;
+  evidenceIds: string[];
+  snapshot: Record<string, unknown>;
+}
+
+export interface OutcomeReviewCandidateRecord extends OutcomeReviewCandidateInput {
+  candidateId: string;
+  status: OutcomeReviewCandidateStatus;
+  retentionClass: RetentionClass;
+  createdAt: string;
+  expiresAt: string;
+  importedAt?: string;
+}
+
+export interface OutcomeReviewCandidateWriteResult {
+  candidate: OutcomeReviewCandidateRecord;
+  created: boolean;
+}
+
+export interface IncidentLifecycleReviewRecord {
+  incidentId: string;
+  projection: IncidentLifecycleProjection;
+  verificationEvents: VerificationOutcomeRecord[];
+  recoveryEvents: RecoveryEventRecord[];
+  recoveryBudgets: RecoveryBudgetRecord[];
+  candidates: OutcomeReviewCandidateRecord[];
 }
 
 export interface ReplayKeyInput {
@@ -154,6 +273,32 @@ export interface TriageRunPersistenceStore {
     candidate: EvidenceGateCandidate,
     options?: PersistTriageRunOptions,
   ): Promise<GatedTriageRunWriteResult>;
+  recordVerificationOutcome(
+    input: VerificationOutcomeWriteInput,
+    options?: PersistTriageRunOptions,
+  ): Promise<VerificationOutcomeWriteResult>;
+  getIncidentLifecycle(incidentId: string): Promise<IncidentLifecycleReviewRecord>;
+  recordRecoveryFailure(
+    input: RecoveryFailureWriteInput,
+    options?: PersistTriageRunOptions,
+  ): Promise<RecoveryWriteResult>;
+  resetRecoveryBudget(
+    input: RecoveryResetWriteInput,
+    options?: PersistTriageRunOptions,
+  ): Promise<RecoveryWriteResult>;
+  recordOutcomeReviewCandidate(
+    input: OutcomeReviewCandidateInput,
+    options?: PersistTriageRunOptions,
+  ): Promise<OutcomeReviewCandidateWriteResult>;
+  listOutcomeReviewCandidates(options?: {
+    incidentId?: string;
+    status?: OutcomeReviewCandidateStatus;
+    limit?: number;
+  }): Promise<OutcomeReviewCandidateRecord[]>;
+  markOutcomeReviewCandidateImported(
+    candidateId: string,
+    options?: { now?: Date },
+  ): Promise<OutcomeReviewCandidateRecord>;
   claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim>;
   releaseReplayKey?(replayKey: string): Promise<void>;
   cleanupExpired(now?: Date): Promise<CleanupResult>;
@@ -167,7 +312,14 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
   readonly evidenceSnapshots = new Map<string, EvidenceSnapshotRecord>();
   readonly evidenceGateDecisions = new Map<string, EvidenceGateDecisionRecord>();
   readonly replayKeys = new Map<string, { input: ReplayKeyInput; expiresAt: string }>();
+  readonly verificationEvents = new Map<string, VerificationOutcomeRecord>();
+  readonly recoveryEvents = new Map<string, RecoveryEventRecord>();
+  readonly recoveryBudgets = new Map<string, RecoveryBudgetRecord>();
+  readonly outcomeCandidates = new Map<string, OutcomeReviewCandidateRecord>();
   private readonly evidenceGateDecisionKeys = new Map<string, string>();
+  private readonly verificationEventKeys = new Map<string, string>();
+  private readonly recoveryEventKeys = new Map<string, string>();
+  private readonly outcomeCandidateKeys = new Map<string, string>();
 
   async recordTriageRun(run: TriageRun, options: PersistTriageRunOptions = {}): Promise<TriageRunRecord> {
     const record = buildRunRecord(run, options);
@@ -264,6 +416,155 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
       .slice(0, boundedLimit(options.limit));
   }
 
+  async recordVerificationOutcome(
+    input: VerificationOutcomeWriteInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<VerificationOutcomeWriteResult> {
+    const existingId = this.verificationEventKeys.get(input.sourceEventKey);
+    if (existingId) {
+      return { record: requiredMapValue(this.verificationEvents, existingId, "verification event"), created: false };
+    }
+    const record = buildVerificationRecord(input, options);
+    this.verificationEvents.set(record.eventId, record);
+    this.verificationEventKeys.set(record.sourceEventKey, record.eventId);
+    if (record.verification.outcome === "unresolved") {
+      await this.recordOutcomeReviewCandidate(candidateFromVerification(record), options);
+    }
+    return { record, created: true };
+  }
+
+  async getIncidentLifecycle(incidentId: string): Promise<IncidentLifecycleReviewRecord> {
+    const verificationEvents = filterIncidentRecords(this.verificationEvents, incidentId);
+    const recoveryEvents = filterIncidentRecords(this.recoveryEvents, incidentId);
+    const lifecycleEvents = [
+      ...verificationEvents.map(verificationLifecycleEvent),
+      ...recoveryEvents.map(recoveryLifecycleEvent),
+    ].sort(compareLifecycleEvents);
+    const projection = lifecycleEvents.reduce(
+      applyLifecycleEvent,
+      initialLifecycleProjection({ incidentId }),
+    );
+    return {
+      incidentId,
+      projection,
+      verificationEvents,
+      recoveryEvents,
+      recoveryBudgets: filterIncidentRecords(this.recoveryBudgets, incidentId),
+      candidates: filterIncidentRecords(this.outcomeCandidates, incidentId),
+    };
+  }
+
+  async recordRecoveryFailure(
+    input: RecoveryFailureWriteInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<RecoveryWriteResult> {
+    const existingId = this.recoveryEventKeys.get(input.sourceEventKey);
+    if (existingId) {
+      const event = requiredMapValue(this.recoveryEvents, existingId, "recovery event");
+      return { event, budget: this.requiredBudget(input.incidentId, input.failureClass), created: false };
+    }
+    const key = recoveryBudgetKey(input.incidentId, input.failureClass);
+    const budget = this.recoveryBudgets.get(key) ?? initialRecoveryBudget(input, options);
+    if (budget.exhausted) {
+      return { budget, created: false };
+    }
+    const attempt = budget.attempts + 1;
+    const event = buildRecoveryEvent(input, "attempt", budget.generation, options, { attempt });
+    const nextBudget: RecoveryBudgetRecord = {
+      ...budget,
+      attempts: attempt,
+      exhausted: attempt >= budget.limit,
+      updatedAt: event.createdAt,
+      expiresAt: event.expiresAt,
+    };
+    this.recoveryEvents.set(event.eventId, event);
+    this.recoveryEventKeys.set(event.sourceEventKey, event.eventId);
+    this.recoveryBudgets.set(key, nextBudget);
+    if (nextBudget.exhausted) {
+      const exhausted = buildRecoveryEvent(
+        { ...input, sourceEventKey: `${input.sourceEventKey}:exhausted` },
+        "exhausted",
+        budget.generation,
+        options,
+        { attempt },
+      );
+      this.recoveryEvents.set(exhausted.eventId, exhausted);
+      this.recoveryEventKeys.set(exhausted.sourceEventKey, exhausted.eventId);
+      await this.recordOutcomeReviewCandidate(candidateFromRecoveryExhaustion(exhausted), options);
+    }
+    return { event, budget: nextBudget, created: true };
+  }
+
+  async resetRecoveryBudget(
+    input: RecoveryResetWriteInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<RecoveryWriteResult> {
+    const existingId = this.recoveryEventKeys.get(input.sourceEventKey);
+    if (existingId) {
+      const event = requiredMapValue(this.recoveryEvents, existingId, "recovery event");
+      return { event, budget: this.requiredBudget(input.incidentId, input.failureClass), created: false };
+    }
+    const key = recoveryBudgetKey(input.incidentId, input.failureClass);
+    const prior = this.recoveryBudgets.get(key) ?? initialRecoveryBudget(input, options);
+    const generation = prior.generation + 1;
+    const event = buildRecoveryEvent(input, "reset", generation, options, {
+      reason: input.reason,
+      actor: input.actor,
+    });
+    const budget: RecoveryBudgetRecord = {
+      ...prior,
+      attempts: 0,
+      exhausted: false,
+      generation,
+      updatedAt: event.createdAt,
+      expiresAt: event.expiresAt,
+    };
+    this.recoveryEvents.set(event.eventId, event);
+    this.recoveryEventKeys.set(event.sourceEventKey, event.eventId);
+    this.recoveryBudgets.set(key, budget);
+    return { event, budget, created: true };
+  }
+
+  async recordOutcomeReviewCandidate(
+    input: OutcomeReviewCandidateInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<OutcomeReviewCandidateWriteResult> {
+    const key = outcomeCandidateKey(input);
+    const existingId = this.outcomeCandidateKeys.get(key);
+    if (existingId) {
+      return { candidate: requiredMapValue(this.outcomeCandidates, existingId, "outcome candidate"), created: false };
+    }
+    const candidate = buildOutcomeCandidate(input, options);
+    this.outcomeCandidates.set(candidate.candidateId, candidate);
+    this.outcomeCandidateKeys.set(key, candidate.candidateId);
+    return { candidate, created: true };
+  }
+
+  async listOutcomeReviewCandidates(options: {
+    incidentId?: string;
+    status?: OutcomeReviewCandidateStatus;
+    limit?: number;
+  } = {}): Promise<OutcomeReviewCandidateRecord[]> {
+    return [...this.outcomeCandidates.values()]
+      .filter((candidate) => options.incidentId === undefined || candidate.incidentId === options.incidentId)
+      .filter((candidate) => options.status === undefined || candidate.status === options.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, boundedLimit(options.limit));
+  }
+
+  async markOutcomeReviewCandidateImported(
+    candidateId: string,
+    options: { now?: Date } = {},
+  ): Promise<OutcomeReviewCandidateRecord> {
+    const candidate = requiredMapValue(this.outcomeCandidates, candidateId, "outcome candidate");
+    if (candidate.status === "imported") {
+      return candidate;
+    }
+    const imported = { ...candidate, status: "imported" as const, importedAt: iso(options.now ?? new Date()) };
+    this.outcomeCandidates.set(candidateId, imported);
+    return imported;
+  }
+
   async claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim> {
     const replayKey = buildReplayKey(input);
     const receivedAt = input.receivedAt ?? new Date();
@@ -286,6 +587,10 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     let evidenceSnapshotsDeleted = 0;
     let evidenceGateDecisionsDeleted = 0;
     let replayKeysDeleted = 0;
+    let verificationEventsDeleted = 0;
+    let recoveryEventsDeleted = 0;
+    let recoveryBudgetsDeleted = 0;
+    let outcomeCandidatesDeleted = 0;
     for (const [runId, run] of this.runs.entries()) {
       if (run.expiresAt <= cutoff) {
         this.runs.delete(runId);
@@ -311,7 +616,43 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
         replayKeysDeleted += 1;
       }
     }
-    return { incidentRunsDeleted, evidenceSnapshotsDeleted, evidenceGateDecisionsDeleted, replayKeysDeleted };
+    for (const [eventId, record] of this.verificationEvents.entries()) {
+      if (record.expiresAt <= cutoff) {
+        this.verificationEvents.delete(eventId);
+        this.verificationEventKeys.delete(record.sourceEventKey);
+        verificationEventsDeleted += 1;
+      }
+    }
+    for (const [eventId, record] of this.recoveryEvents.entries()) {
+      if (record.expiresAt <= cutoff) {
+        this.recoveryEvents.delete(eventId);
+        this.recoveryEventKeys.delete(record.sourceEventKey);
+        recoveryEventsDeleted += 1;
+      }
+    }
+    for (const [key, record] of this.recoveryBudgets.entries()) {
+      if (record.expiresAt <= cutoff) {
+        this.recoveryBudgets.delete(key);
+        recoveryBudgetsDeleted += 1;
+      }
+    }
+    for (const [candidateId, record] of this.outcomeCandidates.entries()) {
+      if (record.expiresAt <= cutoff) {
+        this.outcomeCandidates.delete(candidateId);
+        this.outcomeCandidateKeys.delete(outcomeCandidateKey(record));
+        outcomeCandidatesDeleted += 1;
+      }
+    }
+    return {
+      incidentRunsDeleted,
+      evidenceSnapshotsDeleted,
+      evidenceGateDecisionsDeleted,
+      replayKeysDeleted,
+      verificationEventsDeleted,
+      recoveryEventsDeleted,
+      recoveryBudgetsDeleted,
+      outcomeCandidatesDeleted,
+    };
   }
 
   private recentDecisions(incidentId: string): EvidenceGateDecisionRecord[] {
@@ -327,6 +668,10 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
       throw new Error(`Missing gate decision: ${decisionId}`);
     }
     return decision;
+  }
+
+  private requiredBudget(incidentId: string, failureClass: RecoveryFailureClass): RecoveryBudgetRecord {
+    return requiredMapValue(this.recoveryBudgets, recoveryBudgetKey(incidentId, failureClass), "recovery budget");
   }
 }
 
@@ -562,6 +907,187 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     return result.rows.map(runRecordFromRow);
   }
 
+  async recordVerificationOutcome(
+    input: VerificationOutcomeWriteInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<VerificationOutcomeWriteResult> {
+    return this.withTransaction(async (client) => {
+      const record = buildVerificationRecord(input, options);
+      const inserted = await insertVerificationRecord(client, record);
+      if (!inserted) {
+        return { record: await selectVerificationBySourceKey(client, input.sourceEventKey), created: false };
+      }
+      if (record.verification.outcome === "unresolved") {
+        await insertOutcomeCandidate(client, buildOutcomeCandidate(candidateFromVerification(record), options));
+      }
+      return { record, created: true };
+    });
+  }
+
+  async getIncidentLifecycle(incidentId: string): Promise<IncidentLifecycleReviewRecord> {
+    const [verification, recovery, budgets, candidates] = await Promise.all([
+      this.pool.query<VerificationOutcomeRow>(
+        "SELECT * FROM incident_verification_events WHERE incident_id = $1 ORDER BY created_at",
+        [incidentId],
+      ),
+      this.pool.query<RecoveryEventRow>(
+        "SELECT * FROM incident_recovery_events WHERE incident_id = $1 ORDER BY created_at, event_id",
+        [incidentId],
+      ),
+      this.pool.query<RecoveryBudgetRow>(
+        "SELECT * FROM incident_recovery_budgets WHERE incident_id = $1 ORDER BY failure_class",
+        [incidentId],
+      ),
+      this.pool.query<OutcomeReviewCandidateRow>(
+        "SELECT * FROM outcome_review_candidates WHERE incident_id = $1 ORDER BY created_at",
+        [incidentId],
+      ),
+    ]);
+    const verificationEvents = verification.rows.map(verificationFromRow);
+    const recoveryEvents = recovery.rows.map(recoveryEventFromRow);
+    const lifecycleEvents = [
+      ...verificationEvents.map(verificationLifecycleEvent),
+      ...recoveryEvents.map(recoveryLifecycleEvent),
+    ].sort(compareLifecycleEvents);
+    return {
+      incidentId,
+      projection: lifecycleEvents.reduce(applyLifecycleEvent, initialLifecycleProjection({ incidentId })),
+      verificationEvents,
+      recoveryEvents,
+      recoveryBudgets: budgets.rows.map(recoveryBudgetFromRow),
+      candidates: candidates.rows.map(outcomeCandidateFromRow),
+    };
+  }
+
+  async recordRecoveryFailure(
+    input: RecoveryFailureWriteInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<RecoveryWriteResult> {
+    return this.withTransaction(async (client) => {
+      await lockRecoveryBudget(client, input.incidentId, input.failureClass);
+      const existing = await findRecoveryBySourceKey(client, input.sourceEventKey);
+      if (existing) {
+        return {
+          event: existing,
+          budget: await requiredRecoveryBudget(client, input.incidentId, input.failureClass),
+          created: false,
+        };
+      }
+      const prior = await findRecoveryBudget(client, input.incidentId, input.failureClass)
+        ?? initialRecoveryBudget(input, options);
+      if (prior.exhausted) {
+        return { budget: prior, created: false };
+      }
+      const attempt = prior.attempts + 1;
+      const event = buildRecoveryEvent(input, "attempt", prior.generation, options, { attempt });
+      const budget: RecoveryBudgetRecord = {
+        ...prior,
+        attempts: attempt,
+        exhausted: attempt >= prior.limit,
+        updatedAt: event.createdAt,
+        expiresAt: event.expiresAt,
+      };
+      await insertRecoveryEvent(client, event);
+      await upsertRecoveryBudget(client, budget);
+      if (budget.exhausted) {
+        const exhausted = buildRecoveryEvent(
+          { ...input, sourceEventKey: `${input.sourceEventKey}:exhausted` },
+          "exhausted",
+          prior.generation,
+          options,
+          { attempt },
+        );
+        await insertRecoveryEvent(client, exhausted);
+        await insertOutcomeCandidate(
+          client,
+          buildOutcomeCandidate(candidateFromRecoveryExhaustion(exhausted), options),
+        );
+      }
+      return { event, budget, created: true };
+    });
+  }
+
+  async resetRecoveryBudget(
+    input: RecoveryResetWriteInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<RecoveryWriteResult> {
+    return this.withTransaction(async (client) => {
+      await lockRecoveryBudget(client, input.incidentId, input.failureClass);
+      const existing = await findRecoveryBySourceKey(client, input.sourceEventKey);
+      if (existing) {
+        return {
+          event: existing,
+          budget: await requiredRecoveryBudget(client, input.incidentId, input.failureClass),
+          created: false,
+        };
+      }
+      const prior = await findRecoveryBudget(client, input.incidentId, input.failureClass)
+        ?? initialRecoveryBudget(input, options);
+      const generation = prior.generation + 1;
+      const event = buildRecoveryEvent(input, "reset", generation, options, {
+        reason: input.reason,
+        actor: input.actor,
+      });
+      const budget: RecoveryBudgetRecord = {
+        ...prior,
+        attempts: 0,
+        exhausted: false,
+        generation,
+        updatedAt: event.createdAt,
+        expiresAt: event.expiresAt,
+      };
+      await insertRecoveryEvent(client, event);
+      await upsertRecoveryBudget(client, budget);
+      return { event, budget, created: true };
+    });
+  }
+
+  async recordOutcomeReviewCandidate(
+    input: OutcomeReviewCandidateInput,
+    options: PersistTriageRunOptions = {},
+  ): Promise<OutcomeReviewCandidateWriteResult> {
+    const candidate = buildOutcomeCandidate(input, options);
+    const inserted = await this.withTransaction((client) => insertOutcomeCandidate(client, candidate));
+    if (inserted) {
+      return { candidate, created: true };
+    }
+    return { candidate: await this.requiredOutcomeCandidate(input), created: false };
+  }
+
+  async listOutcomeReviewCandidates(options: {
+    incidentId?: string;
+    status?: OutcomeReviewCandidateStatus;
+    limit?: number;
+  } = {}): Promise<OutcomeReviewCandidateRecord[]> {
+    const result = await this.pool.query<OutcomeReviewCandidateRow>(
+      `SELECT * FROM outcome_review_candidates
+       WHERE ($1::text IS NULL OR incident_id = $1)
+         AND ($2::text IS NULL OR status = $2)
+       ORDER BY created_at DESC
+       LIMIT $3`,
+      [options.incidentId ?? null, options.status ?? null, boundedLimit(options.limit)],
+    );
+    return result.rows.map(outcomeCandidateFromRow);
+  }
+
+  async markOutcomeReviewCandidateImported(
+    candidateId: string,
+    options: { now?: Date } = {},
+  ): Promise<OutcomeReviewCandidateRecord> {
+    const result = await this.pool.query<OutcomeReviewCandidateRow>(
+      `UPDATE outcome_review_candidates
+       SET status = 'imported', imported_at = COALESCE(imported_at, $2)
+       WHERE candidate_id = $1
+       RETURNING *`,
+      [candidateId, iso(options.now ?? new Date())],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error(`Missing outcome candidate: ${candidateId}`);
+    }
+    return outcomeCandidateFromRow(row);
+  }
+
   async claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim> {
     const replayKey = buildReplayKey(input);
     const receivedAt = input.receivedAt ?? new Date();
@@ -590,6 +1116,10 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
   async cleanupExpired(now = new Date()): Promise<CleanupResult> {
     const cutoff = now.toISOString();
     return this.withTransaction(async (client) => {
+      const candidates = await client.query("DELETE FROM outcome_review_candidates WHERE expires_at <= $1", [cutoff]);
+      const recoveryEvents = await client.query("DELETE FROM incident_recovery_events WHERE expires_at <= $1", [cutoff]);
+      const verificationEvents = await client.query("DELETE FROM incident_verification_events WHERE expires_at <= $1", [cutoff]);
+      const recoveryBudgets = await client.query("DELETE FROM incident_recovery_budgets WHERE expires_at <= $1", [cutoff]);
       const evidence = await client.query("DELETE FROM evidence_snapshots WHERE expires_at <= $1", [cutoff]);
       const runs = await client.query("DELETE FROM incident_runs WHERE expires_at <= $1", [cutoff]);
       const decisions = await client.query("DELETE FROM evidence_gate_decisions WHERE expires_at <= $1", [cutoff]);
@@ -599,6 +1129,10 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
         evidenceSnapshotsDeleted: evidence.rowCount ?? 0,
         evidenceGateDecisionsDeleted: decisions.rowCount ?? 0,
         replayKeysDeleted: replay.rowCount ?? 0,
+        verificationEventsDeleted: verificationEvents.rowCount ?? 0,
+        recoveryEventsDeleted: recoveryEvents.rowCount ?? 0,
+        recoveryBudgetsDeleted: recoveryBudgets.rowCount ?? 0,
+        outcomeCandidatesDeleted: candidates.rowCount ?? 0,
       };
     });
   }
@@ -625,6 +1159,19 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
       throw new Error("Gate decision conflict could not be read after insert.");
     }
     return gateDecisionFromRow(row);
+  }
+
+  private async requiredOutcomeCandidate(input: OutcomeReviewCandidateInput): Promise<OutcomeReviewCandidateRecord> {
+    const result = await this.pool.query<OutcomeReviewCandidateRow>(
+      `SELECT * FROM outcome_review_candidates
+       WHERE incident_id = $1 AND category = $2 AND source_event_id = $3`,
+      [input.incidentId, input.category, input.sourceEventId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new Error("Outcome candidate conflict could not be read after insert.");
+    }
+    return outcomeCandidateFromRow(row);
   }
 
   async close(): Promise<void> {
@@ -687,6 +1234,65 @@ interface EvidenceGateDecisionRow {
   retention_class: RetentionClass;
   created_at: Date | string;
   expires_at: Date | string;
+}
+
+interface VerificationOutcomeRow {
+  event_id: string;
+  incident_id: string;
+  source_event_key: string;
+  run_id: string;
+  outcome: VerificationOutcomeInput["outcome"];
+  source: VerificationOutcomeInput["source"];
+  source_reference: string;
+  evidence_ids: unknown;
+  rationale: string;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+interface RecoveryBudgetRow {
+  incident_id: string;
+  failure_class: RecoveryFailureClass;
+  attempts: number;
+  attempt_limit: number;
+  exhausted: boolean;
+  generation: number;
+  updated_at: Date | string;
+  expires_at: Date | string;
+}
+
+interface RecoveryEventRow {
+  event_id: string;
+  incident_id: string;
+  source_event_key: string;
+  event_type: RecoveryEventType;
+  failure_class: RecoveryFailureClass;
+  run_id: string | null;
+  attempt: number | null;
+  reason: RecoveryResetReason | null;
+  actor: string | null;
+  rationale: string;
+  generation: number;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+interface OutcomeReviewCandidateRow {
+  candidate_id: string;
+  incident_id: string;
+  run_id: string | null;
+  source_event_id: string;
+  category: OutcomeCandidateCategory;
+  rationale: string;
+  evidence_ids: unknown;
+  snapshot: Record<string, unknown>;
+  status: OutcomeReviewCandidateStatus;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+  imported_at: Date | string | null;
 }
 
 function runRecordFromRow(row: RunRecordRow): TriageRunRecord {
@@ -1023,6 +1629,443 @@ function gateDecisionFromRow(row: EvidenceGateDecisionRow): EvidenceGateDecision
     record.childRunId = row.child_run_id;
   }
   return record;
+}
+
+const recoveryAttemptLimit = 3;
+
+function buildVerificationRecord(
+  input: VerificationOutcomeWriteInput,
+  options: PersistTriageRunOptions,
+): VerificationOutcomeRecord {
+  const { createdAt, expiresAt, retentionClass } = persistenceMetadata(options);
+  return {
+    eventId: stableId("verification", input.incidentId, input.sourceEventKey),
+    incidentId: input.incidentId,
+    sourceEventKey: input.sourceEventKey,
+    verification: input.verification,
+    retentionClass,
+    createdAt,
+    expiresAt,
+  };
+}
+
+function initialRecoveryBudget(
+  input: Pick<RecoveryFailureWriteInput, "incidentId" | "failureClass">,
+  options: PersistTriageRunOptions,
+): RecoveryBudgetRecord {
+  const { createdAt, expiresAt } = persistenceMetadata(options);
+  return {
+    incidentId: input.incidentId,
+    failureClass: input.failureClass,
+    attempts: 0,
+    limit: recoveryAttemptLimit,
+    exhausted: false,
+    generation: 0,
+    updatedAt: createdAt,
+    expiresAt,
+  };
+}
+
+function buildRecoveryEvent(
+  input: RecoveryFailureWriteInput,
+  eventType: RecoveryEventType,
+  generation: number,
+  options: PersistTriageRunOptions,
+  detail: { attempt?: number; reason?: RecoveryResetReason; actor?: string } = {},
+): RecoveryEventRecord {
+  const { createdAt, expiresAt, retentionClass } = persistenceMetadata(options);
+  return {
+    eventId: stableId("recovery", input.incidentId, input.sourceEventKey),
+    incidentId: input.incidentId,
+    sourceEventKey: input.sourceEventKey,
+    eventType,
+    failureClass: input.failureClass,
+    rationale: input.rationale,
+    generation,
+    retentionClass,
+    createdAt,
+    expiresAt,
+    ...(input.runId ? { runId: input.runId } : {}),
+    ...(detail.attempt !== undefined ? { attempt: detail.attempt } : {}),
+    ...(detail.reason ? { reason: detail.reason } : {}),
+    ...(detail.actor ? { actor: detail.actor } : {}),
+  };
+}
+
+function buildOutcomeCandidate(
+  input: OutcomeReviewCandidateInput,
+  options: PersistTriageRunOptions,
+): OutcomeReviewCandidateRecord {
+  const { createdAt, expiresAt, retentionClass } = persistenceMetadata(options);
+  return {
+    candidateId: stableId("outcome", input.incidentId, input.category, input.sourceEventId),
+    incidentId: input.incidentId,
+    sourceEventId: input.sourceEventId,
+    category: input.category,
+    rationale: input.rationale,
+    evidenceIds: [...new Set(input.evidenceIds)],
+    snapshot: input.snapshot,
+    status: "pending",
+    retentionClass,
+    createdAt,
+    expiresAt,
+    ...(input.runId ? { runId: input.runId } : {}),
+  };
+}
+
+function candidateFromVerification(record: VerificationOutcomeRecord): OutcomeReviewCandidateInput {
+  return {
+    incidentId: record.incidentId,
+    runId: record.verification.runId,
+    sourceEventId: record.eventId,
+    category: "unresolved_mitigation",
+    rationale: record.verification.rationale,
+    evidenceIds: record.verification.evidenceIds,
+    snapshot: {
+      outcome: record.verification.outcome,
+      source: record.verification.source,
+      source_reference: record.verification.sourceReference,
+    },
+  };
+}
+
+function candidateFromRecoveryExhaustion(record: RecoveryEventRecord): OutcomeReviewCandidateInput {
+  return {
+    incidentId: record.incidentId,
+    ...(record.runId ? { runId: record.runId } : {}),
+    sourceEventId: record.eventId,
+    category: "recovery_exhausted",
+    rationale: record.rationale,
+    evidenceIds: [],
+    snapshot: {
+      failure_class: record.failureClass,
+      attempt: record.attempt ?? recoveryAttemptLimit,
+      limit: recoveryAttemptLimit,
+    },
+  };
+}
+
+function verificationLifecycleEvent(record: VerificationOutcomeRecord): IncidentLifecycleEvent {
+  return {
+    type: "verification_recorded",
+    eventId: record.eventId,
+    incidentId: record.incidentId,
+    createdAt: record.createdAt,
+    verification: record.verification,
+  };
+}
+
+function recoveryLifecycleEvent(record: RecoveryEventRecord): IncidentLifecycleEvent {
+  const common = {
+    eventId: record.eventId,
+    incidentId: record.incidentId,
+    createdAt: record.createdAt,
+    failureClass: record.failureClass,
+    ...(record.runId ? { runId: record.runId } : {}),
+  };
+  if (record.eventType === "exhausted") {
+    return { type: "recovery_exhausted", ...common };
+  }
+  if (record.eventType === "reset") {
+    return { type: "recovery_reset", ...common, reason: record.reason ?? "operator_reset" };
+  }
+  return { type: "recovery_attempted", ...common };
+}
+
+function compareLifecycleEvents(left: IncidentLifecycleEvent, right: IncidentLifecycleEvent): number {
+  const chronological = left.createdAt.localeCompare(right.createdAt);
+  if (chronological !== 0) {
+    return chronological;
+  }
+  const priority: Record<IncidentLifecycleEvent["type"], number> = {
+    verification_recorded: 0,
+    recovery_attempted: 1,
+    recovery_exhausted: 2,
+    recovery_reset: 3,
+    reentry_recorded: 4,
+  };
+  return priority[left.type] - priority[right.type];
+}
+
+function persistenceMetadata(options: PersistTriageRunOptions): {
+  createdAt: string;
+  expiresAt: string;
+  retentionClass: RetentionClass;
+} {
+  const now = options.now ?? new Date();
+  return {
+    createdAt: iso(now),
+    expiresAt: iso(new Date(now.getTime() + (options.ttlMs ?? defaultTtlMs))),
+    retentionClass: options.retentionClass ?? "read_only_triage",
+  };
+}
+
+function stableId(prefix: string, ...parts: string[]): string {
+  const digest = createHash("sha256").update(parts.join("\0")).digest("hex").slice(0, 24);
+  return `${prefix}:${digest}`;
+}
+
+function recoveryBudgetKey(incidentId: string, failureClass: RecoveryFailureClass): string {
+  return `${incidentId}\0${failureClass}`;
+}
+
+function outcomeCandidateKey(input: Pick<OutcomeReviewCandidateInput, "incidentId" | "category" | "sourceEventId">): string {
+  return `${input.incidentId}\0${input.category}\0${input.sourceEventId}`;
+}
+
+function filterIncidentRecords<T extends { incidentId: string; createdAt?: string; updatedAt?: string }>(
+  records: Map<string, T>,
+  incidentId: string,
+): T[] {
+  return [...records.values()]
+    .filter((record) => record.incidentId === incidentId)
+    .sort((left, right) => (left.createdAt ?? left.updatedAt ?? "").localeCompare(right.createdAt ?? right.updatedAt ?? ""));
+}
+
+function requiredMapValue<T>(records: Map<string, T>, key: string, label: string): T {
+  const record = records.get(key);
+  if (!record) {
+    throw new Error(`Missing ${label}: ${key}`);
+  }
+  return record;
+}
+
+async function insertVerificationRecord(
+  client: PoolClient,
+  record: VerificationOutcomeRecord,
+): Promise<boolean> {
+  const result = await client.query(
+    `INSERT INTO incident_verification_events (
+      event_id, incident_id, source_event_key, run_id, outcome, source, source_reference,
+      evidence_ids, rationale, retention_class, created_at, expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
+    ON CONFLICT (source_event_key) DO NOTHING
+    RETURNING event_id`,
+    [
+      record.eventId,
+      record.incidentId,
+      record.sourceEventKey,
+      record.verification.runId,
+      record.verification.outcome,
+      record.verification.source,
+      record.verification.sourceReference,
+      JSON.stringify(record.verification.evidenceIds),
+      record.verification.rationale,
+      record.retentionClass,
+      record.createdAt,
+      record.expiresAt,
+    ],
+  );
+  return result.rowCount === 1;
+}
+
+async function selectVerificationBySourceKey(
+  client: PoolClient,
+  sourceEventKey: string,
+): Promise<VerificationOutcomeRecord> {
+  const result = await client.query<VerificationOutcomeRow>(
+    "SELECT * FROM incident_verification_events WHERE source_event_key = $1",
+    [sourceEventKey],
+  );
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error("Verification event conflict could not be read after insert.");
+  }
+  return verificationFromRow(row);
+}
+
+function verificationFromRow(row: VerificationOutcomeRow): VerificationOutcomeRecord {
+  return {
+    eventId: row.event_id,
+    incidentId: row.incident_id,
+    sourceEventKey: row.source_event_key,
+    verification: {
+      runId: row.run_id,
+      outcome: row.outcome,
+      source: row.source,
+      sourceReference: row.source_reference,
+      evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
+      rationale: row.rationale,
+    },
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+}
+
+async function lockRecoveryBudget(
+  client: PoolClient,
+  incidentId: string,
+  failureClass: RecoveryFailureClass,
+): Promise<void> {
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+    `incident-recovery:${incidentId}:${failureClass}`,
+  ]);
+}
+
+async function findRecoveryBudget(
+  client: PoolClient,
+  incidentId: string,
+  failureClass: RecoveryFailureClass,
+): Promise<RecoveryBudgetRecord | undefined> {
+  const result = await client.query<RecoveryBudgetRow>(
+    "SELECT * FROM incident_recovery_budgets WHERE incident_id = $1 AND failure_class = $2",
+    [incidentId, failureClass],
+  );
+  return result.rows[0] ? recoveryBudgetFromRow(result.rows[0]) : undefined;
+}
+
+async function requiredRecoveryBudget(
+  client: PoolClient,
+  incidentId: string,
+  failureClass: RecoveryFailureClass,
+): Promise<RecoveryBudgetRecord> {
+  const budget = await findRecoveryBudget(client, incidentId, failureClass);
+  if (!budget) {
+    throw new Error(`Missing recovery budget: ${incidentId}/${failureClass}`);
+  }
+  return budget;
+}
+
+function recoveryBudgetFromRow(row: RecoveryBudgetRow): RecoveryBudgetRecord {
+  return {
+    incidentId: row.incident_id,
+    failureClass: row.failure_class,
+    attempts: row.attempts,
+    limit: row.attempt_limit,
+    exhausted: row.exhausted,
+    generation: row.generation,
+    updatedAt: isoValue(row.updated_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+}
+
+async function upsertRecoveryBudget(client: PoolClient, budget: RecoveryBudgetRecord): Promise<void> {
+  await client.query(
+    `INSERT INTO incident_recovery_budgets (
+      incident_id, failure_class, attempts, attempt_limit, exhausted, generation, updated_at, expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT (incident_id, failure_class) DO UPDATE SET
+      attempts = EXCLUDED.attempts,
+      attempt_limit = EXCLUDED.attempt_limit,
+      exhausted = EXCLUDED.exhausted,
+      generation = EXCLUDED.generation,
+      updated_at = EXCLUDED.updated_at,
+      expires_at = EXCLUDED.expires_at`,
+    [
+      budget.incidentId,
+      budget.failureClass,
+      budget.attempts,
+      budget.limit,
+      budget.exhausted,
+      budget.generation,
+      budget.updatedAt,
+      budget.expiresAt,
+    ],
+  );
+}
+
+async function insertRecoveryEvent(client: PoolClient, record: RecoveryEventRecord): Promise<void> {
+  await client.query(
+    `INSERT INTO incident_recovery_events (
+      event_id, incident_id, source_event_key, event_type, failure_class, run_id, attempt,
+      reason, actor, rationale, generation, retention_class, created_at, expires_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+    [
+      record.eventId,
+      record.incidentId,
+      record.sourceEventKey,
+      record.eventType,
+      record.failureClass,
+      record.runId ?? null,
+      record.attempt ?? null,
+      record.reason ?? null,
+      record.actor ?? null,
+      record.rationale,
+      record.generation,
+      record.retentionClass,
+      record.createdAt,
+      record.expiresAt,
+    ],
+  );
+}
+
+async function findRecoveryBySourceKey(
+  client: PoolClient,
+  sourceEventKey: string,
+): Promise<RecoveryEventRecord | undefined> {
+  const result = await client.query<RecoveryEventRow>(
+    "SELECT * FROM incident_recovery_events WHERE source_event_key = $1",
+    [sourceEventKey],
+  );
+  return result.rows[0] ? recoveryEventFromRow(result.rows[0]) : undefined;
+}
+
+function recoveryEventFromRow(row: RecoveryEventRow): RecoveryEventRecord {
+  return {
+    eventId: row.event_id,
+    incidentId: row.incident_id,
+    sourceEventKey: row.source_event_key,
+    eventType: row.event_type,
+    failureClass: row.failure_class,
+    rationale: row.rationale,
+    generation: row.generation,
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.attempt !== null ? { attempt: row.attempt } : {}),
+    ...(row.reason ? { reason: row.reason } : {}),
+    ...(row.actor ? { actor: row.actor } : {}),
+  };
+}
+
+async function insertOutcomeCandidate(
+  client: PoolClient,
+  candidate: OutcomeReviewCandidateRecord,
+): Promise<boolean> {
+  const result = await client.query(
+    `INSERT INTO outcome_review_candidates (
+      candidate_id, incident_id, run_id, source_event_id, category, rationale, evidence_ids,
+      snapshot, status, retention_class, created_at, expires_at, imported_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13)
+    ON CONFLICT (incident_id, category, source_event_id) DO NOTHING
+    RETURNING candidate_id`,
+    [
+      candidate.candidateId,
+      candidate.incidentId,
+      candidate.runId ?? null,
+      candidate.sourceEventId,
+      candidate.category,
+      candidate.rationale,
+      JSON.stringify(candidate.evidenceIds),
+      JSON.stringify(candidate.snapshot),
+      candidate.status,
+      candidate.retentionClass,
+      candidate.createdAt,
+      candidate.expiresAt,
+      candidate.importedAt ?? null,
+    ],
+  );
+  return result.rowCount === 1;
+}
+
+function outcomeCandidateFromRow(row: OutcomeReviewCandidateRow): OutcomeReviewCandidateRecord {
+  return {
+    candidateId: row.candidate_id,
+    incidentId: row.incident_id,
+    sourceEventId: row.source_event_id,
+    category: row.category,
+    rationale: row.rationale,
+    evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
+    snapshot: row.snapshot,
+    status: row.status,
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.imported_at ? { importedAt: isoValue(row.imported_at) } : {}),
+  };
 }
 
 async function selectGateDecision(
