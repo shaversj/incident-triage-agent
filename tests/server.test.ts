@@ -340,6 +340,52 @@ test("server accepts signed read-only Grafana webhook and rejects replay", async
   }
 });
 
+test("signed resolved Grafana evidence closes a retained incident without running triage", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(
+      RecordedLokiClient.fromFixture("checkout-payment-timeout"),
+      defaultLlm(),
+      undefined,
+      "read_only",
+      runStore,
+    ),
+  });
+  const rawBody = readFileSync("fixtures/grafana/checkout-payment-timeout-webhook.json", "utf8");
+  const resolvedPayload = JSON.parse(rawBody) as { alerts: Array<Record<string, unknown>> };
+  for (const alert of resolvedPayload.alerts) {
+    alert.status = "resolved";
+  }
+  const resolvedBody = JSON.stringify(resolvedPayload);
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const firstTimestamp = unixTimestamp(new Date());
+    await fetch(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, firstTimestamp),
+      body: rawBody,
+    });
+    const resolved = await fetchJson(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(resolvedBody, String(Number(firstTimestamp) + 1)),
+      body: resolvedBody,
+    });
+
+    expect(resolved).toMatchObject({
+      reason: "resolved_alert",
+      closure_recorded: true,
+      lifecycle: { projection: { state: "resolved" } },
+    });
+    expect(runStore.runs.size).toBe(1);
+  } finally {
+    await server.close();
+  }
+});
+
 test("server rejects replay when signature hex casing changes", async () => {
   const runStore = new InMemoryTriageRunPersistenceStore();
   const server = startWebhookServer({
@@ -539,6 +585,171 @@ test("server exposes authenticated read-only run list and review console", async
   }
 });
 
+test("server records authenticated verification idempotently and exposes lifecycle in run review", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const serverRuntime = runtime(
+    RecordedLokiClient.fromFixture("bad-deploy-latency"),
+    badDeployLlm(),
+    undefined,
+    "read_only",
+    runStore,
+  );
+  serverRuntime.operatorWriteToken = "write-secret";
+  serverRuntime.operatorWriteActor = "operator:test-sre";
+  const server = startWebhookServer({ host: "127.0.0.1", port: 0, runtime: serverRuntime });
+  const rawBody = readFileSync("fixtures/grafana/bad-deploy-latency-webhook.json", "utf8");
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const posted = await fetchJson(`${baseUrl}/webhooks/grafana`, {
+      method: "POST",
+      headers: signedGrafanaHeaders(rawBody, unixTimestamp(new Date())),
+      body: rawBody,
+    });
+    const incidentId = (posted.incident as { incident_id: string }).incident_id;
+    const endpoint = `${baseUrl}/api/incidents/${encodeURIComponent(incidentId)}/verification`;
+    const verificationBody = JSON.stringify({
+      outcome: "resolved",
+      run_id: posted.run_id,
+      evidence_ids: ["verification:latency"],
+      rationale: "Latency and error rate returned to normal.",
+    });
+    const unauthorized = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "verification:resolved:1" },
+      body: verificationBody,
+    });
+    const mismatched = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer write-secret",
+        "Idempotency-Key": "verification:mismatch:1",
+      },
+      body: JSON.stringify({
+        outcome: "resolved",
+        run_id: "missing-run",
+        evidence_ids: ["verification:latency"],
+        rationale: "This run does not belong to the incident.",
+      }),
+    });
+    const first = await fetchJson(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer write-secret",
+        "Idempotency-Key": "verification:resolved:1",
+      },
+      body: verificationBody,
+    });
+    const duplicate = await fetchJson(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer write-secret",
+        "Idempotency-Key": "verification:resolved:1",
+      },
+      body: verificationBody,
+    });
+    const review = await fetchJson(`${baseUrl}/api/runs/${encodeURIComponent(posted.run_id as string)}`, {
+      headers: { Authorization: "Bearer read-secret" },
+    });
+    const unresolved = await fetchJson(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer write-secret",
+        "Idempotency-Key": "verification:unresolved:1",
+      },
+      body: JSON.stringify({
+        outcome: "unresolved",
+        run_id: posted.run_id,
+        evidence_ids: ["verification:latency"],
+        rationale: "Latency rose above threshold again.",
+      }),
+    });
+
+    expect(unauthorized.status).toBe(401);
+    expect(mismatched.status).toBe(409);
+    expect(first).toMatchObject({
+      created: true,
+      verification: { verification: { sourceReference: "operator:test-sre" } },
+      lifecycle: { projection: { state: "resolved" } },
+    });
+    expect(duplicate).toMatchObject({ created: false, lifecycle: { verificationEvents: [{ }] } });
+    expect(review.lifecycle).toMatchObject({ projection: { state: "resolved" } });
+    expect(unresolved).toMatchObject({
+      recovery: { budget: { failureClass: "unresolved_mitigation", attempts: 1 } },
+      lifecycle: { projection: { state: "recovering" } },
+    });
+  } finally {
+    await server.close();
+  }
+});
+
+test("server enforces durable recovery exhaustion and audited reset", async () => {
+  const runStore = new InMemoryTriageRunPersistenceStore();
+  const serverRuntime = runtime(undefined, defaultLlm(), undefined, "read_only", runStore);
+  serverRuntime.operatorWriteToken = "write-secret";
+  serverRuntime.operatorWriteActor = "operator:test-sre";
+  const server = startWebhookServer({ host: "127.0.0.1", port: 0, runtime: serverRuntime });
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const endpoint = `${baseUrl}/api/incidents/INC-RECOVERY/recovery/provider_unavailable`;
+    const write = (key: string, url = endpoint, body: Record<string, unknown> = {
+      run_id: "run-1",
+      rationale: "Provider request failed.",
+    }) => fetchJson(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer write-secret",
+        "Idempotency-Key": key,
+      },
+      body: JSON.stringify(body),
+    });
+    const attempts = [];
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      attempts.push(await write(`provider:${attempt}`));
+    }
+    const blocked = await write("provider:4");
+    const candidates = await fetchJson(`${baseUrl}/api/outcome-candidates?status=pending`, {
+      headers: { Authorization: "Bearer read-secret" },
+    });
+    const candidate = (candidates.candidates as Array<{ candidateId: string }>)[0]!;
+    const imported = await write(
+      "unused",
+      `${baseUrl}/api/outcome-candidates/${encodeURIComponent(candidate.candidateId)}/import`,
+      {},
+    );
+    const reset = await write("provider:reset:1", `${endpoint}/reset`, {
+      run_id: "run-1",
+      reason: "operator_reset",
+      rationale: "Provider health has recovered.",
+    });
+    const forgedMaterialReset = await write("provider:reset:2", `${endpoint}/reset`, {
+      reason: "material_evidence",
+      rationale: "Operator cannot claim a gate decision.",
+    });
+
+    expect(attempts.map((item) => (item.budget as any).attempts)).toEqual([1, 2, 3]);
+    expect(blocked).toMatchObject({ created: false, budget: { attempts: 3, exhausted: true } });
+    expect(candidate).toBeDefined();
+    expect(imported).toMatchObject({ candidate: { status: "imported" } });
+    expect(reset).toMatchObject({
+      created: true,
+      event: { actor: "operator:test-sre", eventType: "reset" },
+      budget: { attempts: 0, exhausted: false, generation: 1 },
+    });
+    expect(forgedMaterialReset).toMatchObject({ status: "error", error: "invalid_reset_reason" });
+  } finally {
+    await server.close();
+  }
+});
+
 test("server links local run reviews to approval decisions", async () => {
   const runStore = new InMemoryTriageRunPersistenceStore();
   const storePath = tempStorePath();
@@ -592,6 +803,7 @@ test("server links local run reviews to approval decisions", async () => {
         dry_run: true,
       },
     });
+    expect(refreshed.lifecycle).toMatchObject({ projection: { state: "awaiting_verification" } });
   } finally {
     await server.close();
   }

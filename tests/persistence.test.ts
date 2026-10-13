@@ -263,10 +263,15 @@ test("in-memory lifecycle persistence records verification idempotently and crea
   const duplicate = await store.recordVerificationOutcome(input, {
     now: new Date("2026-10-13T12:01:00.000Z"),
   });
+  const otherIncident = await store.recordVerificationOutcome({
+    ...input,
+    incidentId: "INC-2026-016",
+  });
   const lifecycle = await store.getIncidentLifecycle(input.incidentId);
 
   expect(first.created).toBe(true);
   expect(duplicate).toMatchObject({ created: false, record: { eventId: first.record.eventId } });
+  expect(otherIncident.created).toBe(true);
   expect(lifecycle.verificationEvents).toHaveLength(1);
   expect(lifecycle.projection).toMatchObject({ state: "recovering", verificationOutcome: "unresolved" });
   expect(lifecycle.candidates).toEqual([
@@ -301,7 +306,7 @@ test("in-memory recovery budgets isolate failure classes, stop at three, and res
     sourceEventKey: "connector:1",
     failureClass: "connector_failure",
     rationale: "Loki timed out.",
-  });
+  }, { now: new Date("2026-10-13T12:03:30.000Z") });
   const reset = await store.resetRecoveryBudget({
     incidentId: "INC-2026-015",
     runId: "run-1",
@@ -310,8 +315,21 @@ test("in-memory recovery budgets isolate failure classes, stop at three, and res
     reason: "operator_reset",
     actor: "operator:local-sre",
     rationale: "Provider health is restored.",
-  });
+  }, { now: new Date("2026-10-13T12:04:00.000Z") });
   const lifecycle = await store.getIncidentLifecycle("INC-2026-015");
+  await store.recordVerificationOutcome({
+    incidentId: "INC-2026-015",
+    sourceEventKey: "verification:resolved-after-exhaustion",
+    verification: {
+      outcome: "resolved",
+      source: "operator",
+      sourceReference: "operator:local-sre",
+      runId: "run-1",
+      evidenceIds: ["verification:latency"],
+      rationale: "Independent evidence confirms recovery.",
+    },
+  }, { now: new Date("2026-10-13T12:04:00.000Z") });
+  const resolvedLifecycle = await store.getIncidentLifecycle("INC-2026-015");
 
   expect(blocked.created).toBe(false);
   expect(blocked.budget).toMatchObject({ attempts: 3, exhausted: true });
@@ -324,6 +342,7 @@ test("in-memory recovery budgets isolate failure classes, stop at three, and res
   expect(lifecycle.candidates).toEqual(expect.arrayContaining([
     expect.objectContaining({ category: "recovery_exhausted", status: "pending" }),
   ]));
+  expect(resolvedLifecycle.projection.state).toBe("resolved");
 });
 
 test("in-memory outcome candidates are reduced, idempotent, and importable", async () => {

@@ -25,6 +25,7 @@ import {
   loadPromotedCase,
   loadReviewBatch,
   loadReviewRecord,
+  outcomeCandidateToFailureRun,
   promoteCandidateObservation,
   promoteFailureMode,
   retireFailureMode,
@@ -39,6 +40,26 @@ import {
 } from "../evals/failure-discovery";
 
 describe("failure discovery review domain", () => {
+  test("converts a reduced runtime outcome into an ordinary pending review run", () => {
+    const run = outcomeCandidateToFailureRun({
+      candidateId: "candidate-1",
+      incidentId: "INC-1",
+      runId: "run-1",
+      category: "corrected_finding",
+      rationale: "The deploy was unrelated.",
+      evidenceIds: ["deploy:0"],
+      snapshot: { incident_class: "bad_deploy" },
+      createdAt: "2026-10-13T12:00:00.000Z",
+    });
+
+    expect(run).toMatchObject({
+      runId: "outcome:candidate-1",
+      sourceKind: "recorded",
+      scenarioName: "runtime:corrected_finding",
+      outcome: { status: "runtime_outcome_candidate", incident_id: "INC-1" },
+    });
+  });
+
   test("creates a valid empty batch workspace", () => {
     const root = tempRoot();
     const manifest = createReviewBatch(root, {

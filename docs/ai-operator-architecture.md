@@ -17,6 +17,7 @@ The prototype shows how an incident triage agent can move from alert to approval
 - The Mitigation Control Plane maps approval-sensitive actions to a catalog, evidence checks, dry-run record, staged approval request, audit event, and verification status.
 - The approval console lets a human approve or reject the staged mitigation.
 - The executor boundary records simulated execution only. Production action remains `executed: false`.
+- The lifecycle controller waits for independent closure evidence, caps recovery per failure class, and sends poor outcomes to human eval review.
 - Tests and evals check the safety contract without relying on the model to grade itself.
 
 ## Architecture
@@ -42,6 +43,10 @@ flowchart LR
   N --> O{"Human decision"}
   O -->|approve| P["Simulated executor record"]
   O -->|reject| Q["Rejected approval record"]
+  P --> S["Independent closure verification"]
+  S --> T{"Resolved?"}
+  T -->|no| U["Class-specific recovery budget"]
+  U --> V["Pending outcome review candidate"]
   P --> S["Scorecard and audit trail"]
   Q --> S
   J --> S
@@ -80,6 +85,7 @@ The review path for a Phase 1 incident is the persisted run envelope plus eviden
 | Provenance summary | deterministic code | Whether cited evidence is current, operational, guidance, or historical | Model-generated confidence |
 | Mitigation Control Plane | deterministic code | Catalog match, evidence checks, approval posture, dry-run, verification | Real production mutation |
 | Approval store and console | deterministic code plus human | Human approval/rejection record | Actual rollback, scaling, throttling, or ticketing |
+| Incident lifecycle controller | deterministic code plus trusted evidence | Closure state, recovery budget, and pending review candidates | LLM-declared resolution or unreviewed eval promotion |
 | Simulated executor | deterministic code | Proof that execution remains disabled | Production change |
 | Scorecard and evals | deterministic code | Contract compliance and regression detection | Freeform quality as a safety substitute |
 

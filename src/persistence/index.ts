@@ -420,13 +420,14 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     input: VerificationOutcomeWriteInput,
     options: PersistTriageRunOptions = {},
   ): Promise<VerificationOutcomeWriteResult> {
-    const existingId = this.verificationEventKeys.get(input.sourceEventKey);
+    const sourceKey = verificationSourceKey(input.incidentId, input.sourceEventKey);
+    const existingId = this.verificationEventKeys.get(sourceKey);
     if (existingId) {
       return { record: requiredMapValue(this.verificationEvents, existingId, "verification event"), created: false };
     }
     const record = buildVerificationRecord(input, options);
     this.verificationEvents.set(record.eventId, record);
-    this.verificationEventKeys.set(record.sourceEventKey, record.eventId);
+    this.verificationEventKeys.set(sourceKey, record.eventId);
     if (record.verification.outcome === "unresolved") {
       await this.recordOutcomeReviewCandidate(candidateFromVerification(record), options);
     }
@@ -458,7 +459,8 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     input: RecoveryFailureWriteInput,
     options: PersistTriageRunOptions = {},
   ): Promise<RecoveryWriteResult> {
-    const existingId = this.recoveryEventKeys.get(input.sourceEventKey);
+    const sourceKey = recoverySourceKey(input.incidentId, input.failureClass, input.sourceEventKey);
+    const existingId = this.recoveryEventKeys.get(sourceKey);
     if (existingId) {
       const event = requiredMapValue(this.recoveryEvents, existingId, "recovery event");
       return { event, budget: this.requiredBudget(input.incidentId, input.failureClass), created: false };
@@ -478,7 +480,7 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
       expiresAt: event.expiresAt,
     };
     this.recoveryEvents.set(event.eventId, event);
-    this.recoveryEventKeys.set(event.sourceEventKey, event.eventId);
+    this.recoveryEventKeys.set(sourceKey, event.eventId);
     this.recoveryBudgets.set(key, nextBudget);
     if (nextBudget.exhausted) {
       const exhausted = buildRecoveryEvent(
@@ -489,7 +491,10 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
         { attempt },
       );
       this.recoveryEvents.set(exhausted.eventId, exhausted);
-      this.recoveryEventKeys.set(exhausted.sourceEventKey, exhausted.eventId);
+      this.recoveryEventKeys.set(
+        recoverySourceKey(exhausted.incidentId, exhausted.failureClass, exhausted.sourceEventKey),
+        exhausted.eventId,
+      );
       await this.recordOutcomeReviewCandidate(candidateFromRecoveryExhaustion(exhausted), options);
     }
     return { event, budget: nextBudget, created: true };
@@ -499,7 +504,8 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     input: RecoveryResetWriteInput,
     options: PersistTriageRunOptions = {},
   ): Promise<RecoveryWriteResult> {
-    const existingId = this.recoveryEventKeys.get(input.sourceEventKey);
+    const sourceKey = recoverySourceKey(input.incidentId, input.failureClass, input.sourceEventKey);
+    const existingId = this.recoveryEventKeys.get(sourceKey);
     if (existingId) {
       const event = requiredMapValue(this.recoveryEvents, existingId, "recovery event");
       return { event, budget: this.requiredBudget(input.incidentId, input.failureClass), created: false };
@@ -520,7 +526,7 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
       expiresAt: event.expiresAt,
     };
     this.recoveryEvents.set(event.eventId, event);
-    this.recoveryEventKeys.set(event.sourceEventKey, event.eventId);
+    this.recoveryEventKeys.set(sourceKey, event.eventId);
     this.recoveryBudgets.set(key, budget);
     return { event, budget, created: true };
   }
@@ -619,14 +625,14 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
     for (const [eventId, record] of this.verificationEvents.entries()) {
       if (record.expiresAt <= cutoff) {
         this.verificationEvents.delete(eventId);
-        this.verificationEventKeys.delete(record.sourceEventKey);
+        this.verificationEventKeys.delete(verificationSourceKey(record.incidentId, record.sourceEventKey));
         verificationEventsDeleted += 1;
       }
     }
     for (const [eventId, record] of this.recoveryEvents.entries()) {
       if (record.expiresAt <= cutoff) {
         this.recoveryEvents.delete(eventId);
-        this.recoveryEventKeys.delete(record.sourceEventKey);
+        this.recoveryEventKeys.delete(recoverySourceKey(record.incidentId, record.failureClass, record.sourceEventKey));
         recoveryEventsDeleted += 1;
       }
     }
@@ -915,7 +921,10 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
       const record = buildVerificationRecord(input, options);
       const inserted = await insertVerificationRecord(client, record);
       if (!inserted) {
-        return { record: await selectVerificationBySourceKey(client, input.sourceEventKey), created: false };
+        return {
+          record: await selectVerificationBySourceKey(client, input.incidentId, input.sourceEventKey),
+          created: false,
+        };
       }
       if (record.verification.outcome === "unresolved") {
         await insertOutcomeCandidate(client, buildOutcomeCandidate(candidateFromVerification(record), options));
@@ -965,7 +974,12 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
   ): Promise<RecoveryWriteResult> {
     return this.withTransaction(async (client) => {
       await lockRecoveryBudget(client, input.incidentId, input.failureClass);
-      const existing = await findRecoveryBySourceKey(client, input.sourceEventKey);
+      const existing = await findRecoveryBySourceKey(
+        client,
+        input.incidentId,
+        input.failureClass,
+        input.sourceEventKey,
+      );
       if (existing) {
         return {
           event: existing,
@@ -1013,7 +1027,12 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
   ): Promise<RecoveryWriteResult> {
     return this.withTransaction(async (client) => {
       await lockRecoveryBudget(client, input.incidentId, input.failureClass);
-      const existing = await findRecoveryBySourceKey(client, input.sourceEventKey);
+      const existing = await findRecoveryBySourceKey(
+        client,
+        input.incidentId,
+        input.failureClass,
+        input.sourceEventKey,
+      );
       if (existing) {
         return {
           event: existing,
@@ -1778,11 +1797,11 @@ function compareLifecycleEvents(left: IncidentLifecycleEvent, right: IncidentLif
     return chronological;
   }
   const priority: Record<IncidentLifecycleEvent["type"], number> = {
-    verification_recorded: 0,
-    recovery_attempted: 1,
-    recovery_exhausted: 2,
-    recovery_reset: 3,
-    reentry_recorded: 4,
+    recovery_attempted: 0,
+    recovery_exhausted: 1,
+    recovery_reset: 2,
+    reentry_recorded: 3,
+    verification_recorded: 4,
   };
   return priority[left.type] - priority[right.type];
 }
@@ -1807,6 +1826,18 @@ function stableId(prefix: string, ...parts: string[]): string {
 
 function recoveryBudgetKey(incidentId: string, failureClass: RecoveryFailureClass): string {
   return `${incidentId}\0${failureClass}`;
+}
+
+function verificationSourceKey(incidentId: string, sourceEventKey: string): string {
+  return `${incidentId}\0${sourceEventKey}`;
+}
+
+function recoverySourceKey(
+  incidentId: string,
+  failureClass: RecoveryFailureClass,
+  sourceEventKey: string,
+): string {
+  return `${incidentId}\0${failureClass}\0${sourceEventKey}`;
 }
 
 function outcomeCandidateKey(input: Pick<OutcomeReviewCandidateInput, "incidentId" | "category" | "sourceEventId">): string {
@@ -1839,7 +1870,7 @@ async function insertVerificationRecord(
       event_id, incident_id, source_event_key, run_id, outcome, source, source_reference,
       evidence_ids, rationale, retention_class, created_at, expires_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12)
-    ON CONFLICT (source_event_key) DO NOTHING
+    ON CONFLICT (incident_id, source_event_key) DO NOTHING
     RETURNING event_id`,
     [
       record.eventId,
@@ -1861,11 +1892,12 @@ async function insertVerificationRecord(
 
 async function selectVerificationBySourceKey(
   client: PoolClient,
+  incidentId: string,
   sourceEventKey: string,
 ): Promise<VerificationOutcomeRecord> {
   const result = await client.query<VerificationOutcomeRow>(
-    "SELECT * FROM incident_verification_events WHERE source_event_key = $1",
-    [sourceEventKey],
+    "SELECT * FROM incident_verification_events WHERE incident_id = $1 AND source_event_key = $2",
+    [incidentId, sourceEventKey],
   );
   const row = result.rows[0];
   if (!row) {
@@ -1992,11 +2024,14 @@ async function insertRecoveryEvent(client: PoolClient, record: RecoveryEventReco
 
 async function findRecoveryBySourceKey(
   client: PoolClient,
+  incidentId: string,
+  failureClass: RecoveryFailureClass,
   sourceEventKey: string,
 ): Promise<RecoveryEventRecord | undefined> {
   const result = await client.query<RecoveryEventRow>(
-    "SELECT * FROM incident_recovery_events WHERE source_event_key = $1",
-    [sourceEventKey],
+    `SELECT * FROM incident_recovery_events
+     WHERE incident_id = $1 AND failure_class = $2 AND source_event_key = $3`,
+    [incidentId, failureClass, sourceEventKey],
   );
   return result.rows[0] ? recoveryEventFromRow(result.rows[0]) : undefined;
 }

@@ -5,7 +5,7 @@
 ![Node](https://img.shields.io/badge/Node.js-22-green)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A TypeScript prototype of an AI-assisted SRE operator. It takes incident signals, gathers evidence, asks an LLM for one bounded judgment, validates that judgment locally, and routes risky mitigations through deterministic safety and approval controls.
+A TypeScript AI-assisted SRE operator. It takes incident signals, gathers evidence, asks an LLM for one bounded judgment, validates that judgment locally, routes risky mitigations through deterministic safety controls, and tracks independent closure evidence.
 
 This is not an incident chatbot. The project is about control: the workflow owns state, evidence, validation, provenance, mitigation policy, approval staging, audit output, persistence, and scoring. The LLM is limited to explaining the evidence and choosing from a fixed operational taxonomy.
 
@@ -20,6 +20,9 @@ This is not an incident chatbot. The project is about control: the workflow owns
 - Persists run reviews and evidence snapshots in memory or Postgres.
 - Compares fresh evidence with the latest retained incident run and retriggers triage only for a first observation or material change.
 - Exposes browser consoles for run review and approval decisions.
+- Records resolved, unresolved, or inconclusive verification without treating approval as closure.
+- Caps recovery attempts at three per incident and failure class, with audited resets.
+- Sends reduced poor-outcome candidates into the human failure-review workflow.
 - Runs deterministic tests and evals for schema, evidence grounding, safety, mitigation governance, and readability.
 - Reviews representative run batches, promotes recurring first failures into a living taxonomy, and links them to executable regressions.
 
@@ -178,6 +181,34 @@ Allowed `next_action` values:
 The provider response is never trusted directly. Local validation checks JSON shape, taxonomy values, confidence, and cited evidence IDs before the workflow applies mitigation governance or safety policy.
 
 In read-only server mode, a separate pre-triage gate compares the fresh evidence package with the latest retained run for the same normalized incident ID. A first observation or material change returns `200` and creates a complete run. Equivalent evidence returns `202` with `reason: non_material_evidence`, the prior run ID, and a durable gate-decision ID. Ambiguous deltas may use the separate `evidence-materiality` skill; invalid or unavailable classifier output falls back to retriage. Material means worthy of retriage, not approved to act.
+
+## Incident Closure And Recovery
+
+Completed triage, human approval, and simulated execution do not resolve an incident. The lifecycle layer accepts an independent operator verification of `resolved`, `unresolved`, or `inconclusive`, preserves related run and evidence references, and exposes the current projection through the run review and incident lifecycle APIs.
+
+Human lifecycle writes use `OPERATOR_WRITE_TOKEN`, distinct from `OPERATOR_READ_TOKEN`. Scriptable equivalents are available through:
+
+```bash
+npm run triage:lifecycle -- status INC-2026-015
+npm run triage:lifecycle -- verify INC-2026-015 resolved \
+  --run-id triage-run:bad-deploy-latency \
+  --evidence-id verification:latency \
+  --rationale "Latency and error rate returned to normal." \
+  --idempotency-key verification:INC-2026-015:1
+npm run triage:lifecycle -- candidates --status pending
+```
+
+Recovery attempts are counted separately for `provider_unavailable`, `invalid_model_output`, `connector_failure`, and `unresolved_mitigation`. A class stops after three attempts. Missing evidence and policy blocks stop for human input without consuming a retry.
+
+Unresolved verification and recovery exhaustion create reduced pending outcome candidates. Export selected candidates from `GET /api/outcome-candidates`, then import that JSON into the existing review workflow:
+
+```bash
+npm run review:failures -- import-candidates lifecycle-review \
+  --input pending-candidates.json \
+  --json
+```
+
+Import creates ordinary pending reviews only. It does not update the failure taxonomy or committed regression cases.
 
 ## Recorded Observability Path
 
@@ -360,6 +391,7 @@ AI_OPERATOR_MODE=read_only
 DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage
 GRAFANA_WEBHOOK_SECRET=replace-with-a-local-webhook-secret
 OPERATOR_READ_TOKEN=replace-with-a-local-read-token
+OPERATOR_WRITE_TOKEN=replace-with-a-distinct-local-write-token
 LOKI_BASE_URL=http://localhost:3100
 LOKI_LIMIT=20
 LOKI_TIMEOUT_MS=10000

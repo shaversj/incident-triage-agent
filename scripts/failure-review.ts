@@ -16,6 +16,7 @@ import {
   latestFailureMode,
   loadFailureTaxonomy,
   loadReviewBatch,
+  outcomeCandidateToFailureRun,
   parseFailureReviewRecord,
   promoteCandidateObservation,
   promoteFailureMode,
@@ -60,6 +61,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         return reviseMode(args);
       case "retire-mode":
         return retireMode(args);
+      case "import-candidates":
+        return importCandidates(args);
       default:
         throw new Error(`Unknown command: ${args.command || "(missing)"}.`);
     }
@@ -67,6 +70,72 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     process.stderr.write(`Failure review error: ${safeMessage(error)}\n`);
     return 1;
   }
+}
+
+function importCandidates(args: ParsedArgs): number {
+  const batchId = requiredPositional(args, 0, "batch id");
+  const inputPath = requiredOption(args, "--input");
+  const payload = JSON.parse(inputPath === "-" ? readFileSync(0, "utf8") : readFileSync(inputPath, "utf8")) as unknown;
+  const source = Array.isArray(payload)
+    ? payload
+    : objectValue(payload).candidates;
+  if (!Array.isArray(source) || source.length === 0) {
+    throw new Error("Candidate input must contain a non-empty candidate array.");
+  }
+  const candidates = source.map(parseImportableCandidate);
+  const root = rootOption(args);
+  const generatedAt = new Date().toISOString();
+  createReviewBatch(root, {
+    batchId,
+    changeLabel: option(args, "--change") ?? "runtime-outcome-candidates",
+    requestedSize: candidates.length,
+    repositoryRevision: gitOutput(["rev-parse", "HEAD"]),
+    repositoryDirty: gitOutput(["status", "--porcelain"]).length > 0,
+    generatedAt,
+  });
+  for (const candidate of candidates) {
+    addRunToBatch(root, batchId, outcomeCandidateToFailureRun(candidate));
+  }
+  completeReviewBatch(root, batchId);
+  const batch = loadReviewBatch(root, batchId);
+  writeFileSync(reviewPaths(root, batchId).summary, renderReviewBatchSummary(batch));
+  printResult(
+    args,
+    { batch_id: batchId, imported: candidates.length, run_ids: batch.manifest.runIds },
+    `Imported ${candidates.length} outcome candidate(s) into ${batchId}.`,
+  );
+  return 0;
+}
+
+function parseImportableCandidate(value: unknown) {
+  const source = objectValue(value);
+  const candidateId = stringValue(source.candidateId ?? source.candidate_id, "candidate_id");
+  const incidentId = stringValue(source.incidentId ?? source.incident_id, "incident_id");
+  const category = stringValue(source.category, "category");
+  const rationale = stringValue(source.rationale, "rationale");
+  const createdAt = stringValue(source.createdAt ?? source.created_at, "created_at");
+  const evidenceSource = source.evidenceIds ?? source.evidence_ids;
+  if (!Array.isArray(evidenceSource)) {
+    throw new Error("evidence_ids must be an array.");
+  }
+  const runId = source.runId ?? source.run_id;
+  return {
+    candidateId,
+    incidentId,
+    category,
+    rationale,
+    createdAt,
+    evidenceIds: evidenceSource.map((item) => stringValue(item, "evidence_id")),
+    snapshot: objectValue(source.snapshot),
+    ...(typeof runId === "string" && runId ? { runId } : {}),
+  };
+}
+
+function stringValue(value: unknown, label: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} must be a non-empty string.`);
+  }
+  return value.trim();
 }
 
 async function generateBatch(args: ParsedArgs): Promise<number> {

@@ -140,6 +140,42 @@ export interface PromoteFailureModeOptions {
   distinguishingNotes: string;
 }
 
+export interface ImportableOutcomeCandidate {
+  candidateId: string;
+  incidentId: string;
+  runId?: string;
+  category: string;
+  rationale: string;
+  evidenceIds: string[];
+  snapshot: Record<string, unknown>;
+  createdAt: string;
+}
+
+export function outcomeCandidateToFailureRun(candidate: ImportableOutcomeCandidate): FailureRunRecord {
+  const outcome: Record<string, unknown> = {
+    status: "runtime_outcome_candidate",
+    run_id: candidate.runId ?? `candidate:${candidate.candidateId}`,
+    run_status: "recoverable_failure",
+    incident_id: candidate.incidentId,
+    category: candidate.category,
+    rationale: candidate.rationale,
+    evidence: candidate.evidenceIds.map((evidenceId) => ({ evidence_id: evidenceId })),
+    snapshot: candidate.snapshot,
+    states: ["outcome_recorded", "pending_human_review"],
+  };
+  return {
+    schemaVersion: failureDiscoverySchemaVersion,
+    runId: `outcome:${candidate.candidateId}`,
+    caseId: candidate.candidateId,
+    sourceKind: "recorded",
+    scenarioName: `runtime:${candidate.category}`,
+    mode: "mock",
+    generatedAt: candidate.createdAt,
+    fingerprint: fingerprintJson(outcome),
+    outcome,
+  };
+}
+
 export function reviewPaths(root: string, batchId: string): ReviewBatchPaths {
   assertSafeBatchId(batchId);
   const directory = join(root, batchId);

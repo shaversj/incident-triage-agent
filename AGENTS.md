@@ -27,7 +27,10 @@ Primary TypeScript code lives in `src/`:
 - `loki.ts`: bounded Loki query client and log evidence conversion.
 - `llm.ts`: Flue-backed MiniMax decision adapter and decision validation.
 - `mitigation-control.ts`: catalog-backed mitigation governance, dry-run, staged action, audit, and verification simulation.
-- `persistence/`: Phase 1 run/evidence/replay persistence interfaces, in-memory test store, Postgres store, and SQL migrations.
+- `incident-lifecycle.ts`: deterministic closure states, verification outcomes, failure classes, and transition rules.
+- `recovery-budget.ts`: retryable versus human-stop recovery policy.
+- `outcome-promotion.ts`: privacy-minimized outcome candidate construction.
+- `persistence/`: run, evidence, lifecycle, recovery, candidate, and replay persistence with in-memory and Postgres implementations.
 - `policy.ts`: safety compatibility gate derived from mitigation governance.
 - `recorded-observability.ts`: recorded Loki-shaped log replay for recorded triage runs and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
@@ -84,6 +87,10 @@ git diff --check
 
 - Never commit `.env`, API keys, provider secrets, or real credentials.
 - Do not print secret values in CLI output, test failures, logs, docs, or exceptions.
+- Never use `OPERATOR_READ_TOKEN` for mutations. Lifecycle writes require the distinct `OPERATOR_WRITE_TOKEN`, except loopback-only local demos.
+- Approval and simulated execution are not closure. Only explicit operator or trusted observability verification may record `resolved`.
+- Do not add recursive retries or background retry schedulers. One eligible trigger may reserve one class-specific attempt, capped at three.
+- Runtime outcome candidates stay pending and reduced; they must not directly modify failure taxonomy or committed eval cases.
 - Keep fixtures raw. Scenario incident data must not contain `suspected_causes`, `recommended_actions`, or `requires_approval`.
 - Keep Grafana webhook ingestion raw. Alert labels and annotations may become facts, but they must not become suspected causes, recommended actions, or eval expectations.
 - Keep bad-deploy webhook evidence raw. Deployment facts belong in deploy evidence fixtures or real deploy sources, not rollback hints inside Grafana annotations.
@@ -107,7 +114,7 @@ git diff --check
 - Preserve stable evidence IDs when changing mock tools or fixtures.
 - Tests must not require real MiniMax credentials or network access.
 - Recorded observability tests should replay Grafana webhook payloads and Loki-shaped logs through real handler and workflow code.
-- The Phase 1 read-only canary must keep signed webhook ingestion, run persistence, evidence snapshot persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts intact.
+- The Phase 1 read-only canary must keep signed webhook ingestion, run and lifecycle persistence, evidence snapshot persistence, replay rejection, disabled approval routes, and no approval/staged-action artifacts intact.
 - The default suite must not start Docker, Grafana, Loki, or a synthetic service.
 - Flue evals must remain separate from the default test suite. Use them for prompt, skill, and model behavior drift, not for deterministic safety enforcement.
 - Live Flue/MiniMax evals must require `RUN_LIVE_FLUE_EVALS=1`.
