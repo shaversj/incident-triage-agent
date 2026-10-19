@@ -5,6 +5,7 @@ import { loadScenario } from "../src/domain";
 import { loadTools } from "../src/evidence";
 import { StaticDecisionClient } from "../src/llm";
 import { InMemoryTriageRunPersistenceStore, buildReplayKey } from "../src/persistence";
+import { decodeTriageRunReviewEnvelope } from "../src/persistence/postgres-row-mapping";
 import type { EvidenceDelta, MaterialityDecision } from "../src/reentry";
 import { TriageWorkflow } from "../src/workflow";
 
@@ -46,6 +47,7 @@ test("in-memory persistence records completed read-only run envelope and evidenc
   expect(record.reviewEnvelope?.mitigationControl).toMatchObject({
     status: "approval_required",
   });
+  expect(decodeTriageRunReviewEnvelope(record.reviewEnvelope)).toEqual(record.reviewEnvelope);
   expect(snapshot?.evidence).toHaveLength(run.evidencePackage?.evidence.length ?? 0);
   expect(snapshot?.missingContext).toEqual(run.evidencePackage?.missingContext);
 });

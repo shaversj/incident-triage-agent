@@ -14,8 +14,13 @@ import {
   type RecoveryResetReason,
   type VerificationOutcomeInput,
 } from "../incident-lifecycle";
+import type { ProvenanceSummary } from "../evidence";
+import type { ExplanationValidation, TriageDecision, TriageExplanation } from "../llm";
+import type { MitigationControlResult } from "../mitigation-control";
+import type { SafetyResult } from "../policy";
 import type { EvidenceDelta, MaterialityBasis, MaterialityDecision, MaterialityOutcome } from "../reentry";
-import type { TriageRun } from "../workflow";
+import type { InvestigationTrace, TriageRun } from "../workflow";
+import { decodeTriageRunReviewEnvelope } from "./postgres-row-mapping";
 
 export type RetentionClass = "ephemeral" | "read_only_triage";
 
@@ -51,14 +56,14 @@ export interface TriageRunRecord {
 }
 
 export interface TriageRunReviewEnvelope {
-  investigation?: unknown;
-  validation?: unknown;
-  explanation?: unknown;
-  explanationValidation?: unknown;
-  decision?: unknown;
-  safety?: unknown;
-  mitigationControl?: unknown;
-  provenance?: unknown;
+  investigation?: InvestigationTrace;
+  validation?: { valid: boolean; errors: string[] };
+  explanation?: TriageExplanation;
+  explanationValidation?: ExplanationValidation;
+  decision?: TriageDecision;
+  safety?: SafetyResult;
+  mitigationControl?: MitigationControlResult;
+  provenance?: ProvenanceSummary;
 }
 
 export interface EvidenceSnapshotRecord {
@@ -258,8 +263,8 @@ export interface ReplayKeyClaim {
 export interface TriageRunPersistenceStore {
   migrate?(): Promise<void>;
   recordTriageRun(run: TriageRun, options?: PersistTriageRunOptions): Promise<TriageRunRecord>;
-  listTriageRuns?(options?: { limit?: number }): Promise<TriageRunRecord[]>;
-  getTriageRunReview?(runId: string): Promise<TriageRunReviewRecord | undefined>;
+  listTriageRuns(options?: { limit?: number }): Promise<TriageRunRecord[]>;
+  getTriageRunReview(runId: string): Promise<TriageRunReviewRecord | undefined>;
   getLatestIncidentBaseline(
     incidentId: string,
     options?: IncidentBaselineLookupOptions,
@@ -300,7 +305,7 @@ export interface TriageRunPersistenceStore {
     options?: { now?: Date },
   ): Promise<OutcomeReviewCandidateRecord>;
   claimReplayKey(input: ReplayKeyInput): Promise<ReplayKeyClaim>;
-  releaseReplayKey?(replayKey: string): Promise<void>;
+  releaseReplayKey(replayKey: string): Promise<void>;
   cleanupExpired(now?: Date): Promise<CleanupResult>;
   close?(): Promise<void>;
 }
@@ -903,7 +908,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
       `SELECT
         run_id, incident_id, incident_title, severity, incident_status, started_at,
         scenario_name, service, run_status, validation_status, safety_status,
-        mitigation_status, evidence_ids, scorecard, review_envelope, retention_class,
+        mitigation_status, evidence_ids, scorecard, retention_class,
         correlation_id, parent_run_id, gate_decision_id, created_at, expires_at
        FROM incident_runs
        ORDER BY created_at DESC
@@ -1228,7 +1233,7 @@ interface RunRecordRow {
   mitigation_status: string | null;
   evidence_ids: unknown;
   scorecard: unknown;
-  review_envelope: TriageRunReviewEnvelope | null;
+  review_envelope: unknown;
   retention_class: RetentionClass;
   correlation_id: string;
   parent_run_id: string | null;
@@ -1347,8 +1352,9 @@ function runRecordFromRow(row: RunRecordRow): TriageRunRecord {
   if (row.scorecard !== null) {
     record.scorecard = row.scorecard;
   }
-  if (row.review_envelope) {
-    record.reviewEnvelope = row.review_envelope;
+  const reviewEnvelope = decodeTriageRunReviewEnvelope(row.review_envelope);
+  if (reviewEnvelope) {
+    record.reviewEnvelope = reviewEnvelope;
   }
   return record;
 }

@@ -1,3 +1,4 @@
+import { Pool } from "pg";
 import { expect, test } from "vitest";
 
 import { loadScenario } from "../src/domain";
@@ -156,6 +157,44 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review e
     expect(cleanup.outcomeCandidatesDeleted).toBeGreaterThanOrEqual(2);
     expect(await store.getTriageRunReview(recorded.run.runId)).toBeUndefined();
   } finally {
+    await store.close();
+  }
+});
+
+test.runIf(Boolean(databaseUrl))("Postgres persistence isolates malformed retained envelopes from run summaries", async () => {
+  const store = new PostgresTriageRunPersistenceStore({ connectionString: databaseUrl! });
+  const pool = new Pool({ connectionString: databaseUrl! });
+  const runId = `malformed-envelope:${Date.now()}`;
+  try {
+    await store.migrate();
+    await pool.query(
+      `INSERT INTO incident_runs (
+        run_id, incident_id, scenario_name, service, run_status, validation_status,
+        evidence_ids, review_envelope, retention_class, correlation_id, created_at, expires_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)`,
+      [
+        runId,
+        "INC-MALFORMED",
+        "retained-envelope-compatibility",
+        "checkout-api",
+        "completed",
+        "valid",
+        "[]",
+        JSON.stringify({ validation: { valid: "yes", errors: [] } }),
+        "read_only_triage",
+        "postgres-malformed-envelope",
+        new Date("2026-08-01T12:00:00.000Z"),
+        new Date("2026-08-02T12:00:00.000Z"),
+      ],
+    );
+
+    await expect(store.listTriageRuns({ limit: 100 })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ runId }),
+    ]));
+    await expect(store.getTriageRunReview(runId)).rejects.toThrow("review_envelope.validation.valid");
+  } finally {
+    await pool.query("DELETE FROM incident_runs WHERE run_id = $1", [runId]);
+    await pool.end();
     await store.close();
   }
 });

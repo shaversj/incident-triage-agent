@@ -13,7 +13,13 @@ import {
 import { approvalConsoleHtml } from "./approval-console";
 import type { OperatorMode } from "./config";
 import { type Scenario } from "./domain";
-import { EvidencePackage, PrebuiltOperationalTools, loadTools, type Evidence } from "./evidence";
+import {
+  EvidencePackage,
+  PrebuiltOperationalTools,
+  loadTools,
+  type Evidence,
+  type ProvenanceSummary,
+} from "./evidence";
 import {
   parseVerificationOutcomeInput,
   recoveryFailureClasses,
@@ -29,7 +35,7 @@ import {
   normalizeGrafanaPayload,
   verifyGrafanaWebhookHmac,
 } from "./grafana";
-import type { LLMDecisionClient, TriageDecision } from "./llm";
+import type { LLMDecisionClient, TriageDecision, TriageExplanation } from "./llm";
 import { noopLogger, type TriageLogger } from "./logger";
 import { loadMitigationCatalog, type MitigationControlResult } from "./mitigation-control";
 import { simulateApprovedMitigation } from "./mitigation-executor";
@@ -37,9 +43,10 @@ import { buildReducedOutcomeCandidate } from "./outcome-promotion";
 import type {
   EvidenceGateCandidate,
   IncidentBaseline,
-  TriageRunPersistenceStore,
   OutcomeReviewCandidateStatus,
+  TriageRunPersistenceStore,
   TriageRunRecord,
+  TriageRunReviewEnvelope,
   TriageRunReviewRecord,
 } from "./persistence";
 import { RecordedLokiClient } from "./recorded-observability";
@@ -49,7 +56,8 @@ import {
   type EvidenceReentryResult,
 } from "./reentry";
 import { runReviewConsoleHtml } from "./run-review-console";
-import { TriageWorkflow, type TriageRun } from "./workflow";
+import { TriageWorkflow, type InvestigationTrace, type TriageRun } from "./workflow";
+import type { SafetyResult } from "./policy";
 
 export interface WebhookRuntime {
   fixturesDir: string;
@@ -571,7 +579,7 @@ async function claimGrafanaReplay(
 
 async function releaseGrafanaReplay(replayKey: string, runtime: WebhookRuntime, logger: TriageLogger): Promise<void> {
   try {
-    await runtime.runStore?.releaseReplayKey?.(replayKey);
+    await runtime.runStore?.releaseReplayKey(replayKey);
   } catch (error) {
     logger.warn({ component: "server", error: error instanceof Error ? error.message : String(error) }, "Failed to release replay key");
   }
@@ -799,7 +807,7 @@ async function routeIncidentLifecycleApi(
       });
       return;
     }
-    const relatedRun = await runtime.runStore.getTriageRunReview?.(input.runId);
+    const relatedRun = await runtime.runStore.getTriageRunReview(input.runId);
     if (!relatedRun || relatedRun.run.incidentId !== incidentId) {
       writeJson(response, 409, { status: "error", error: "verification_run_incident_mismatch" });
       return;
@@ -1199,128 +1207,114 @@ function runApprovalToResponse(review: TriageRunReviewRecord, runtime: WebhookRu
 }
 
 function linkedApprovalId(review: TriageRunReviewRecord): string | undefined {
-  const envelope = objectValue(review.run.reviewEnvelope);
-  const mitigation = objectValue(envelope.mitigationControl);
-  const approvalRequest = objectValue(mitigation.approvalRequest);
-  if (typeof approvalRequest.approvalId === "string" && approvalRequest.approvalId.length > 0) {
-    return approvalRequest.approvalId;
+  const approvalId = review.run.reviewEnvelope?.mitigationControl?.approvalRequest?.approvalId;
+  if (approvalId && approvalId.length > 0) {
+    return approvalId;
   }
   return undefined;
 }
 
-function reviewEnvelopeToResponse(envelope: unknown): Record<string, unknown> | undefined {
-  const source = objectValue(envelope);
+function reviewEnvelopeToResponse(envelope: TriageRunReviewEnvelope | undefined): Record<string, unknown> | undefined {
+  if (!envelope) {
+    return undefined;
+  }
   const response: Record<string, unknown> = {};
-  if (source.investigation) {
-    response.investigation = investigationToResponse(source.investigation);
+  if (envelope.investigation) {
+    response.investigation = investigationToResponse(envelope.investigation);
   }
-  if (source.validation) {
-    response.validation = source.validation;
+  if (envelope.validation) {
+    response.validation = envelope.validation;
   }
-  if (source.explanation) {
-    response.explanation = explanationToResponse(source.explanation);
+  if (envelope.explanation) {
+    response.explanation = explanationToResponse(envelope.explanation);
   }
-  if (source.explanationValidation) {
-    response.explanation_validation = source.explanationValidation;
+  if (envelope.explanationValidation) {
+    response.explanation_validation = envelope.explanationValidation;
   }
-  if (source.decision) {
-    response.decision = decisionToResponse(source.decision);
+  if (envelope.decision) {
+    response.decision = decisionToResponse(envelope.decision);
   }
-  if (source.safety) {
-    response.safety = safetyToResponse(source.safety);
+  if (envelope.safety) {
+    response.safety = safetyToResponse(envelope.safety);
   }
-  if (source.mitigationControl) {
-    response.mitigation_control = mitigationControlToResponse(source.mitigationControl as MitigationControlResult);
+  if (envelope.mitigationControl) {
+    response.mitigation_control = mitigationControlToResponse(envelope.mitigationControl);
   }
-  if (source.provenance) {
-    response.provenance = provenanceToResponse(source.provenance);
+  if (envelope.provenance) {
+    response.provenance = provenanceToResponse(envelope.provenance);
   }
   return Object.keys(response).length > 0 ? response : undefined;
 }
 
-function investigationToResponse(investigation: unknown): Record<string, unknown> {
-  const source = objectValue(investigation);
+function investigationToResponse(investigation: InvestigationTrace): Record<string, unknown> {
   return {
-    summary: source.summary,
-    steps: arrayValue(source.steps).map((step) => {
-      const item = objectValue(step);
-      return {
-        id: item.id,
-        kind: item.kind,
-        status: item.status,
-        purpose: item.purpose,
-        evidence_ids: item.evidenceIds,
-      };
-    }),
+    summary: investigation.summary,
+    steps: investigation.steps.map((step) => ({
+      id: step.id,
+      kind: step.kind,
+      status: step.status,
+      purpose: step.purpose,
+      evidence_ids: step.evidenceIds,
+    })),
   };
 }
 
-function explanationToResponse(explanation: unknown): Record<string, unknown> {
-  const source = objectValue(explanation);
+function explanationToResponse(explanation: TriageExplanation): Record<string, unknown> {
   const response: Record<string, unknown> = {};
-  if (source.hypotheses) {
-    response.hypotheses = arrayValue(source.hypotheses).map((hypothesis) => {
-      const item = objectValue(hypothesis);
-      return {
-        label: item.label,
-        status: item.status,
-        supporting_evidence_ids: item.supportingEvidenceIds,
-        contradicting_evidence_ids: item.contradictingEvidenceIds,
-      };
-    });
+  if (explanation.hypotheses) {
+    response.hypotheses = explanation.hypotheses.map((hypothesis) => ({
+      label: hypothesis.label,
+      status: hypothesis.status,
+      supporting_evidence_ids: hypothesis.supportingEvidenceIds,
+      contradicting_evidence_ids: hypothesis.contradictingEvidenceIds,
+    }));
   }
-  if (source.findingSummary) {
-    response.finding_summary = source.findingSummary;
+  if (explanation.findingSummary) {
+    response.finding_summary = explanation.findingSummary;
   }
-  if (source.recommendation) {
-    const recommendation = objectValue(source.recommendation);
+  if (explanation.recommendation) {
     response.recommendation = {
-      rationale: recommendation.rationale,
-      evidence_ids: recommendation.evidenceIds,
+      rationale: explanation.recommendation.rationale,
+      evidence_ids: explanation.recommendation.evidenceIds,
     };
   }
   return response;
 }
 
-function decisionToResponse(decision: unknown): Record<string, unknown> {
-  const source = objectValue(decision);
+function decisionToResponse(decision: TriageDecision): Record<string, unknown> {
   return {
-    incident_class: source.incidentClass,
-    next_action: source.nextAction,
-    confidence: source.confidence,
-    evidence_ids: source.evidenceIds,
-    caveats: source.caveats,
-    verification_plan: source.verificationPlan,
+    incident_class: decision.incidentClass,
+    next_action: decision.nextAction,
+    confidence: decision.confidence,
+    evidence_ids: decision.evidenceIds,
+    caveats: decision.caveats,
+    verification_plan: decision.verificationPlan,
   };
 }
 
-function safetyToResponse(safety: unknown): Record<string, unknown> {
-  const source = objectValue(safety);
+function safetyToResponse(safety: SafetyResult): Record<string, unknown> {
   return {
-    status: source.status,
-    approval_required: source.approvalRequired,
-    reason: source.reason,
+    status: safety.status,
+    approval_required: safety.approvalRequired,
+    reason: safety.reason,
   };
 }
 
-function provenanceToResponse(provenance: unknown): Record<string, unknown> {
-  const source = objectValue(provenance);
+function provenanceToResponse(provenance: ProvenanceSummary): Record<string, unknown> {
   return {
-    available_tiers: source.availableTiers,
-    cited_tiers: source.citedTiers,
-    cited_sources: source.citedSources,
-    cited_evidence_ids: source.citedEvidenceIds,
-    missing_context: source.missingContext,
-    support: source.historicalOnly ? "historical_only" : source.hasCurrentOrOperationalSupport ? "current_or_operational" : "none",
+    available_tiers: provenance.availableTiers,
+    cited_tiers: provenance.citedTiers,
+    cited_sources: provenance.citedSources,
+    cited_evidence_ids: provenance.citedEvidenceIds,
+    missing_context: provenance.missingContext,
+    support: provenance.historicalOnly
+      ? "historical_only"
+      : provenance.hasCurrentOrOperationalSupport ? "current_or_operational" : "none",
   };
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
-}
-
-function arrayValue(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
 }
 
 function approvalsListResponse(runtime: WebhookRuntime): Record<string, unknown> {
@@ -1424,15 +1418,7 @@ function evidencePackageFromBaseline(baseline: IncidentBaseline): EvidencePackag
 }
 
 function priorDecisionFromBaseline(baseline?: IncidentBaseline): TriageDecision | undefined {
-  const decision = objectValue(objectValue(baseline?.run.reviewEnvelope).decision);
-  if (
-    typeof decision.incidentClass !== "string" ||
-    typeof decision.nextAction !== "string" ||
-    typeof decision.confidence !== "number"
-  ) {
-    return undefined;
-  }
-  return decision as unknown as TriageDecision;
+  return baseline?.run.reviewEnvelope?.decision;
 }
 
 function evidenceGateCandidate(
