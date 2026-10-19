@@ -19,8 +19,8 @@ test("phase 1 migration owns only run evidence and replay tables", () => {
   expect(sql).not.toContain("executor_attempts");
 });
 
-test("persistence store tracks applied migration files with checksums", () => {
-  const source = readFileSync("src/persistence/index.ts", "utf8");
+test("Postgres persistence tracks applied migration files with checksums", () => {
+  const source = readFileSync("src/persistence/postgres.ts", "utf8");
 
   expect(source).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
   expect(source).toContain("pg_advisory_xact_lock");

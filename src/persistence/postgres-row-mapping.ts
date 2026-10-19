@@ -21,8 +21,29 @@ import {
   type MitigationVerification,
 } from "../mitigation-control";
 import { safetyStatuses, type AuditEvent, type SafetyResult, type StagedPayload } from "../policy";
+import type {
+  OutcomeCandidateCategory,
+  RecoveryFailureClass,
+  RecoveryResetReason,
+  VerificationOutcomeInput,
+} from "../incident-lifecycle";
+import type { EvidenceDelta, MaterialityBasis, MaterialityOutcome } from "../reentry";
 import type { InvestigationTrace } from "../workflow";
-import type { PersistedValidationSummary, TriageRunReviewEnvelope } from "./contracts";
+import type {
+  EvidenceGateDecisionRecord,
+  IncidentBaseline,
+  OutcomeReviewCandidateRecord,
+  OutcomeReviewCandidateStatus,
+  PersistedValidationSummary,
+  RecoveryBudgetRecord,
+  RecoveryEventRecord,
+  RecoveryEventType,
+  RetentionClass,
+  TriageRunRecord,
+  TriageRunReviewEnvelope,
+  TriageRunReviewRecord,
+  VerificationOutcomeRecord,
+} from "./contracts";
 
 export function decodeTriageRunReviewEnvelope(value: unknown): TriageRunReviewEnvelope | undefined {
   if (value === null || value === undefined) {
@@ -376,4 +397,311 @@ function literals<const T extends readonly string[]>(value: unknown, allowed: T,
 
 function invalid(path: string, expected: string): Error {
   return new Error(`${path} must be ${expected}.`);
+}
+
+export interface RunRecordRow {
+  run_id: string;
+  incident_id: string;
+  incident_title: string | null;
+  severity: string | null;
+  incident_status: string | null;
+  started_at: Date | string | null;
+  scenario_name: string;
+  service: string;
+  run_status: string;
+  validation_status: "valid" | "invalid" | "not_available";
+  safety_status: string | null;
+  mitigation_status: string | null;
+  evidence_ids: unknown;
+  scorecard: unknown;
+  review_envelope: unknown;
+  retention_class: RetentionClass;
+  correlation_id: string;
+  parent_run_id: string | null;
+  gate_decision_id: string | null;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+export interface TriageRunReviewRow extends RunRecordRow {
+  parent_run_retained: boolean;
+  snapshot_evidence: unknown[] | null;
+  snapshot_missing_context: string[] | null;
+  snapshot_retention_class: RetentionClass | null;
+  snapshot_created_at: Date | string | null;
+  snapshot_expires_at: Date | string | null;
+}
+
+export interface IncidentBaselineRow extends RunRecordRow {
+  snapshot_evidence: unknown[];
+  snapshot_missing_context: string[];
+  snapshot_retention_class: RetentionClass;
+  snapshot_created_at: Date | string;
+  snapshot_expires_at: Date | string;
+}
+
+export interface EvidenceGateDecisionRow {
+  decision_id: string;
+  incident_id: string;
+  canonicalization_version: string;
+  candidate_digest: string;
+  baseline_key: string;
+  prior_run_id: string | null;
+  child_run_id: string | null;
+  outcome: MaterialityOutcome;
+  basis: MaterialityBasis;
+  delta: EvidenceDelta;
+  rationale: string;
+  cited_delta_refs: unknown;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+export interface VerificationOutcomeRow {
+  event_id: string;
+  incident_id: string;
+  source_event_key: string;
+  run_id: string;
+  outcome: VerificationOutcomeInput["outcome"];
+  source: VerificationOutcomeInput["source"];
+  source_reference: string;
+  evidence_ids: unknown;
+  rationale: string;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+export interface RecoveryBudgetRow {
+  incident_id: string;
+  failure_class: RecoveryFailureClass;
+  attempts: number;
+  attempt_limit: number;
+  exhausted: boolean;
+  generation: number;
+  updated_at: Date | string;
+  expires_at: Date | string;
+}
+
+export interface RecoveryEventRow {
+  event_id: string;
+  incident_id: string;
+  source_event_key: string;
+  event_type: RecoveryEventType;
+  failure_class: RecoveryFailureClass;
+  run_id: string | null;
+  attempt: number | null;
+  reason: RecoveryResetReason | null;
+  actor: string | null;
+  rationale: string;
+  generation: number;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+}
+
+export interface OutcomeReviewCandidateRow {
+  candidate_id: string;
+  incident_id: string;
+  run_id: string | null;
+  source_event_id: string;
+  category: OutcomeCandidateCategory;
+  rationale: string;
+  evidence_ids: unknown;
+  snapshot: Record<string, unknown>;
+  status: OutcomeReviewCandidateStatus;
+  retention_class: RetentionClass;
+  created_at: Date | string;
+  expires_at: Date | string;
+  imported_at: Date | string | null;
+}
+
+
+export function runRecordFromRow(row: RunRecordRow): TriageRunRecord {
+  const record: TriageRunRecord = {
+    runId: row.run_id,
+    incidentId: row.incident_id,
+    incidentTitle: row.incident_title ?? row.incident_id,
+    severity: row.severity ?? "unknown",
+    incidentStatus: row.incident_status ?? "unknown",
+    startedAt: row.started_at ? isoValue(row.started_at) : isoValue(row.created_at),
+    scenarioName: row.scenario_name,
+    service: row.service,
+    runStatus: row.run_status,
+    validationStatus: row.validation_status,
+    evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
+    retentionClass: row.retention_class,
+    correlationId: row.correlation_id,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+  if (row.parent_run_id) {
+    record.parentRunId = row.parent_run_id;
+  }
+  if (row.gate_decision_id) {
+    record.gateDecisionId = row.gate_decision_id;
+  }
+  if (row.safety_status) {
+    record.safetyStatus = row.safety_status;
+  }
+  if (row.mitigation_status) {
+    record.mitigationStatus = row.mitigation_status;
+  }
+  if (row.scorecard !== null) {
+    record.scorecard = row.scorecard;
+  }
+  const reviewEnvelope = decodeTriageRunReviewEnvelope(row.review_envelope);
+  if (reviewEnvelope) {
+    record.reviewEnvelope = reviewEnvelope;
+  }
+  return record;
+}
+
+export function triageRunReviewFromRow(
+  row: TriageRunReviewRow,
+  decisions: EvidenceGateDecisionRecord[],
+): TriageRunReviewRecord {
+  const run = runRecordFromRow(row);
+  const gateDecision = run.gateDecisionId
+    ? decisions.find((decision) => decision.decisionId === run.gateDecisionId)
+    : undefined;
+  if (!row.snapshot_evidence) {
+    return {
+      run,
+      ...(gateDecision ? { gateDecision } : {}),
+      parentRunRetained: row.parent_run_retained,
+      recentGateDecisions: decisions,
+    };
+  }
+  return {
+    run,
+    evidenceSnapshot: {
+      runId: row.run_id,
+      incidentId: row.incident_id,
+      evidence: row.snapshot_evidence,
+      missingContext: row.snapshot_missing_context ?? [],
+      retentionClass: row.snapshot_retention_class ?? row.retention_class,
+      createdAt: row.snapshot_created_at ? isoValue(row.snapshot_created_at) : run.createdAt,
+      expiresAt: row.snapshot_expires_at ? isoValue(row.snapshot_expires_at) : run.expiresAt,
+    },
+    ...(gateDecision ? { gateDecision } : {}),
+    parentRunRetained: row.parent_run_retained,
+    recentGateDecisions: decisions,
+  };
+}
+
+export function incidentBaselineFromRow(row: IncidentBaselineRow): IncidentBaseline {
+  return {
+    run: runRecordFromRow(row),
+    evidenceSnapshot: {
+      runId: row.run_id,
+      incidentId: row.incident_id,
+      evidence: row.snapshot_evidence,
+      missingContext: row.snapshot_missing_context,
+      retentionClass: row.snapshot_retention_class,
+      createdAt: isoValue(row.snapshot_created_at),
+      expiresAt: isoValue(row.snapshot_expires_at),
+    },
+  };
+}
+
+
+export function gateDecisionFromRow(row: EvidenceGateDecisionRow): EvidenceGateDecisionRecord {
+  const record: EvidenceGateDecisionRecord = {
+    decisionId: row.decision_id,
+    incidentId: row.incident_id,
+    canonicalizationVersion: row.canonicalization_version,
+    candidateDigest: row.candidate_digest,
+    baselineKey: row.baseline_key,
+    outcome: row.outcome,
+    basis: row.basis,
+    delta: row.delta,
+    rationale: row.rationale,
+    citedDeltaRefs: Array.isArray(row.cited_delta_refs) ? row.cited_delta_refs.map(String) : [],
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+  if (row.prior_run_id) {
+    record.priorRunId = row.prior_run_id;
+  }
+  if (row.child_run_id) {
+    record.childRunId = row.child_run_id;
+  }
+  return record;
+}
+
+
+export function verificationFromRow(row: VerificationOutcomeRow): VerificationOutcomeRecord {
+  return {
+    eventId: row.event_id,
+    incidentId: row.incident_id,
+    sourceEventKey: row.source_event_key,
+    verification: {
+      runId: row.run_id,
+      outcome: row.outcome,
+      source: row.source,
+      sourceReference: row.source_reference,
+      evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
+      rationale: row.rationale,
+    },
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+}
+
+export function recoveryBudgetFromRow(row: RecoveryBudgetRow): RecoveryBudgetRecord {
+  return {
+    incidentId: row.incident_id,
+    failureClass: row.failure_class,
+    attempts: row.attempts,
+    limit: row.attempt_limit,
+    exhausted: row.exhausted,
+    generation: row.generation,
+    updatedAt: isoValue(row.updated_at),
+    expiresAt: isoValue(row.expires_at),
+  };
+}
+
+export function recoveryEventFromRow(row: RecoveryEventRow): RecoveryEventRecord {
+  return {
+    eventId: row.event_id,
+    incidentId: row.incident_id,
+    sourceEventKey: row.source_event_key,
+    eventType: row.event_type,
+    failureClass: row.failure_class,
+    rationale: row.rationale,
+    generation: row.generation,
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.attempt !== null ? { attempt: row.attempt } : {}),
+    ...(row.reason ? { reason: row.reason } : {}),
+    ...(row.actor ? { actor: row.actor } : {}),
+  };
+}
+
+export function outcomeCandidateFromRow(row: OutcomeReviewCandidateRow): OutcomeReviewCandidateRecord {
+  return {
+    candidateId: row.candidate_id,
+    incidentId: row.incident_id,
+    sourceEventId: row.source_event_id,
+    category: row.category,
+    rationale: row.rationale,
+    evidenceIds: Array.isArray(row.evidence_ids) ? row.evidence_ids.map(String) : [],
+    snapshot: row.snapshot,
+    status: row.status,
+    retentionClass: row.retention_class,
+    createdAt: isoValue(row.created_at),
+    expiresAt: isoValue(row.expires_at),
+    ...(row.run_id ? { runId: row.run_id } : {}),
+    ...(row.imported_at ? { importedAt: isoValue(row.imported_at) } : {}),
+  };
+}
+
+export function isoValue(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

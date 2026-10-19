@@ -1,5 +1,5 @@
 import type { OutcomeCandidateCategory } from "./incident-lifecycle";
-import type { OutcomeReviewCandidateInput } from "./persistence";
+import type { OutcomeReviewCandidateInput } from "./persistence/contracts";
 
 const allowedSnapshotKeys = new Set([
   "approval_status",
