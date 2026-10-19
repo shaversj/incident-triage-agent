@@ -1,5 +1,11 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtempSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -262,6 +268,20 @@ describe("failure discovery review domain", () => {
     expect(() => saveReviewRecord(path, cyclic as unknown as FailureReviewRecord)).toThrow();
     expect(readFileSync(path, "utf8")).toBe(before);
   });
+
+  test("writes review artifacts with owner-only permissions", () => {
+    const path = join(tempRoot(), "review.json");
+    saveReviewRecord(path, {
+      schemaVersion: 1,
+      reviewId: "review:run-1",
+      runId: "run-1",
+      disposition: "pending",
+      downstreamEffects: [],
+      independentFindings: [],
+    });
+
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
 });
 
 describe("representative failure case catalog", () => {
@@ -493,6 +513,42 @@ describe("failure review CLI", () => {
     expect(result.stderr).toContain("RUN_LIVE_FLUE_EVALS=1");
     expect(() => readFileSync(join(root, "live-preflight", "manifest.json"))).toThrow();
   });
+
+  test("imports runtime candidates as pending reviews without promotion artifacts", async () => {
+    const root = tempRoot();
+    const inputPath = join(root, "candidates.json");
+    writeFileSync(inputPath, JSON.stringify({ candidates: [{
+      candidate_id: "candidate-cli-1",
+      incident_id: "INC-CLI-1",
+      run_id: "run-cli-1",
+      category: "corrected_finding",
+      rationale: "The deploy was unrelated.",
+      evidence_ids: ["deploy:0"],
+      snapshot: { incident_class: "bad_deploy" },
+      created_at: "2026-10-13T12:00:00.000Z",
+    }] }));
+
+    const result = await runFailureReviewCli([
+      "import-candidates",
+      "batch-runtime-import",
+      "--input",
+      inputPath,
+      "--root",
+      root,
+      "--json",
+    ]);
+    const batch = loadReviewBatch(root, "batch-runtime-import");
+
+    expect(result.exitCode).toBe(0);
+    expect(batch.manifest.status).toBe("complete");
+    expect(batch.reviews).toEqual([expect.objectContaining({ disposition: "pending" })]);
+    expect(batch.runs[0]?.outcome).toMatchObject({
+      status: "runtime_outcome_candidate",
+      states: ["outcome_recorded", "pending_human_review"],
+    });
+    expect(existsSync(join(root, "failure-taxonomy.json"))).toBe(false);
+    expect(existsSync(join(root, "failure-cases"))).toBe(false);
+  });
 });
 
 describe("failure taxonomy promotion", () => {
@@ -647,6 +703,74 @@ describe("failure taxonomy promotion", () => {
       runId: unsafeRun.runId,
       caseDirectory,
     })).toThrow("credential-bearing key api_key");
+  });
+
+  test("validates every source before writing promotion artifacts", () => {
+    const workspace = tempRoot();
+    const batch = createReviewedFailureBatch(workspace);
+    const taxonomyPath = join(workspace, "failure-taxonomy.json");
+    const caseDirectory = join(workspace, "failure-cases");
+    const secondReview = batch.reviews[1]!;
+    const invalidBatch = {
+      ...batch,
+      reviews: [batch.reviews[0]!, {
+        schemaVersion: secondReview.schemaVersion,
+        reviewId: secondReview.reviewId,
+        runId: secondReview.runId,
+        disposition: "pending" as const,
+        downstreamEffects: secondReview.downstreamEffects,
+        independentFindings: secondReview.independentFindings,
+      }],
+    };
+
+    expect(() => promoteFailureMode({
+      batch: invalidBatch,
+      runIds: invalidBatch.manifest.runIds,
+      taxonomyPath,
+      caseDirectory,
+      modeId: "invalid-source-mode",
+      name: "Invalid source mode",
+      definition: "One source has not been reviewed.",
+      distinguishingNotes: "No artifacts should be written.",
+    })).toThrow("must record a failed disposition before promotion");
+
+    expect(existsSync(caseDirectory)).toBe(false);
+    expect(existsSync(taxonomyPath)).toBe(false);
+  });
+
+  test("retains a created case when a later immutable case conflicts", () => {
+    const workspace = tempRoot();
+    const batch = createReviewedFailureBatch(workspace);
+    const caseDirectory = join(workspace, "failure-cases");
+    const previewDirectory = join(workspace, "preview-cases");
+    const taxonomyPath = join(workspace, "failure-taxonomy.json");
+    const first = promoteCandidateObservation({
+      batch,
+      runId: batch.manifest.runIds[0]!,
+      caseDirectory: previewDirectory,
+    });
+    promoteCandidateObservation({
+      batch,
+      runId: batch.manifest.runIds[1]!,
+      caseDirectory,
+    });
+
+    expect(() => promoteFailureMode({
+      batch,
+      runIds: batch.manifest.runIds,
+      taxonomyPath,
+      caseDirectory,
+      modeId: "partial-write-mode",
+      name: "Partial write mode",
+      definition: "A later immutable source conflicts during promotion.",
+      distinguishingNotes: "Requires explicit operator remediation.",
+    })).toThrow("immutable and already differs on disk");
+
+    expect(loadPromotedCase(join(caseDirectory, `${first.caseId}.json`)).failureMode).toEqual({
+      id: "partial-write-mode",
+      revision: 1,
+    });
+    expect(loadFailureTaxonomy(taxonomyPath).modes).toEqual([]);
   });
 });
 

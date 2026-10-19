@@ -7,30 +7,36 @@ import {
   type FailureCaseDefinition,
 } from "../evals/failure-case-catalog";
 import {
+  defaultFailureReviewRoot,
+  loadFailureTaxonomy,
+  reviewArtifactPath,
+  reviewPaths,
+  saveReviewRecord,
+} from "../evals/failure-discovery/artifact-io";
+import {
   addRunToBatch,
   completeReviewBatch,
   createReviewBatch,
-  defaultFailureReviewRoot,
+  loadReviewBatch,
+  outcomeCandidateToFailureRun,
+  renderReviewBatchSummary,
+  reviewStage,
+} from "../evals/failure-discovery/review-batch";
+import {
   failureDiscoverySchemaVersion,
   fingerprintJson,
   latestFailureMode,
-  loadFailureTaxonomy,
-  loadReviewBatch,
-  outcomeCandidateToFailureRun,
   parseFailureReviewRecord,
-  promoteCandidateObservation,
-  promoteFailureMode,
-  renderReviewBatchSummary,
-  retireFailureMode,
-  reviewArtifactPath,
-  reviewPaths,
-  reviewStage,
-  saveReviewRecord,
-  reviseFailureMode,
   validateReviewBatch,
   validateReviewRecord,
   type FailureRunRecord,
-} from "../evals/failure-discovery";
+} from "../evals/failure-discovery/schema";
+import {
+  promoteCandidateObservation,
+  promoteFailureMode,
+  retireFailureMode,
+  reviseFailureMode,
+} from "../evals/failure-discovery/taxonomy-promotion";
 
 interface ParsedArgs {
   command: string;
