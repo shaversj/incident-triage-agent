@@ -444,10 +444,6 @@ function signedGrafanaHeaders(rawBody: string, timestamp: string): HeadersInit {
   };
 }
 
-function unixTimestamp(date: Date): string {
-  return `${Math.floor(date.getTime() / 1000)}`;
-}
-
 function summarizeInput(webhookPayload: unknown, logRecords: number): InputSummary {
   const payloadObject = objectValue(webhookPayload);
   const alerts = arrayValue(payloadObject.alerts)
