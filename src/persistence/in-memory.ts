@@ -1,8 +1,4 @@
-import {
-  applyLifecycleEvent,
-  initialLifecycleProjection,
-  type RecoveryFailureClass,
-} from "../incident-lifecycle";
+import type { RecoveryFailureClass } from "../incident-lifecycle";
 import type { TriageRun } from "../workflow";
 import type {
   CleanupResult,
@@ -37,6 +33,7 @@ import {
   boundedLimit,
   buildEvidenceSnapshot,
   buildGateDecisionRecord,
+  buildIncidentLifecycleReview,
   buildOutcomeCandidate,
   buildRecoveryEvent,
   buildReplayKey,
@@ -44,16 +41,13 @@ import {
   buildVerificationRecord,
   candidateFromRecoveryExhaustion,
   candidateFromVerification,
-  compareLifecycleEvents,
   gateDecisionKey,
   gateDecisionRecordKey,
   initialRecoveryBudget,
   iso,
   outcomeCandidateKey,
   recoveryBudgetKey,
-  recoveryLifecycleEvent,
   recoverySourceKey,
-  verificationLifecycleEvent,
   verificationSourceKey,
 } from "./record-mapping";
 
@@ -187,22 +181,13 @@ export class InMemoryTriageRunPersistenceStore implements TriageRunPersistenceSt
   async getIncidentLifecycle(incidentId: string): Promise<IncidentLifecycleReviewRecord> {
     const verificationEvents = filterIncidentRecords(this.verificationEvents, incidentId);
     const recoveryEvents = filterIncidentRecords(this.recoveryEvents, incidentId);
-    const lifecycleEvents = [
-      ...verificationEvents.map(verificationLifecycleEvent),
-      ...recoveryEvents.map(recoveryLifecycleEvent),
-    ].sort(compareLifecycleEvents);
-    const projection = lifecycleEvents.reduce(
-      applyLifecycleEvent,
-      initialLifecycleProjection({ incidentId }),
-    );
-    return {
+    return buildIncidentLifecycleReview(
       incidentId,
-      projection,
       verificationEvents,
       recoveryEvents,
-      recoveryBudgets: filterIncidentRecords(this.recoveryBudgets, incidentId),
-      candidates: filterIncidentRecords(this.outcomeCandidates, incidentId),
-    };
+      filterIncidentRecords(this.recoveryBudgets, incidentId),
+      filterIncidentRecords(this.outcomeCandidates, incidentId),
+    );
   }
 
   async recordRecoveryFailure(

@@ -6,8 +6,8 @@ import type {
   VerificationOutcomeInput,
 } from "../incident-lifecycle";
 import type { InvestigationTrace, TriageRun } from "../workflow";
-import type { EvidenceDelta, MaterialityBasis, MaterialityDecision, MaterialityOutcome } from "../reentry";
-import type { ExplanationValidation, TriageDecision, TriageExplanation } from "../llm";
+import type { EvidenceDelta, MaterialityDecision } from "../reentry";
+import type { ExplanationValidation, TriageDecision, TriageExplanation, ValidationResult } from "../llm";
 import type { MitigationControlResult } from "../mitigation-control";
 import type { SafetyResult } from "../policy";
 import type { ProvenanceSummary } from "../evidence";
@@ -21,10 +21,7 @@ export interface PersistTriageRunOptions {
   ttlMs?: number;
 }
 
-export interface PersistedValidationSummary {
-  valid: boolean;
-  errors: string[];
-}
+export type PersistedValidationSummary = Pick<ValidationResult, "valid" | "errors">;
 
 export interface TriageRunReviewEnvelope {
   investigation?: InvestigationTrace;
@@ -88,7 +85,7 @@ export interface EvidenceGateCandidate {
   decision: MaterialityDecision;
 }
 
-export interface EvidenceGateDecisionRecord {
+export interface EvidenceGateDecisionRecord extends MaterialityDecision {
   decisionId: string;
   incidentId: string;
   canonicalizationVersion: string;
@@ -96,11 +93,7 @@ export interface EvidenceGateDecisionRecord {
   baselineKey: string;
   priorRunId?: string;
   childRunId?: string;
-  outcome: MaterialityOutcome;
-  basis: MaterialityBasis;
   delta: EvidenceDelta;
-  rationale: string;
-  citedDeltaRefs: string[];
   retentionClass: RetentionClass;
   createdAt: string;
   expiresAt: string;
@@ -135,20 +128,17 @@ export interface CleanupResult {
   outcomeCandidatesDeleted: number;
 }
 
-export interface VerificationOutcomeRecord {
-  eventId: string;
-  incidentId: string;
-  sourceEventKey: string;
-  verification: VerificationOutcomeInput;
-  retentionClass: RetentionClass;
-  createdAt: string;
-  expiresAt: string;
-}
-
 export interface VerificationOutcomeWriteInput {
   incidentId: string;
   sourceEventKey: string;
   verification: VerificationOutcomeInput;
+}
+
+export interface VerificationOutcomeRecord extends VerificationOutcomeWriteInput {
+  eventId: string;
+  retentionClass: RetentionClass;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface VerificationOutcomeWriteResult {
@@ -169,29 +159,24 @@ export interface RecoveryBudgetRecord {
   expiresAt: string;
 }
 
-export interface RecoveryEventRecord {
-  eventId: string;
-  incidentId: string;
-  sourceEventKey: string;
-  eventType: RecoveryEventType;
-  failureClass: RecoveryFailureClass;
-  runId?: string;
-  attempt?: number;
-  reason?: RecoveryResetReason;
-  actor?: string;
-  rationale: string;
-  generation: number;
-  retentionClass: RetentionClass;
-  createdAt: string;
-  expiresAt: string;
-}
-
 export interface RecoveryFailureWriteInput {
   incidentId: string;
   runId?: string;
   sourceEventKey: string;
   failureClass: RecoveryFailureClass;
   rationale: string;
+}
+
+export interface RecoveryEventRecord extends RecoveryFailureWriteInput {
+  eventId: string;
+  eventType: RecoveryEventType;
+  attempt?: number;
+  reason?: RecoveryResetReason;
+  actor?: string;
+  generation: number;
+  retentionClass: RetentionClass;
+  createdAt: string;
+  expiresAt: string;
 }
 
 export interface RecoveryResetWriteInput extends RecoveryFailureWriteInput {

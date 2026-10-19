@@ -22,12 +22,9 @@ export async function auditRetainedEnvelopes(
   client: ReviewEnvelopeQueryClient,
   batchSize = 250,
 ): Promise<RetainedEnvelopeAuditResult> {
-  const result: RetainedEnvelopeAuditResult = {
-    scanned: 0,
-    compatible: 0,
-    incompatible: 0,
-    incompatibleRunIds: [],
-  };
+  let compatible = 0;
+  let incompatible = 0;
+  const incompatibleRunIds: string[] = [];
   let cursor = "";
 
   while (true) {
@@ -40,17 +37,21 @@ export async function auditRetainedEnvelopes(
       [cursor, batchSize],
     );
     if (page.rows.length === 0) {
-      return result;
+      return {
+        scanned: compatible + incompatible,
+        compatible,
+        incompatible,
+        incompatibleRunIds,
+      };
     }
     for (const row of page.rows) {
-      result.scanned += 1;
       cursor = row.run_id;
       try {
         decodeTriageRunReviewEnvelope(row.review_envelope);
-        result.compatible += 1;
+        compatible += 1;
       } catch {
-        result.incompatible += 1;
-        result.incompatibleRunIds.push(row.run_id);
+        incompatible += 1;
+        incompatibleRunIds.push(row.run_id);
       }
     }
   }

@@ -18,14 +18,3 @@ test("phase 1 migration owns only run evidence and replay tables", () => {
   expect(sql).not.toContain("approval_requests");
   expect(sql).not.toContain("executor_attempts");
 });
-
-test("Postgres persistence tracks applied migration files with checksums", () => {
-  const source = readFileSync("src/persistence/postgres.ts", "utf8");
-
-  expect(source).toContain("CREATE TABLE IF NOT EXISTS schema_migrations");
-  expect(source).toContain("pg_advisory_xact_lock");
-  expect(source).toContain("Migration checksum changed after application");
-  expect(source).toContain("INSERT INTO schema_migrations");
-  expect(source).toContain("statement_timeout");
-  expect(source).toContain("query_timeout");
-});

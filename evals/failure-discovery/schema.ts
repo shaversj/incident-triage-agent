@@ -37,10 +37,7 @@ export interface FirstFailureAnchor {
   rationale: string;
 }
 
-export interface FailureModeReference {
-  id: string;
-  revision: number;
-}
+export type FailureModeReference = Pick<FailureModeEntry, "id" | "revision">;
 
 export interface FailureReviewRecord {
   schemaVersion: typeof failureDiscoverySchemaVersion;
@@ -424,7 +421,7 @@ function readRecord(value: unknown, label: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function objectValue(value: unknown): Record<string, unknown> {
+export function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 

@@ -12,6 +12,7 @@ import {
 import {
   failureDiscoverySchemaVersion,
   fingerprintJson,
+  requiredText,
   type CreateReviewBatchOptions,
   type FailureBatchManifest,
   type FailureReviewRecord,
@@ -46,12 +47,8 @@ export function outcomeCandidateToFailureRun(candidate: ImportableOutcomeCandida
 }
 
 export function createReviewBatch(root: string, options: CreateReviewBatchOptions): FailureBatchManifest {
-  if (!options.batchId.trim()) {
-    throw new Error("batch_id must be a non-empty string.");
-  }
-  if (!options.changeLabel.trim()) {
-    throw new Error("change_label must be a non-empty string.");
-  }
+  requiredText(options.batchId, "batch_id");
+  requiredText(options.changeLabel, "change_label");
   if (!Number.isInteger(options.requestedSize) || options.requestedSize < 1) {
     throw new Error("requested_size must be a positive integer.");
   }

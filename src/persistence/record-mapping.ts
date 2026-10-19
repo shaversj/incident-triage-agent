@@ -1,15 +1,18 @@
 import { createHash } from "node:crypto";
 
-import type {
-  IncidentLifecycleEvent,
-  RecoveryFailureClass,
-  RecoveryResetReason,
+import {
+  applyLifecycleEvent,
+  initialLifecycleProjection,
+  type IncidentLifecycleEvent,
+  type RecoveryFailureClass,
+  type RecoveryResetReason,
 } from "../incident-lifecycle";
 import type { TriageRun } from "../workflow";
 import type {
   EvidenceGateCandidate,
   EvidenceGateDecisionRecord,
   EvidenceSnapshotRecord,
+  IncidentLifecycleReviewRecord,
   OutcomeReviewCandidateInput,
   OutcomeReviewCandidateRecord,
   PersistTriageRunOptions,
@@ -45,9 +48,7 @@ export function buildRunRecord(
   options: PersistTriageRunOptions,
   lineage: { parentRunId?: string; gateDecisionId?: string } = {},
 ): TriageRunRecord {
-  const now = options.now ?? new Date();
-  const retentionClass = options.retentionClass ?? "read_only_triage";
-  const expiresAt = new Date(now.getTime() + (options.ttlMs ?? defaultTtlMs));
+  const { createdAt, expiresAt, retentionClass } = persistenceMetadata(options);
   const validationStatus = run.validation ? (run.validation.valid ? "valid" : "invalid") : "not_available";
   const evidenceIds = run.evidencePackage?.evidence.map((item) => item.evidenceId) ?? [];
   const record: TriageRunRecord = {
@@ -64,8 +65,8 @@ export function buildRunRecord(
     evidenceIds,
     retentionClass,
     correlationId: options.correlationId ?? run.runId,
-    createdAt: iso(now),
-    expiresAt: iso(expiresAt),
+    createdAt,
+    expiresAt,
   };
   if (lineage.parentRunId) {
     record.parentRunId = lineage.parentRunId;
@@ -150,9 +151,7 @@ export function buildGateDecisionRecord(
   options: PersistTriageRunOptions,
   childRunId?: string,
 ): EvidenceGateDecisionRecord {
-  const now = options.now ?? new Date();
-  const retentionClass = options.retentionClass ?? "read_only_triage";
-  const expiresAt = new Date(now.getTime() + (options.ttlMs ?? defaultTtlMs));
+  const { createdAt, expiresAt, retentionClass } = persistenceMetadata(options);
   const record: EvidenceGateDecisionRecord = {
     decisionId: gateDecisionId(candidate),
     incidentId: candidate.incidentId,
@@ -165,8 +164,8 @@ export function buildGateDecisionRecord(
     rationale: candidate.decision.rationale,
     citedDeltaRefs: candidate.decision.citedDeltaRefs,
     retentionClass,
-    createdAt: iso(now),
-    expiresAt: iso(expiresAt),
+    createdAt,
+    expiresAt,
   };
   if (candidate.priorRunId) {
     record.priorRunId = candidate.priorRunId;
@@ -178,14 +177,7 @@ export function buildGateDecisionRecord(
 }
 
 function gateDecisionId(candidate: EvidenceGateCandidate): string {
-  return `gate:${createHash("sha256")
-    .update(candidate.incidentId)
-    .update("\0")
-    .update(baselineKey(candidate))
-    .update("\0")
-    .update(candidate.candidateDigest)
-    .digest("hex")
-    .slice(0, 24)}`;
+  return stableId("gate", candidate.incidentId, baselineKey(candidate), candidate.candidateDigest);
 }
 
 export function baselineKey(candidate: EvidenceGateCandidate): string {
@@ -355,6 +347,27 @@ export function compareLifecycleEvents(left: IncidentLifecycleEvent, right: Inci
     verification_recorded: 4,
   };
   return priority[left.type] - priority[right.type];
+}
+
+export function buildIncidentLifecycleReview(
+  incidentId: string,
+  verificationEvents: VerificationOutcomeRecord[],
+  recoveryEvents: RecoveryEventRecord[],
+  recoveryBudgets: RecoveryBudgetRecord[],
+  candidates: OutcomeReviewCandidateRecord[],
+): IncidentLifecycleReviewRecord {
+  const lifecycleEvents = [
+    ...verificationEvents.map(verificationLifecycleEvent),
+    ...recoveryEvents.map(recoveryLifecycleEvent),
+  ].sort(compareLifecycleEvents);
+  return {
+    incidentId,
+    projection: lifecycleEvents.reduce(applyLifecycleEvent, initialLifecycleProjection({ incidentId })),
+    verificationEvents,
+    recoveryEvents,
+    recoveryBudgets,
+    candidates,
+  };
 }
 
 function persistenceMetadata(options: PersistTriageRunOptions): {

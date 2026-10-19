@@ -4,11 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool, type PoolClient } from "pg";
 
-import {
-  applyLifecycleEvent,
-  initialLifecycleProjection,
-  type RecoveryFailureClass,
-} from "../incident-lifecycle";
+import type { RecoveryFailureClass } from "../incident-lifecycle";
 import type { TriageRun } from "../workflow";
 import type {
   CleanupResult,
@@ -44,6 +40,7 @@ import {
   boundedLimit,
   buildEvidenceSnapshot,
   buildGateDecisionRecord,
+  buildIncidentLifecycleReview,
   buildOutcomeCandidate,
   buildRecoveryEvent,
   buildReplayKey,
@@ -51,11 +48,8 @@ import {
   buildVerificationRecord,
   candidateFromRecoveryExhaustion,
   candidateFromVerification,
-  compareLifecycleEvents,
   initialRecoveryBudget,
   iso,
-  recoveryLifecycleEvent,
-  verificationLifecycleEvent,
 } from "./record-mapping";
 import {
   gateDecisionFromRow,
@@ -203,7 +197,7 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     if (inserted.rows[0]) {
       return { decision: gateDecisionFromRow(inserted.rows[0]), created: true };
     }
-    return { decision: await this.requiredGateDecision(candidate), created: false };
+    return { decision: await selectGateDecision(this.pool, candidate), created: false };
   }
 
   async recordGatedTriageRun(
@@ -298,18 +292,13 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
     ]);
     const verificationEvents = verification.rows.map(verificationFromRow);
     const recoveryEvents = recovery.rows.map(recoveryEventFromRow);
-    const lifecycleEvents = [
-      ...verificationEvents.map(verificationLifecycleEvent),
-      ...recoveryEvents.map(recoveryLifecycleEvent),
-    ].sort(compareLifecycleEvents);
-    return {
+    return buildIncidentLifecycleReview(
       incidentId,
-      projection: lifecycleEvents.reduce(applyLifecycleEvent, initialLifecycleProjection({ incidentId })),
       verificationEvents,
       recoveryEvents,
-      recoveryBudgets: budgets.rows.map(recoveryBudgetFromRow),
-      candidates: candidates.rows.map(outcomeCandidateFromRow),
-    };
+      budgets.rows.map(recoveryBudgetFromRow),
+      candidates.rows.map(outcomeCandidateFromRow),
+    );
   }
 
   async recordRecoveryFailure(
@@ -509,19 +498,6 @@ export class PostgresTriageRunPersistenceStore implements TriageRunPersistenceSt
       [incidentId],
     );
     return result.rows.map(gateDecisionFromRow);
-  }
-
-  private async requiredGateDecision(candidate: EvidenceGateCandidate): Promise<EvidenceGateDecisionRecord> {
-    const result = await this.pool.query<EvidenceGateDecisionRow>(
-      `SELECT * FROM evidence_gate_decisions
-       WHERE incident_id = $1 AND baseline_key = $2 AND candidate_digest = $3`,
-      [candidate.incidentId, baselineKey(candidate), candidate.candidateDigest],
-    );
-    const row = result.rows[0];
-    if (!row) {
-      throw new Error("Gate decision conflict could not be read after insert.");
-    }
-    return gateDecisionFromRow(row);
   }
 
   private async requiredOutcomeCandidate(input: OutcomeReviewCandidateInput): Promise<OutcomeReviewCandidateRecord> {
@@ -838,7 +814,7 @@ async function insertOutcomeCandidate(
 
 
 async function selectGateDecision(
-  client: PoolClient,
+  client: Pool | PoolClient,
   candidate: EvidenceGateCandidate,
 ): Promise<EvidenceGateDecisionRecord> {
   const result = await client.query<EvidenceGateDecisionRow>(

@@ -26,6 +26,7 @@ import {
   failureDiscoverySchemaVersion,
   fingerprintJson,
   latestFailureMode,
+  objectValue,
   parseFailureReviewRecord,
   validateReviewBatch,
   validateReviewRecord,
@@ -500,12 +501,6 @@ function printResult(args: ParsedArgs, value: unknown, message: string): void {
     return;
   }
   process.stdout.write(`${message}\n`);
-}
-
-function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
 }
 
 function safeMessage(error: unknown): string {

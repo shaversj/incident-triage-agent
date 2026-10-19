@@ -10,21 +10,36 @@ const databaseUrl = process.env.POSTGRES_TEST_DATABASE_URL ?? process.env.DATABA
 test.runIf(Boolean(databaseUrl))("Postgres persistence applies migrations repeatably", async () => {
   const store = new PostgresTriageRunPersistenceStore({ connectionString: databaseUrl! });
   const pool = new Pool({ connectionString: databaseUrl! });
+  const migrationName = "001_phase1_read_only.sql";
+  let originalChecksum: string | undefined;
   try {
     await store.migrate();
     await store.migrate();
-    const result = await pool.query<{ migration_name: string }>(
-      "SELECT migration_name FROM schema_migrations ORDER BY migration_name",
+    const result = await pool.query<{ migration_name: string; checksum: string }>(
+      "SELECT migration_name, checksum FROM schema_migrations ORDER BY migration_name",
     );
 
     expect(result.rows.map((row) => row.migration_name)).toEqual(expect.arrayContaining([
-      "001_phase1_read_only.sql",
+      migrationName,
       "002_run_review_metadata.sql",
       "003_material_evidence_reentry.sql",
       "004_incident_lifecycle.sql",
       "005_scope_lifecycle_idempotency.sql",
     ]));
+    originalChecksum = result.rows.find((row) => row.migration_name === migrationName)?.checksum;
+    expect(originalChecksum).toBeDefined();
+    await pool.query(
+      "UPDATE schema_migrations SET checksum = $1 WHERE migration_name = $2",
+      ["incompatible-checksum", migrationName],
+    );
+    await expect(store.migrate()).rejects.toThrow(`Migration checksum changed after application: ${migrationName}`);
   } finally {
+    if (originalChecksum) {
+      await pool.query(
+        "UPDATE schema_migrations SET checksum = $1 WHERE migration_name = $2",
+        [originalChecksum, migrationName],
+      );
+    }
     await pool.end();
     await store.close();
   }
@@ -64,8 +79,8 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence isolates malformed retain
         JSON.stringify({ validation: { valid: "yes", errors: [] } }),
         "read_only_triage",
         `postgres-malformed-envelope:${randomUUID()}`,
-        new Date("2026-08-01T12:00:00.000Z"),
-        new Date("2026-08-02T12:00:00.000Z"),
+        new Date("2100-08-01T12:00:00.000Z"),
+        new Date("2100-08-02T12:00:00.000Z"),
       ],
     );
 

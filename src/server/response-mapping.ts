@@ -11,7 +11,7 @@ import type { SafetyResult } from "../policy";
 import type { EvidenceReentryResult } from "../reentry";
 import type { InvestigationTrace, TriageRun } from "../workflow";
 
-export interface ResolvedRunReviewContext {
+interface ResolvedRunReviewContext {
   approval: Record<string, unknown>;
   lifecycle?: IncidentLifecycleReviewRecord;
 }
@@ -32,7 +32,7 @@ export function runListToResponse(runs: TriageRunRecord[]): Record<string, unkno
   };
 }
 
-export function runRecordToResponse(run: TriageRunRecord): Record<string, unknown> {
+function runRecordToResponse(run: TriageRunRecord): Record<string, unknown> {
   return {
     run_id: run.runId,
     incident_id: run.incidentId,
@@ -94,7 +94,7 @@ export function runReviewToResponse(
   return response;
 }
 
-export function reviewEnvelopeToResponse(
+function reviewEnvelopeToResponse(
   envelope: TriageRunReviewEnvelope | undefined,
 ): Record<string, unknown> | undefined {
   if (!envelope) {
@@ -164,24 +164,15 @@ export function runToResponse(run: TriageRun): Record<string, unknown> {
   }
 
   if (run.explanation) {
-    if (run.explanation.hypotheses) {
-      response.analysis = {
-        hypotheses: run.explanation.hypotheses.map((hypothesis) => ({
-          label: hypothesis.label,
-          status: hypothesis.status,
-          supporting_evidence_ids: hypothesis.supportingEvidenceIds,
-          contradicting_evidence_ids: hypothesis.contradictingEvidenceIds,
-        })),
-      };
+    const explanation = explanationToResponse(run.explanation);
+    if (explanation.hypotheses) {
+      response.analysis = { hypotheses: explanation.hypotheses };
     }
-    if (run.explanation.findingSummary) {
-      response.finding_summary = run.explanation.findingSummary;
+    if (explanation.finding_summary) {
+      response.finding_summary = explanation.finding_summary;
     }
-    if (run.explanation.recommendation) {
-      response.recommendation = {
-        rationale: run.explanation.recommendation.rationale,
-        evidence_ids: run.explanation.recommendation.evidenceIds,
-      };
+    if (explanation.recommendation) {
+      response.recommendation = explanation.recommendation;
     }
   }
 

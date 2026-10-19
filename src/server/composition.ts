@@ -143,7 +143,7 @@ function startRetentionCleanup(runtime: WebhookRuntime, logger: TriageLogger): {
   };
   cleanup();
   const interval = setInterval(cleanup, runtime.retentionCleanupIntervalMs ?? 60 * 60 * 1000);
-  interval.unref?.();
+  interval.unref();
   return {
     stop: () => clearInterval(interval),
   };
