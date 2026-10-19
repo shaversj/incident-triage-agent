@@ -321,11 +321,11 @@ async function runReadOnlyCanary(
       }),
     });
     const lifecycle = await runStore.getIncidentLifecycle(incidentId);
-    const incidentRuns = (await runStore.listTriageRuns?.({ limit: 100 }) ?? [])
+    const incidentRuns = (await runStore.listTriageRuns({ limit: 100 }))
       .filter((run) => run.incidentId === incidentId);
     const safety = objectValue(response.safety);
     const mitigation = objectValue(response.mitigation_control);
-    const review = await runStore.getTriageRunReview?.(runId);
+    const review = await runStore.getTriageRunReview(runId);
     const persistedRun = Boolean(review?.run);
     const persistedEvidenceSnapshot = Boolean(review?.evidenceSnapshot);
     const authenticatedReviewRetrieval = runReview?.status === 200 &&
@@ -442,10 +442,6 @@ function signedGrafanaHeaders(rawBody: string, timestamp: string): HeadersInit {
     "X-Grafana-Alerting-Signature": signGrafanaWebhookBody(rawBody, recordedTriageSecret, timestamp),
     "X-Grafana-Alerting-Timestamp": timestamp,
   };
-}
-
-function unixTimestamp(date: Date): string {
-  return `${Math.floor(date.getTime() / 1000)}`;
 }
 
 function summarizeInput(webhookPayload: unknown, logRecords: number): InputSummary {

@@ -1,5 +1,15 @@
 import type { Evidence } from "./evidence";
 
+export interface LokiClientLike {
+  queryRange(
+    labels: Record<string, string>,
+    startNs: number,
+    endNs: number,
+    options: { limit?: number; direction?: "forward" | "backward" },
+  ): Promise<LokiLogEntry[]>;
+  toEvidence(entries: LokiLogEntry[]): Evidence[];
+}
+
 export class LokiClientError extends Error {
   constructor(message: string) {
     super(message);
@@ -159,17 +169,7 @@ async function readTextWithLimit(response: Response, maxBytes: number, abort: ()
   } finally {
     reader.releaseLock();
   }
-  return new TextDecoder().decode(concatChunks(chunks, totalBytes));
-}
-
-function concatChunks(chunks: Uint8Array[], totalBytes: number): Uint8Array {
-  const combined = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const chunk of chunks) {
-    combined.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return combined;
+  return new TextDecoder().decode(Buffer.concat(chunks, totalBytes));
 }
 
 function selector(labels: Record<string, string>): string {

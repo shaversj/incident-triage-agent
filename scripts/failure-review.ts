@@ -7,30 +7,37 @@ import {
   type FailureCaseDefinition,
 } from "../evals/failure-case-catalog";
 import {
+  defaultFailureReviewRoot,
+  loadFailureTaxonomy,
+  reviewArtifactPath,
+  reviewPaths,
+  saveReviewRecord,
+} from "../evals/failure-discovery/artifact-io";
+import {
   addRunToBatch,
   completeReviewBatch,
   createReviewBatch,
-  defaultFailureReviewRoot,
+  loadReviewBatch,
+  outcomeCandidateToFailureRun,
+  renderReviewBatchSummary,
+  reviewStage,
+} from "../evals/failure-discovery/review-batch";
+import {
   failureDiscoverySchemaVersion,
   fingerprintJson,
   latestFailureMode,
-  loadFailureTaxonomy,
-  loadReviewBatch,
-  outcomeCandidateToFailureRun,
+  objectValue,
   parseFailureReviewRecord,
-  promoteCandidateObservation,
-  promoteFailureMode,
-  renderReviewBatchSummary,
-  retireFailureMode,
-  reviewArtifactPath,
-  reviewPaths,
-  reviewStage,
-  saveReviewRecord,
-  reviseFailureMode,
   validateReviewBatch,
   validateReviewRecord,
   type FailureRunRecord,
-} from "../evals/failure-discovery";
+} from "../evals/failure-discovery/schema";
+import {
+  promoteCandidateObservation,
+  promoteFailureMode,
+  retireFailureMode,
+  reviseFailureMode,
+} from "../evals/failure-discovery/taxonomy-promotion";
 
 interface ParsedArgs {
   command: string;
@@ -494,12 +501,6 @@ function printResult(args: ParsedArgs, value: unknown, message: string): void {
     return;
   }
   process.stdout.write(`${message}\n`);
-}
-
-function objectValue(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
 }
 
 function safeMessage(error: unknown): string {
