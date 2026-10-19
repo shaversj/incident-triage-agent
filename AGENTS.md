@@ -30,11 +30,21 @@ Primary TypeScript code lives in `src/`:
 - `incident-lifecycle.ts`: deterministic closure states, verification outcomes, failure classes, and transition rules.
 - `recovery-budget.ts`: retryable versus human-stop recovery policy.
 - `outcome-promotion.ts`: privacy-minimized outcome candidate construction.
-- `persistence/`: run, evidence, lifecycle, recovery, candidate, and replay persistence with in-memory and Postgres implementations.
+- `persistence/index.ts`: compatibility facade for the public persistence API.
+- `persistence/contracts.ts`: public persistence records and store contracts.
+- `persistence/record-mapping.ts`: backend-neutral record construction, identifiers, and lifecycle mapping.
+- `persistence/in-memory.ts`: map-backed persistence implementation used by deterministic tests and local flows.
+- `persistence/postgres.ts`: Postgres storage, transactions, locks, migrations, and retention cleanup.
+- `persistence/postgres-row-mapping.ts`: fail-closed decoding of untrusted Postgres rows into canonical domain records.
 - `policy.ts`: safety compatibility gate derived from mitigation governance.
 - `recorded-observability.ts`: recorded Loki-shaped log replay for recorded triage runs and integration tests.
 - `scoring.ts`: deterministic eval scorecard.
-- `server.ts`: local Grafana webhook server and JSON response rendering.
+- `server.ts`: compatibility facade for the public server API.
+- `server/composition.ts`: authoritative HTTP route order and server lifecycle.
+- `server/webhook.ts`: signed Grafana ingestion, replay handling, evidence re-entry, and direct webhook orchestration.
+- `server/approval.ts`: approval reads and the only server-owned approval mutation path.
+- `server/run-review.ts` and `server/lifecycle.ts`: authenticated run, lifecycle, and outcome-candidate routes.
+- `server/response-mapping.ts`: pure operator-facing response serialization.
 - `workflow.ts`: triage state machine.
 - `workflows/incident-triage.ts`: discovered Flue workflow boundary for the local `incident-triage` skill.
 
@@ -168,10 +178,13 @@ git diff --check
 - [fixtures/grafana/](fixtures/grafana/): synthetic Grafana webhook payloads.
 - [fixtures/logs/](fixtures/logs/): recorded Loki-shaped log fixtures for recorded triage runs and integration tests.
 - [evals/](evals/): Flue eval suites for deterministic contracts, opt-in live drift checks, and explanation-quality scoring.
+- [evals/failure-discovery.ts](evals/failure-discovery.ts): compatibility facade for failure-review tooling.
+- [evals/failure-discovery/](evals/failure-discovery/): schema, artifact I/O, review-batch, and taxonomy-promotion ownership modules.
 - [evals/failure-taxonomy.json](evals/failure-taxonomy.json): versioned failure-mode definitions discovered through human review.
 - [evals/failure-cases/](evals/failure-cases/): curated source snapshots that justify taxonomy and regression decisions.
 - [scripts/failure-review.ts](scripts/failure-review.ts): CLI for generating, reviewing, validating, summarizing, and promoting failure-review batches.
 - [tests/support/outcomes.ts](tests/support/outcomes.ts): shared outcome assertions for workflow, webhook, recorded integration, and live-provider tests.
+- [tests/support/persistence-conformance.ts](tests/support/persistence-conformance.ts): shared observable storage contract for in-memory and Postgres implementations.
 - [tests/observability-integration.test.ts](tests/observability-integration.test.ts): recorded Grafana/Loki-shaped integration matrix.
 - [scripts/run-recorded-triage.ts](scripts/run-recorded-triage.ts): one-command recorded observability triage run.
 - [docs/examples/recorded-triage-response.json](docs/examples/recorded-triage-response.json): sanitized example of recorded observability triage output.

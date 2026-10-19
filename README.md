@@ -110,8 +110,11 @@ Start with these files if you want to understand the implementation:
 | [src/llm.ts](src/llm.ts) | Mock and live LLM boundary plus response validation. |
 | [src/mitigation-control.ts](src/mitigation-control.ts) | Catalog-backed mitigation governance, dry-run, audit, and approval staging. |
 | [src/policy.ts](src/policy.ts) | Safety compatibility gate derived from mitigation governance. |
-| [src/server.ts](src/server.ts) | Webhook handling, run review API, demo launcher, and approval API. |
+| [src/server.ts](src/server.ts) and [src/server/](src/server/) | Stable server facade plus route composition, webhook handling, approval and lifecycle APIs, and response mapping. |
+| [src/persistence/index.ts](src/persistence/index.ts) and [src/persistence/](src/persistence/) | Stable persistence facade plus shared contracts, record mapping, in-memory storage, Postgres storage, and untrusted-row decoding. |
+| [evals/failure-discovery.ts](evals/failure-discovery.ts) and [evals/failure-discovery/](evals/failure-discovery/) | Stable failure-review facade plus schemas, artifact I/O, review batches, and taxonomy-promotion policy. |
 | [src/run-review-console.ts](src/run-review-console.ts) | Browser UI for reviewing runs and approving staged mitigations. |
+| [tests/support/persistence-conformance.ts](tests/support/persistence-conformance.ts) | Shared observable contract run against both persistence backends. |
 | [tests/e2e/run-review-approval.pw.ts](tests/e2e/run-review-approval.pw.ts) | Browser coverage for the approval workflow. |
 | [docs/ai-operator-architecture.md](docs/ai-operator-architecture.md) | Architecture, trust boundaries, demo paths, and production integration points. |
 
@@ -494,6 +497,15 @@ Postgres integration tests are opt-in:
 docker compose up -d postgres
 POSTGRES_TEST_DATABASE_URL=postgres://incident_triage:incident_triage@localhost:5432/incident_triage npm run test:postgres
 ```
+
+Before deploying a build with persistence-boundary changes, scan retained review envelopes with a least-privilege read-only database role:
+
+```bash
+DATABASE_URL=postgres://readonly-user:password@database.example/incident_triage \
+npm run triage:audit-retained-envelopes -- --json
+```
+
+The audit uses an explicit read-only transaction, prints only aggregate counts and opaque run IDs, and exits nonzero when a retained envelope is incompatible.
 
 Deterministic evals cover scenario contracts, evidence citations, provenance, safety behavior, mitigation governance, recorded-triage readability, and provenance-linked failure regressions. Live evals are opt-in:
 
