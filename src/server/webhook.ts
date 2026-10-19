@@ -18,7 +18,7 @@ import type { EvidenceGateCandidate, IncidentBaseline, TriageRunPersistenceStore
 import { RecordedLokiClient } from "../recorded-observability";
 import { evaluateEvidenceReentry, type EvidenceReentryResult } from "../reentry";
 import { TriageWorkflow, type TriageRun } from "../workflow";
-import { persistApprovalRequest } from "./approval";
+import { persistApprovalRequest } from "./approval-support";
 import type { HandleGrafanaWebhookOptions, WebhookRuntime } from "./contracts";
 import { firstHeader, readRequestBody, runtimeMode, writeJson } from "./http";
 import { materialityToResponse, runToResponse } from "./response-mapping";

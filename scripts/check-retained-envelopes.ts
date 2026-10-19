@@ -11,6 +11,22 @@ export interface ReviewEnvelopeQueryClient {
   query(sql: string, values?: unknown[]): Promise<{ rows: ReviewEnvelopeRow[] }>;
 }
 
+export interface ReviewEnvelopePoolClient extends ReviewEnvelopeQueryClient {
+  release(): void;
+}
+
+export interface ReviewEnvelopePool {
+  connect(): Promise<ReviewEnvelopePoolClient>;
+  end(): Promise<void>;
+}
+
+export interface RetainedEnvelopeAuditCommandOptions {
+  connectionString?: string;
+  createPool?: (connectionString: string) => ReviewEnvelopePool;
+  stdout?: Pick<NodeJS.WritableStream, "write">;
+  stderr?: Pick<NodeJS.WritableStream, "write">;
+}
+
 export interface RetainedEnvelopeAuditResult {
   scanned: number;
   compatible: number;
@@ -57,43 +73,67 @@ export async function auditRetainedEnvelopes(
   }
 }
 
-async function main(argv = process.argv.slice(2)): Promise<number> {
-  const json = parseArgs(argv);
-  const connectionString = process.env.DATABASE_URL;
+export async function runRetainedEnvelopeAuditCommand(
+  argv = process.argv.slice(2),
+  options: RetainedEnvelopeAuditCommandOptions = {},
+): Promise<number> {
+  const stdout = options.stdout ?? process.stdout;
+  const stderr = options.stderr ?? process.stderr;
+  let json: boolean;
+  try {
+    json = parseArgs(argv);
+  } catch (error) {
+    stderr.write(`Retained envelope audit failed: ${safeMessage(error)}\n`);
+    return 2;
+  }
+  const connectionString = options.connectionString ?? process.env.DATABASE_URL;
   if (!connectionString) {
-    process.stderr.write("Retained envelope audit requires DATABASE_URL for a read-only database role.\n");
+    stderr.write("Retained envelope audit requires DATABASE_URL for a read-only database role.\n");
     return 2;
   }
 
-  const pool = new Pool({ connectionString });
-  const client = await pool.connect();
+  const pool = options.createPool?.(connectionString) ?? createAuditPool(connectionString);
+  let client: ReviewEnvelopePoolClient | undefined;
   try {
-    await client.query("BEGIN");
-    await client.query("SET TRANSACTION READ ONLY");
+    client = await pool.connect();
+    await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const result = await auditRetainedEnvelopes(client);
     await client.query("COMMIT");
     if (json) {
-      process.stdout.write(`${JSON.stringify({
+      stdout.write(`${JSON.stringify({
         scanned: result.scanned,
         compatible: result.compatible,
         incompatible: result.incompatible,
         incompatible_run_ids: result.incompatibleRunIds,
       }, null, 2)}\n`);
     } else {
-      process.stdout.write(`Scanned ${result.scanned} retained envelope(s); ${result.incompatible} incompatible.\n`);
+      stdout.write(`Scanned ${result.scanned} retained envelope(s); ${result.incompatible} incompatible.\n`);
       for (const runId of result.incompatibleRunIds) {
-        process.stdout.write(`- ${runId}\n`);
+        stdout.write(`- ${runId}\n`);
       }
     }
     return result.incompatible === 0 ? 0 : 1;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    process.stderr.write(`Retained envelope audit failed: ${safeMessage(error)}\n`);
+    await client?.query("ROLLBACK").catch(() => undefined);
+    stderr.write(`Retained envelope audit failed: ${safeMessage(error)}\n`);
     return 2;
   } finally {
-    client.release();
+    client?.release();
     await pool.end();
   }
+}
+
+function createAuditPool(connectionString: string): ReviewEnvelopePool {
+  return new Pool({
+    connectionString,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 10_000,
+    max: 1,
+    allowExitOnIdle: true,
+    statement_timeout: 10_000,
+    query_timeout: 10_000,
+    lock_timeout: 5_000,
+  }) as ReviewEnvelopePool;
 }
 
 function parseArgs(argv: string[]): boolean {
@@ -113,7 +153,7 @@ function safeMessage(error: unknown): string {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().then((code) => {
+  runRetainedEnvelopeAuditCommand().then((code) => {
     process.exitCode = code;
   }).catch(() => {
     process.stderr.write("Retained envelope audit failed.\n");

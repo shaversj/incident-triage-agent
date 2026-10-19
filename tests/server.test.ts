@@ -886,6 +886,32 @@ test("server blocks demo scenario triggers outside local mode", async () => {
   }
 });
 
+test("server preserves absent-store run and lifecycle response contracts", async () => {
+  const server = startWebhookServer({
+    host: "127.0.0.1",
+    port: 0,
+    runtime: runtime(),
+  });
+
+  await server.ready;
+  try {
+    const baseUrl = serverUrl(server.server);
+    const cases = [
+      { path: "/api/runs", status: 404, error: "run_list_unavailable" },
+      { path: "/api/runs/missing-run", status: 404, error: "run_review_unavailable" },
+      { path: "/api/incidents/INC-MISSING/lifecycle", status: 503, error: "lifecycle_store_unavailable" },
+    ];
+
+    for (const expected of cases) {
+      const response = await fetch(`${baseUrl}${expected.path}`);
+      expect(response.status, expected.path).toBe(expected.status);
+      expect(await response.json(), expected.path).toEqual({ status: "error", error: expected.error });
+    }
+  } finally {
+    await server.close();
+  }
+});
+
 test("server schedules retention cleanup for run store", async () => {
   const runStore = new CleanupCountingRunStore();
   const server = startWebhookServer({

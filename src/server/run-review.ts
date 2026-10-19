@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 import type { IncidentLifecycleReviewRecord } from "../persistence/contracts";
-import { resolveRunApproval } from "./approval";
+import { resolveRunApproval } from "./approval-support";
 import type { WebhookRuntime } from "./contracts";
 import { numberQueryParam, operatorReadAuthorized, writeJson } from "./http";
 import { objectValue, runListToResponse, runReviewToResponse } from "./response-mapping";

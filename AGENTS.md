@@ -42,7 +42,8 @@ Primary TypeScript code lives in `src/`:
 - `server.ts`: compatibility facade for the public server API.
 - `server/composition.ts`: authoritative HTTP route order and server lifecycle.
 - `server/webhook.ts`: signed Grafana ingestion, replay handling, evidence re-entry, and direct webhook orchestration.
-- `server/approval.ts`: approval reads and the only server-owned approval mutation path.
+- `server/approval.ts`: approval routes and the only server-owned approval decision/execution path.
+- `server/approval-support.ts`: approval request staging and read projection shared by webhook and run-review handlers.
 - `server/run-review.ts` and `server/lifecycle.ts`: authenticated run, lifecycle, and outcome-candidate routes.
 - `server/response-mapping.ts`: pure operator-facing response serialization.
 - `workflow.ts`: triage state machine.
