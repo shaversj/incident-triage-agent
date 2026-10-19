@@ -1,170 +1,51 @@
+import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
 import { expect, test } from "vitest";
 
-import { loadScenario } from "../src/domain";
-import { loadTools } from "../src/evidence";
-import { StaticDecisionClient } from "../src/llm";
 import { PostgresTriageRunPersistenceStore } from "../src/persistence";
-import type { EvidenceDelta, MaterialityDecision } from "../src/reentry";
-import { TriageWorkflow } from "../src/workflow";
+import { registerPersistenceConformanceSuite } from "./support/persistence-conformance";
 
 const databaseUrl = process.env.POSTGRES_TEST_DATABASE_URL ?? process.env.DATABASE_URL;
 
-test.runIf(Boolean(databaseUrl))("Postgres persistence migrates records review envelopes replay keys and cleanup", async () => {
+test.runIf(Boolean(databaseUrl))("Postgres persistence applies migrations repeatably", async () => {
   const store = new PostgresTriageRunPersistenceStore({ connectionString: databaseUrl! });
+  const pool = new Pool({ connectionString: databaseUrl! });
   try {
     await store.migrate();
-    const run = await runScenario();
-    const recorded = await store.recordGatedTriageRun(run, gateCandidate({
-      candidateDigest: `candidate:first:${Date.now()}`,
-      decision: materialityDecision("first_observation", "no_baseline"),
-    }), {
-      correlationId: "postgres-integration",
-      now: new Date("2026-08-01T12:00:00.000Z"),
-      ttlMs: 1_000,
-    });
-    const childRun = { ...run, runId: `${run.runId}:child:${Date.now()}` };
-    const child = await store.recordGatedTriageRun(childRun, gateCandidate({
-      priorRunId: recorded.run.runId,
-      candidateDigest: `candidate:material:${Date.now()}`,
-      decision: materialityDecision("material", "deterministic_policy"),
-    }), {
-      correlationId: "postgres-integration-child",
-      now: new Date("2026-08-01T12:00:00.500Z"),
-      ttlMs: 1_000,
-    });
-    const duplicateCandidate = gateCandidate({
-      priorRunId: child.run.runId,
-      candidateDigest: `candidate:equivalent:${Date.now()}`,
-      decision: materialityDecision("not_material", "equivalent"),
-    });
-    const firstGateDecision = await store.recordEvidenceGateDecision(duplicateCandidate, {
-      now: new Date("2026-08-01T12:00:00.750Z"),
-      ttlMs: 1_000,
-    });
-    const duplicateGateDecision = await store.recordEvidenceGateDecision(duplicateCandidate, {
-      now: new Date("2026-08-01T12:00:00.900Z"),
-      ttlMs: 1_000,
-    });
-    const review = await store.getTriageRunReview(child.run.runId);
-    const listed = await store.listTriageRuns({ limit: 100 });
-    const baseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
-      now: new Date("2026-08-01T12:00:00.900Z"),
-    });
-    const expiredBaseline = await store.getLatestIncidentBaseline(run.scenario.incident.incidentId, {
-      now: new Date("2026-08-01T12:00:02.000Z"),
-    });
-    const replayInput = {
-      sender: "grafana",
-      signature: "sig",
-      timestamp: "2026-08-01T12:00:00.000Z",
-      bodyDigest: `digest-${Date.now()}`,
-      receivedAt: new Date("2026-08-01T12:00:00.000Z"),
-      ttlMs: 1_000,
-    };
-    const firstClaim = await store.claimReplayKey(replayInput);
-    const duplicateClaim = await store.claimReplayKey(replayInput);
-    const lifecycleIncidentId = `INC-LIFECYCLE-${Date.now()}`;
-    const verificationInput = {
-      incidentId: lifecycleIncidentId,
-      sourceEventKey: `verification:${lifecycleIncidentId}`,
-      verification: {
-        outcome: "unresolved" as const,
-        source: "operator" as const,
-        sourceReference: "operator:postgres-test",
-        runId: child.run.runId,
-        evidenceIds: ["verification:latency"],
-        rationale: "Latency remains above threshold.",
-      },
-    };
-    const verification = await store.recordVerificationOutcome(verificationInput, {
-      now: new Date("2026-08-01T12:00:00.000Z"),
-      ttlMs: 1_000,
-    });
-    const duplicateVerification = await store.recordVerificationOutcome(verificationInput, {
-      now: new Date("2026-08-01T12:00:00.500Z"),
-      ttlMs: 1_000,
-    });
-    const recoveryResults = await Promise.all([1, 2, 3].map((attempt) => store.recordRecoveryFailure({
-      incidentId: lifecycleIncidentId,
-      runId: child.run.runId,
-      sourceEventKey: `provider:${lifecycleIncidentId}:${attempt}`,
-      failureClass: "provider_unavailable",
-      rationale: "Provider request failed.",
-    }, {
-      now: new Date("2026-08-01T12:00:01.000Z"),
-      ttlMs: 1_000,
-    })));
-    const blockedRecovery = await store.recordRecoveryFailure({
-      incidentId: lifecycleIncidentId,
-      runId: child.run.runId,
-      sourceEventKey: `provider:${lifecycleIncidentId}:4`,
-      failureClass: "provider_unavailable",
-      rationale: "Provider request failed again.",
-    });
-    const lifecycle = await store.getIncidentLifecycle(lifecycleIncidentId);
-    const exhaustedCandidate = lifecycle.candidates.find((candidate) => candidate.category === "recovery_exhausted");
-    expect(exhaustedCandidate).toBeDefined();
-    const importedCandidate = await store.markOutcomeReviewCandidateImported(exhaustedCandidate!.candidateId, {
-      now: new Date("2026-08-01T12:00:05.000Z"),
-    });
-    const cleanup = await store.cleanupExpired(new Date("2026-08-01T12:00:10.000Z"));
+    await store.migrate();
+    const result = await pool.query<{ migration_name: string }>(
+      "SELECT migration_name FROM schema_migrations ORDER BY migration_name",
+    );
 
-    expect(review?.run.reviewEnvelope?.decision).toMatchObject({
-      incidentClass: "bad_deploy",
-      nextAction: "request_rollback_approval",
-    });
-    expect(listed).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        runId: recorded.run.runId,
-        incidentTitle: "Checkout API latency after retry rollout",
-        severity: "SEV2",
-      }),
+    expect(result.rows.map((row) => row.migration_name)).toEqual(expect.arrayContaining([
+      "001_phase1_read_only.sql",
+      "002_run_review_metadata.sql",
+      "003_material_evidence_reentry.sql",
+      "004_incident_lifecycle.sql",
+      "005_scope_lifecycle_idempotency.sql",
     ]));
-    expect(review?.evidenceSnapshot?.evidence).toEqual(expect.arrayContaining([
-      expect.objectContaining({ evidenceId: "deploy:0" }),
-    ]));
-    expect(child.run.parentRunId).toBe(recorded.run.runId);
-    expect(review?.gateDecision?.decisionId).toBe(child.decision.decisionId);
-    expect(review?.recentGateDecisions).toEqual(expect.arrayContaining([
-      expect.objectContaining({ outcome: "not_material", priorRunId: child.run.runId }),
-    ]));
-    expect(baseline?.run.runId).toBe(child.run.runId);
-    expect(expiredBaseline).toBeUndefined();
-    expect(firstGateDecision.created).toBe(true);
-    expect(duplicateGateDecision).toMatchObject({
-      created: false,
-      decision: { decisionId: firstGateDecision.decision.decisionId },
-    });
-    expect(firstClaim.accepted).toBe(true);
-    expect(duplicateClaim.accepted).toBe(false);
-    expect(verification.created).toBe(true);
-    expect(duplicateVerification).toMatchObject({
-      created: false,
-      record: { eventId: verification.record.eventId },
-    });
-    expect(recoveryResults.map((result) => result.budget.attempts).sort()).toEqual([1, 2, 3]);
-    expect(blockedRecovery).toMatchObject({ created: false, budget: { attempts: 3, exhausted: true } });
-    expect(lifecycle.projection.state).toBe("needs_human");
-    expect(importedCandidate.status).toBe("imported");
-    expect(cleanup.incidentRunsDeleted).toBeGreaterThanOrEqual(1);
-    expect(cleanup.evidenceSnapshotsDeleted).toBeGreaterThanOrEqual(1);
-    expect(cleanup.replayKeysDeleted).toBeGreaterThanOrEqual(1);
-    expect(cleanup.evidenceGateDecisionsDeleted).toBeGreaterThanOrEqual(3);
-    expect(cleanup.verificationEventsDeleted).toBeGreaterThanOrEqual(1);
-    expect(cleanup.recoveryEventsDeleted).toBeGreaterThanOrEqual(4);
-    expect(cleanup.recoveryBudgetsDeleted).toBeGreaterThanOrEqual(1);
-    expect(cleanup.outcomeCandidatesDeleted).toBeGreaterThanOrEqual(2);
-    expect(await store.getTriageRunReview(recorded.run.runId)).toBeUndefined();
   } finally {
+    await pool.end();
     await store.close();
   }
+});
+
+registerPersistenceConformanceSuite("Postgres", {
+  enabled: Boolean(databaseUrl),
+  createStore: async () => {
+    const store = new PostgresTriageRunPersistenceStore({ connectionString: databaseUrl! });
+    await store.migrate();
+    return store;
+  },
+  teardownStore: async (store) => {
+    await store.close?.();
+  },
 });
 
 test.runIf(Boolean(databaseUrl))("Postgres persistence isolates malformed retained envelopes from run summaries", async () => {
   const store = new PostgresTriageRunPersistenceStore({ connectionString: databaseUrl! });
   const pool = new Pool({ connectionString: databaseUrl! });
-  const runId = `malformed-envelope:${Date.now()}`;
+  const runId = `malformed-envelope:${randomUUID()}`;
   try {
     await store.migrate();
     await pool.query(
@@ -174,7 +55,7 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence isolates malformed retain
       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)`,
       [
         runId,
-        "INC-MALFORMED",
+        `INC-MALFORMED:${randomUUID()}`,
         "retained-envelope-compatibility",
         "checkout-api",
         "completed",
@@ -182,7 +63,7 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence isolates malformed retain
         "[]",
         JSON.stringify({ validation: { valid: "yes", errors: [] } }),
         "read_only_triage",
-        "postgres-malformed-envelope",
+        `postgres-malformed-envelope:${randomUUID()}`,
         new Date("2026-08-01T12:00:00.000Z"),
         new Date("2026-08-02T12:00:00.000Z"),
       ],
@@ -198,56 +79,3 @@ test.runIf(Boolean(databaseUrl))("Postgres persistence isolates malformed retain
     await store.close();
   }
 });
-
-async function runScenario() {
-  const scenarioName = "bad-deploy-latency";
-  const scenario = loadScenario("fixtures", scenarioName);
-  const workflow = new TriageWorkflow(
-    loadTools("fixtures"),
-    new StaticDecisionClient({
-      [scenarioName]: JSON.stringify({
-        incident_class: "bad_deploy",
-        next_action: "request_rollback_approval",
-        confidence: 0.9,
-        evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
-        caveats: [],
-        verification_plan: ["Check checkout latency."],
-      }),
-    }),
-    undefined,
-    { mode: "read_only" },
-  );
-  return workflow.run(scenario);
-}
-
-function gateCandidate(overrides: {
-  candidateDigest: string;
-  decision: MaterialityDecision;
-  priorRunId?: string;
-}) {
-  return {
-    incidentId: "INC-2026-015",
-    candidateDigest: overrides.candidateDigest,
-    canonicalizationVersion: "v1",
-    delta: emptyDelta(),
-    decision: overrides.decision,
-    ...(overrides.priorRunId ? { priorRunId: overrides.priorRunId } : {}),
-  };
-}
-
-function materialityDecision(
-  outcome: MaterialityDecision["outcome"],
-  basis: MaterialityDecision["basis"],
-): MaterialityDecision {
-  return { outcome, basis, rationale: `${basis} decision`, citedDeltaRefs: [] };
-}
-
-function emptyDelta(): EvidenceDelta {
-  return {
-    added: [],
-    removed: [],
-    incidentChanges: [],
-    addedMissingContext: [],
-    resolvedMissingContext: [],
-  };
-}

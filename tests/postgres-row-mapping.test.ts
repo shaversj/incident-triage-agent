@@ -1,6 +1,35 @@
 import { expect, test } from "vitest";
 
+import { loadScenario } from "../src/domain";
+import { loadTools } from "../src/evidence";
+import { StaticDecisionClient } from "../src/llm";
+import { InMemoryTriageRunPersistenceStore } from "../src/persistence";
 import { decodeTriageRunReviewEnvelope } from "../src/persistence/postgres-row-mapping";
+import { TriageWorkflow } from "../src/workflow";
+
+test("persisted review decoder accepts the complete current writer envelope", async () => {
+  const scenarioName = "bad-deploy-latency";
+  const scenario = loadScenario("fixtures", scenarioName);
+  const workflow = new TriageWorkflow(
+    loadTools("fixtures"),
+    new StaticDecisionClient({
+      [scenarioName]: JSON.stringify({
+        incident_class: "bad_deploy",
+        next_action: "request_rollback_approval",
+        confidence: 0.9,
+        evidence_ids: ["deploy:0", "log:0", "runbook:bad-deploy"],
+        caveats: [],
+        verification_plan: ["Check checkout latency."],
+      }),
+    }),
+    undefined,
+    { mode: "read_only" },
+  );
+  const run = await workflow.run(scenario);
+  const record = await new InMemoryTriageRunPersistenceStore().recordTriageRun(run);
+
+  expect(decodeTriageRunReviewEnvelope(record.reviewEnvelope)).toEqual(record.reviewEnvelope);
+});
 
 test("persisted review decoder accepts absent partial and additive envelopes", () => {
   expect(decodeTriageRunReviewEnvelope(null)).toBeUndefined();
