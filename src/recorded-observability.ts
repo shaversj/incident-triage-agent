@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { LokiClient, type LokiLogEntry } from "./loki";
-import type { LokiClientLike } from "./server";
+import { LokiClient, type LokiClientLike, type LokiLogEntry } from "./loki";
 
 const prohibitedAnswerFields = new Set([
   "incident_class",

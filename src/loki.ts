@@ -1,5 +1,15 @@
 import type { Evidence } from "./evidence";
 
+export interface LokiClientLike {
+  queryRange(
+    labels: Record<string, string>,
+    startNs: number,
+    endNs: number,
+    options: { limit?: number; direction?: "forward" | "backward" },
+  ): Promise<LokiLogEntry[]>;
+  toEvidence(entries: LokiLogEntry[]): Evidence[];
+}
+
 export class LokiClientError extends Error {
   constructor(message: string) {
     super(message);
